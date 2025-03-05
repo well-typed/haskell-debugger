@@ -31,7 +31,7 @@ library
 executable ghc-debugger
     import:           warnings
     main-is:          Main.hs
-    -- other-modules:
+    other-modules:    Interface
     -- other-extensions:
     build-depends:
         base >=4.14,
