@@ -1,0 +1,53 @@
+cabal-version:      3.0
+name:               ghc-debugger
+version:            0.1.0.0
+synopsis:
+    A step-through machine-interface debugger for GHC Haskell
+
+-- description:
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Rodrigo Mesquita
+maintainer:         rodrigo@well-typed.com
+-- copyright:
+category:           Development
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+-- extra-source-files:
+
+common warnings
+    ghc-options: -Wall
+
+library
+    import:           warnings
+    -- exposed-modules:
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base >= 4.14,
+                      ghc >= 8.10.7
+    hs-source-dirs:   src
+    default-language: Haskell2010
+
+executable ghc-debugger
+    import:           warnings
+    main-is:          Main.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:
+        base >=4.14,
+        ghc-debugger
+
+    hs-source-dirs:   app
+    default-language: Haskell2010
+
+test-suite ghc-debugger-test
+    import:           warnings
+    default-language: Haskell2010
+    -- other-modules:
+    -- other-extensions:
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Main.hs
+    build-depends:
+        base >=4.14,
+        ghc-debugger
