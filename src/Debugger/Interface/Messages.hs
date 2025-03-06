@@ -66,3 +66,7 @@ instance ToJSON Request    where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Breakpoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
 
+instance FromJSON Request
+instance FromJSON Breakpoint
+instance FromJSON Response
+

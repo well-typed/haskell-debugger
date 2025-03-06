@@ -1,5 +1,7 @@
 {-
 
+== Overview
+
 Main launches 3 lightweight threads.
 - One thread listens to requests and writes them to a `Chan` (C1=requests)
 - Another reads from `Chan` (C2=replies) and sends replies
@@ -12,6 +14,13 @@ Main launches 3 lightweight threads.
 │Listen for requests││Send replies││GHC session│
 └───────────────────┘└────────────┘└───────────┘
 
+
+== Configuration
+
+Currently, there is no support for changing the configuration of `ghc-debugger` at runtime.
+- The `ghc-debugger` specific options are passed as process arguments as per 'Config'.
+- The GHC-specific flags that determine how to compile/interpret the project
+  are passed after a double dash (@--@) in the list of arguments as well.
 -}
 module Main where
 
@@ -19,6 +28,8 @@ import Control.Concurrent
 import Control.Monad
 
 import Debugger.Interface
+
+data Config
 
 main :: IO ()
 main = do
