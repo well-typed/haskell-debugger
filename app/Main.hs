@@ -18,7 +18,7 @@ module Main where
 import Control.Concurrent
 import Control.Monad
 
-import Interface
+import Debugger.Interface
 
 main :: IO ()
 main = do
@@ -37,4 +37,12 @@ debugger :: Chan Request -> Chan Response -> IO ()
 debugger requests replies = do
   req <- readChan requests
   case req of
-    _ -> pure ()
+    SetBreakpoint bp -> _
+    DelBreakpoint bp -> _
+    GetStacktrace -> _
+    GetVariables -> _
+    GetSource -> _
+    DoEval -> _
+    DoContinue -> _
+    DoStepLocal -> _
+    DoSingleStep -> _

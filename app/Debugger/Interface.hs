@@ -1,11 +1,16 @@
-module Interface where
+module Debugger.Interface
+  (
+    -- * Client communication workers
+    receiver, sender
+
+    -- * Re-exports
+  , module Debugger.Interface.Messages
+  ) where
 
 import Control.Concurrent
 import Control.Monad
 
-data Request
-
-data Response
+import Debugger.Interface.Messages
 
 -- | Listens for 'Request' messages, deserializes them, and writes them to the given 'Chan', forever
 --

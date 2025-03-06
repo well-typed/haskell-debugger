@@ -20,10 +20,11 @@ common warnings
 
 library
     import:           warnings
-    -- exposed-modules:
+    exposed-modules:  Debugger.Interface.Messages
     -- other-modules:
     -- other-extensions:
     build-depends:    base >= 4.14,
+                      aeson >= 2.2.3,
                       ghc >= 8.10.7
     hs-source-dirs:   src
     default-language: Haskell2010
@@ -31,12 +32,12 @@ library
 executable ghc-debugger
     import:           warnings
     main-is:          Main.hs
-    other-modules:    Interface
+    other-modules:    Debugger.Interface
     -- other-extensions:
     build-depends:
         base >=4.14,
+        aeson >= 2.2.3,
         ghc-debugger
-
     hs-source-dirs:   app
     default-language: Haskell2010
 
