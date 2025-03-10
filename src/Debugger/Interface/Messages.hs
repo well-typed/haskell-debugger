@@ -28,11 +28,13 @@ data Request
   -- Note: for GHCs <9.13 this only reports the variables free in the expression
   -- we're stopped at rather than all variables in scope.
   | GetVariables
+
   -- | Lists the source code for the current breakpoint.
   | GetSource
 
   -- | Evaluate an expression at the current breakpoint.
-  | DoEval
+  | DoEval String
+
   -- | Continue executing from the current breakpoint
   | DoContinue
   -- | Step local, which executes until next breakpoint in the same function.
