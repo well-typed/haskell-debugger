@@ -51,7 +51,7 @@ data Request
 -- | A breakpoint can be set/removed on functions by name, or in modules by
 -- line number. And, globally, for all exceptions, or just uncaught exceptions.
 data Breakpoint
-  = ModuleBreak String Int
+  = ModuleBreak { path :: FilePath, lineNum :: Int, columnNum :: Maybe Int }
   | FunctionBreak String
   | OnExceptionsBreak
   | OnUncaughtExceptionsBreak
