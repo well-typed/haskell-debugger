@@ -18,8 +18,13 @@ data Request
 
   -- | Set a breakpoint on a given function, or module by line number
   = SetBreakpoint Breakpoint
+
   -- | Delete a breakpoint on a given function, or module by line number
   | DelBreakpoint Breakpoint
+
+  -- | Clear all breakpoints.
+  -- This is useful considering DAP re-sets all breakpoints from zero rather than incrementally.
+  | ClearBreakpoints
 
   -- | Get the evaluation stacktrace until the current breakpoint.
   | GetStacktrace
@@ -43,8 +48,13 @@ data Request
   -- | Single step always to the next breakpoint. Used for "step-in".
   | DoSingleStep
 
--- | A breakpoint can be set/removed on functions by name, or in modules by line number.
-data Breakpoint = ModuleBP String Int | FunctionBP String
+-- | A breakpoint can be set/removed on functions by name, or in modules by
+-- line number. And, globally, for all exceptions, or just uncaught exceptions.
+data Breakpoint
+  = ModuleBreak String Int
+  | FunctionBreak String
+  | OnExceptionsBreak
+  | OnUncaughtExceptionsBreak
   deriving (Show, Generic)
 
 --------------------------------------------------------------------------------
@@ -53,6 +63,13 @@ data Breakpoint = ModuleBP String Int | FunctionBP String
 
 -- | The responses sent by `ghc-debugger` to the client
 data Response
+  = DidEval EvalResult
+
+data EvalResult
+  = EvalCompleted { resultVal :: String, resultType :: String }
+  | EvalException { resultVal :: String, resultType :: String }
+  | EvalStopped
+  deriving (Show, Generic)
 
 --------------------------------------------------------------------------------
 -- Instances
@@ -67,8 +84,10 @@ deriving instance Generic Response
 instance ToJSON Request    where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Breakpoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
+instance ToJSON EvalResult where toEncoding = genericToEncoding defaultOptions
 
 instance FromJSON Request
 instance FromJSON Breakpoint
 instance FromJSON Response
+instance FromJSON EvalResult
 

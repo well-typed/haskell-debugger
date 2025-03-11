@@ -26,7 +26,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.List as List
 
 -- | A debugger action
-newtype Debugger a = Debugger (GHC.Ghc a)
+newtype Debugger a = Debugger { unDebugger :: GHC.Ghc a }
   deriving (Functor, Applicative, Monad, MonadIO)
 
 -- | Run a 'Debugger' action on a session constructed from a given GHC invocation.
@@ -35,7 +35,9 @@ runDebugger :: Maybe FilePath -- ^ The libdir (given with -B as an arg)
             -> [String]       -- ^ The full ghc invocation (as constructed by hie-bios flags)
             -> Debugger a     -- ^ 'Debugger' action to run on the session constructed from this invocation
             -> IO a
-runDebugger libdir units ghcInvocation (Debugger action) = do
+runDebugger libdir units ghcInvocation' (Debugger action) = do
+  let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
+
   GHC.runGhc libdir $ do
 
     dflags0 <- GHC.getSessionDynFlags

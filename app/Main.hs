@@ -36,6 +36,9 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Data.Maybe
 
+import GHC.IO.Handle
+import GHC.IO.Encoding
+import System.IO
 import System.Environment (getArgs)
 import System.Exit
 
@@ -62,13 +65,26 @@ main :: IO ()
 main = do
   ghcInvocationFlags <- getArgs
 
+  setLocaleEncoding utf8
+
+  -- Duplicate @stdout@ as @hout@ and move @stdout@ to @stderr@. @hout@ still
+  -- points to the standard output, which is now written exclusively by the sender.
+  -- This guards against stray prints from corrupting the JSON-RPC message stream.
+  hout <- hDuplicate stdout
+  stderr `hDuplicateTo` stdout
+
+  hSetBuffering stdout NoBuffering
+  hSetBuffering stderr LineBuffering
+
   requests <- newChan
   replies  <- newChan
 
   _ <- forkIO $ receiver requests
-  _ <- forkIO $ sender replies
-  _ <- forkIO $ debugger requests replies
-                  (mkSettings ghcInvocationFlags)
+  _ <- forkIO $ sender hout replies
+
+  -- Run debugger in main thread
+  debugger requests replies
+    (mkSettings ghcInvocationFlags)
 
   return ()
 
@@ -93,7 +109,7 @@ debugger requests replies Settings{libdir, units, ghcInvocation} =
         GetStacktrace -> undefined
         GetVariables -> undefined
         GetSource -> undefined
-        DoEval exp_s -> doEval exp_s
+        DoEval exp_s -> DidEval <$> doEval exp_s
         DoContinue -> undefined
         DoStepLocal -> undefined
         DoSingleStep -> undefined
