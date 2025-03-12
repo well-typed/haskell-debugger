@@ -34,12 +34,12 @@ import Debugger.Interface.Messages
 -- | Set a breakpoint in this session
 setBreakpoint :: Breakpoint -> Debugger Bool
 setBreakpoint ModuleBreak{path, lineNum, columnNum} = do
-  hsc_env <- liftGhc getSession
+  hsc_env <- getSession
   let breakpoint_count = BA.breakOn -- enable bp.
 
   mod <- getModuleByPath path
 
-  mticks <- liftGhc $ makeModuleLineMap (ms_mod mod)
+  mticks <- makeModuleLineMap (ms_mod mod)
   let mbid = fst <$> do
         ticks <- mticks
         case columnNum of
@@ -51,16 +51,15 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} = do
       liftIO $ putStrLn "TODO: HOW TO REPORT ERROR"
       return False
     Just bid -> do
-      liftGhc $
-        GHC.setupBreakpoint hsc_env
-            BreakpointId { bi_tick_mod = ms_mod mod
-                         , bi_tick_index = bid }
-            breakpoint_count
+      GHC.setupBreakpoint hsc_env
+          BreakpointId { bi_tick_mod = ms_mod mod
+                       , bi_tick_index = bid }
+          breakpoint_count
       return True
 
 -- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
 doEval :: String -> Debugger EvalResult
-doEval exp = liftGhc $ do
+doEval exp = do
   -- consider always using :trace like ghci-dap to always have a stacktrace?
   -- better solution could involve profiling stack traces or from IPE info?
   GHC.execStmt exp GHC.execOptions >>= \case
@@ -68,10 +67,14 @@ doEval exp = liftGhc $ do
       case execResult of
         Left e -> return (EvalException (show e) "SomeException")
         Right [] -> error $ "Nothing bound for expression: " ++ exp
-        Right (n:ns) -> do
-          Just (a, b) <- unDebugger $ inspectName n
-          return (EvalCompleted a b)
-    ExecBreak {breakNames, breakPointId} -> error "no!"
+        Right (n:ns) -> inspectName n >>= \case
+          Just (a, b) -> return (EvalCompleted a b)
+          Nothing     -> liftIO $ fail "doEval failed"
+    ExecBreak {breakNames, breakPointId} ->
+      -- Probably we should only stop at breakpoints while doing "doEval" if
+      -- the breakpoint is in one of the loaded modules. Otherwise continue?
+      -- What about break on exception here and elsewhere?
+      error "no!"
 
 --------------------------------------------------------------------------------
 -- Ghc utilities
@@ -80,19 +83,19 @@ doEval exp = liftGhc $ do
 -- | Get the value and type of a given 'Name' as rendered strings.
 inspectName :: Name -> Debugger (Maybe (String {-^ Value -}, String {-^ Type -}))
 inspectName n = do
-  liftGhc (GHC.lookupName n) >>= \case
+  GHC.lookupName n >>= \case
     Nothing -> pure Nothing
     Just tt -> Just <$> case tt of
       t@(AConLike c) -> (,) <$> display c <*> display t
       t@(ATyCon c)   -> (,) <$> display c <*> display t
       t@(ACoAxiom c) -> (,) <$> display c <*> display t
       AnId i -> do
-        term <- liftGhc $ GHC.obtainTermFromId 100{-depth-} False{- only force on request (command)-} i
-        (,) <$> (display =<< liftGhc (GHCD.showTerm term)) <*> display (GHCI.termType term)
+        term <- GHC.obtainTermFromId 100{-depth-} False{- only force on request (command)-} i
+        (,) <$> (display =<< GHCD.showTerm term) <*> display (GHCI.termType term)
 
 -- | Get a 'ModSummary' of a loaded module given its 'FilePath'
 getModuleByPath :: FilePath -> Debugger ModSummary
-getModuleByPath path = liftGhc $ do
+getModuleByPath path = do
   -- do this everytime as the loaded modules may have changed
   mg <- GHC.getModuleGraph
   let matches ms = GHC.isLoadedModule (ms_unitid ms) (ms_mod_name ms)

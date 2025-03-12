@@ -64,6 +64,7 @@ data Breakpoint
 -- | The responses sent by `ghc-debugger` to the client
 data Response
   = DidEval EvalResult
+  | DidSetBreakpoint Bool
 
 data EvalResult
   = EvalCompleted { resultVal :: String, resultType :: String }

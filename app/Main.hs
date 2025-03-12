@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase #-}
+{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase, ScopedTypeVariables #-}
 {-
 
 == Overview
@@ -31,10 +31,12 @@ When this changes, the code can be revised to accommodate those capabilities.
 -}
 module Main where
 
+import Data.Functor
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Maybe
+import Control.Monad.Catch
 
 import GHC.IO.Handle
 import GHC.IO.Encoding
@@ -103,16 +105,22 @@ debugger requests replies Settings{libdir, units, ghcInvocation} =
   runDebugger libdir units ghcInvocation $
     forever $ do
       req <- liftIO $ readChan requests
-      resp <- case req of
-        SetBreakpoint bp -> undefined
-        DelBreakpoint bp -> undefined
-        GetStacktrace -> undefined
-        GetVariables -> undefined
-        GetSource -> undefined
-        DoEval exp_s -> DidEval <$> doEval exp_s
-        DoContinue -> undefined
-        DoStepLocal -> undefined
-        DoSingleStep -> undefined
-      reply resp
+      resp <- (execute req <&> Right)
+                `catch` \(e :: SomeException) -> pure (Left (displayException e))
+      either bad reply resp
   where
     reply = liftIO . writeChan replies
+    bad   = liftIO . hPutStrLn stderr
+
+execute :: Request -> Debugger Response
+execute = \case
+  ClearBreakpoints -> undefined
+  SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp
+  DelBreakpoint bp -> undefined
+  GetStacktrace -> undefined
+  GetVariables -> undefined
+  GetSource -> undefined
+  DoEval exp_s -> DidEval <$> doEval exp_s
+  DoContinue -> undefined
+  DoStepLocal -> undefined
+  DoSingleStep -> undefined

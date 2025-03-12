@@ -27,7 +27,9 @@ import qualified Data.List as List
 
 -- | A debugger action
 newtype Debugger a = Debugger { unDebugger :: GHC.Ghc a }
-  deriving (Functor, Applicative, Monad, MonadIO)
+  deriving ( Functor, Applicative, Monad, MonadIO
+           , MonadThrow, MonadCatch, MonadMask
+           , GHC.HasDynFlags, GHC.HasLogger, GHC.GhcMonad)
 
 -- | Run a 'Debugger' action on a session constructed from a given GHC invocation.
 runDebugger :: Maybe FilePath -- ^ The libdir (given with -B as an arg)

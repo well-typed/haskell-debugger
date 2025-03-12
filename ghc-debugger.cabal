@@ -44,6 +44,7 @@ executable ghc-debugger
     build-depends:
         base >=4.21,
         ghc >= 9.13,
+        exceptions >= 0.10.9,
         aeson >= 2.2.3,
         bytestring >= 0.12.1,
         ghc-debugger
