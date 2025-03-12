@@ -42,7 +42,6 @@ import GHC.IO.Handle
 import GHC.IO.Encoding
 import System.IO
 import System.Environment (getArgs)
-import System.Exit
 
 import Debugger
 import Debugger.Monad
@@ -111,9 +110,9 @@ debugger requests replies Settings{libdir, units, ghcInvocation} =
 execute :: Request -> Debugger Response
 execute = \case
   ClearBreakpoints -> undefined
-  SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp
-  DelBreakpoint bp -> undefined
-  GetStacktrace -> undefined
+  SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint BreakpointEnabled bp
+  DelBreakpoint bp -> DidDelBreakpoint <$> setBreakpoint BreakpointDisabled bp
+  GetStacktrace -> undefined -- decide whether to use a different callstack mechanism or really use :hist?
   GetVariables -> undefined
   GetSource -> undefined
   DoEval exp_s -> DidEval <$> doEval exp_s

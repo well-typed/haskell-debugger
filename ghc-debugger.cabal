@@ -27,7 +27,7 @@ library
     -- other-extensions:
     build-depends:    base >= 4.21,
                       ghc >= 9.13, ghci,
-                      array, containers,
+                      array, containers, mtl,
                       exceptions >= 0.10.9,
                       bytestring >= 0.12.1,
 

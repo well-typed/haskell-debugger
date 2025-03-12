@@ -1,35 +1,64 @@
 {-# LANGUAGE CPP, GeneralizedNewtypeDeriving, NamedFieldPuns, TupleSections, LambdaCase #-}
 module Debugger.Monad where
 
-import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
-import Data.Maybe
 
 import Control.Monad.Catch
 
 import System.Exit
 
 import qualified GHC
-import qualified GHC.Driver.DynFlags as GHC
-import qualified GHC.Driver.Phases as GHC
-import qualified GHC.Driver.Pipeline as GHC
-import qualified GHC.Driver.Config.Logger as GHC
-import qualified GHC.Driver.Session.Units as GHC
-import qualified GHC.Driver.Session.Mode as GHC
-import qualified GHC.Driver.Session.Lint as GHC
-import qualified GHC.Utils.Monad as GHC
-import qualified GHC.Utils.Logger as GHC
-import qualified GHC.Types.Unique.Supply as GHC
-import qualified GHC.Runtime.Loader as GHC
+import qualified GHCi.BreakArray as BA
+import GHC.Driver.DynFlags as GHC
+import GHC.Driver.Phases as GHC
+import GHC.Driver.Pipeline as GHC
+import GHC.Driver.Config.Logger as GHC
+import GHC.Driver.Session.Units as GHC
+import GHC.Driver.Session.Mode as GHC
+import GHC.Driver.Session.Lint as GHC
+import GHC.Utils.Monad as GHC
+import GHC.Utils.Logger as GHC
+import GHC.Types.Unique.Supply as GHC
+import GHC.Runtime.Loader as GHC
+import GHC.Unit.Module.Env as GHC
+
+import Data.IORef
+import Data.Maybe
 import qualified Data.List.NonEmpty as NE
 import qualified Data.List as List
+import qualified Data.IntMap as IM
 
--- | A debugger action
-newtype Debugger a = Debugger { unDebugger :: GHC.Ghc a }
+import Control.Monad.Reader
+
+-- | A debugger action.
+newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
   deriving ( Functor, Applicative, Monad, MonadIO
            , MonadThrow, MonadCatch, MonadMask
-           , GHC.HasDynFlags, GHC.HasLogger, GHC.GhcMonad)
+           , GHC.HasDynFlags, MonadReader DebuggerState )
+
+-- | State required to run the debugger.
+--
+-- - Keep track of active breakpoints to easily unset them all.
+data DebuggerState = DebuggerState
+      { activeBreakpoints :: IORef (ModuleEnv (IM.IntMap BreakpointStatus))
+        -- ^ Maps a 'BreakpointId' in Trie representation to the
+        -- 'BreakpointStatus' it was activated with.
+      }
+
+-- | Enabling/Disabling a breakpoint
+data BreakpointStatus
+      -- | Breakpoint is enabled
+      = BreakpointEnabled
+      -- | Breakpoint is disabled
+      | BreakpointDisabled
+      -- | Breakpoint is disabled the first N times and enabled afterwards
+      | BreakpointAfterCount Int
+      deriving (Eq)
+
+--------------------------------------------------------------------------------
+-- Operations
+--------------------------------------------------------------------------------
 
 -- | Run a 'Debugger' action on a session constructed from a given GHC invocation.
 runDebugger :: Maybe FilePath -- ^ The libdir (given with -B as an arg)
@@ -79,7 +108,7 @@ runDebugger libdir units ghcInvocation' (Debugger action) = do
     -- subsequent call to `getLogger` to be affected by a plugin.
     GHC.initializeSessionPlugins
     hsc_env <- GHC.getSession
-    logger <- GHC.getLogger
+    _logger <- GHC.getLogger
 
     ---------------- Final sanity checking -----------
     liftIO $ GHC.checkOptions GHC.DoInteractive dflags6 srcs objs units
@@ -112,6 +141,85 @@ runDebugger libdir units ghcInvocation' (Debugger action) = do
     ok_flag <- GHC.load GHC.LoadAllTargets
     when (GHC.failed ok_flag) (liftIO $ exitWith (ExitFailure 1))
 
-    -- TODO: initLoaderState?
+    -- TODO: Shouldn't initLoaderState be called somewhere?
 
-    action
+    runReaderT action =<< initialDebuggerState
+
+-- | Registers or deletes a breakpoint from the list of active breakpoints that
+-- is kept in 'DebuggerState', depending on the 'BreakpointStatus' being set.
+--
+-- Returns @True@ when the breakpoint status is changed.
+registerBreakpoint :: GHC.BreakpointId -> BreakpointStatus -> Debugger Bool
+registerBreakpoint GHC.BreakpointId
+                    { GHC.bi_tick_mod = mod
+                    , GHC.bi_tick_index = bid } status = do
+  -- no races since the debugger execution is run in a single thread
+  brksRef <- asks activeBreakpoints
+  oldBrks <- liftIO $ readIORef brksRef
+  let
+    (newBrks, changed) = case status of
+      -- Disabling the breakpoint; using the `Maybe` monad:
+      -- * If we reach the return stmt then the breakpoint is active and we delete it.
+      -- * Any other case, return False and change Nothing
+      BreakpointDisabled -> fromMaybe (oldBrks, False) $ do
+        im <- lookupModuleEnv oldBrks mod
+        _status <- IM.lookup bid im
+        let im'  = IM.delete bid im
+            brks = extendModuleEnv oldBrks mod im'
+        return (brks, True)
+
+      -- We're enabling the breakpoint:
+      _ -> case lookupModuleEnv oldBrks mod of
+        Nothing ->
+          let im   = IM.singleton bid status
+              brks = extendModuleEnv oldBrks mod im
+           in (brks, True)
+        Just im -> case IM.lookup bid im of
+          Nothing ->
+            -- Not yet in IntMap, extend with new Breakpoint
+            let im' = IM.insert bid status im
+                brks = extendModuleEnv oldBrks mod im'
+             in (brks, True)
+          Just status' ->
+            -- Found in IntMap
+            if status' == status then
+              (oldBrks, False)
+            else
+              let im'  = IM.insert bid status im
+                  brks = extendModuleEnv oldBrks mod im'
+               in (brks, True)
+
+  liftIO $ writeIORef brksRef newBrks
+  return changed
+
+--------------------------------------------------------------------------------
+-- Utilities
+--------------------------------------------------------------------------------
+
+-- | Turn a 'BreakpointStatus' into its 'Int' representation for 'BreakArray'
+breakpointStatusInt :: BreakpointStatus -> Int
+breakpointStatusInt = \case
+  BreakpointEnabled      -> BA.breakOn  -- 0
+  BreakpointDisabled     -> BA.breakOff -- -1
+  BreakpointAfterCount n -> n           -- n
+
+-- | Initialize a 'DebuggerState'
+initialDebuggerState :: GHC.Ghc DebuggerState
+initialDebuggerState = DebuggerState <$> liftIO (newIORef emptyModuleEnv)
+
+-- | Lift a 'Ghc' action into a 'Debugger' one.
+liftGhc :: GHC.Ghc a -> Debugger a
+liftGhc = Debugger . ReaderT . const
+
+--------------------------------------------------------------------------------
+-- Instances
+--------------------------------------------------------------------------------
+
+instance GHC.HasLogger Debugger where
+  getLogger = liftGhc GHC.getLogger
+
+instance GHC.GhcMonad Debugger where
+  getSession = liftGhc GHC.getSession
+  setSession s = liftGhc $ GHC.setSession s
+
+

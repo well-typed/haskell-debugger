@@ -1,29 +1,21 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase #-}
 module Debugger where
 
-import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
-import Data.Maybe
-import Data.Functor
-
-import System.Exit
 
 import GHC
 import GHC.Driver.Ppr as GHC
 import GHC.Driver.DynFlags as GHC
 import GHC.Utils.Outputable as GHC
-import GHC.Unit.Module.Graph as GHC
 import GHC.Unit.Module.ModSummary as GHC
 import qualified GHC.Runtime.Debugger as GHCD
 import GHC.Runtime.Debugger.Breakpoints
 import qualified GHC.Runtime.Heap.Inspect as GHCI
-import GHC.Runtime.Loader as GHC
-import GHC.Runtime.Eval as GHC hiding (obtainTermFromId)
-import qualified GHCi.BreakArray as BA
 
 import qualified Data.List.NonEmpty as NE
 import qualified Data.List as List
+import Data.IORef
 
 import Data.Array
 import qualified Data.IntMap as IM
@@ -31,12 +23,16 @@ import qualified Data.IntMap as IM
 import Debugger.Monad
 import Debugger.Interface.Messages
 
--- | Set a breakpoint in this session
-setBreakpoint :: Breakpoint -> Debugger Bool
-setBreakpoint ModuleBreak{path, lineNum, columnNum} = do
-  hsc_env <- getSession
-  let breakpoint_count = BA.breakOn -- enable bp.
+-- | Remove all breakpoints set on loaded modules
+clearBreakpoints :: Debugger ()
+clearBreakpoints = do
+  return undefined
 
+-- | Set a breakpoint in this session
+setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger Bool
+setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
+  hsc_env <- getSession
+  let breakpoint_count = breakpointStatusInt bp_status
   mod <- getModuleByPath path
 
   mticks <- makeModuleLineMap (ms_mod mod)
@@ -50,12 +46,11 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} = do
     Nothing -> do
       liftIO $ putStrLn "TODO: HOW TO REPORT ERROR"
       return False
-    Just bid -> do
-      GHC.setupBreakpoint hsc_env
-          BreakpointId { bi_tick_mod = ms_mod mod
-                       , bi_tick_index = bid }
-          breakpoint_count
-      return True
+    Just bix -> do
+      let bid = BreakpointId { bi_tick_mod = ms_mod mod
+                             , bi_tick_index = bix }
+      GHC.setupBreakpoint hsc_env bid breakpoint_count
+      registerBreakpoint bid bp_status
 
 -- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
 doEval :: String -> Debugger EvalResult
@@ -74,6 +69,7 @@ doEval exp = do
       -- Probably we should only stop at breakpoints while doing "doEval" if
       -- the breakpoint is in one of the loaded modules. Otherwise continue?
       -- What about break on exception here and elsewhere?
+      -- Or perhaps NEVER break in eval requests, only when continuing/running program
       error "no!"
 
 --------------------------------------------------------------------------------
@@ -97,13 +93,18 @@ inspectName n = do
 getModuleByPath :: FilePath -> Debugger ModSummary
 getModuleByPath path = do
   -- do this everytime as the loaded modules may have changed
-  mg <- GHC.getModuleGraph
-  let matches ms = GHC.isLoadedModule (ms_unitid ms) (ms_mod_name ms)
-                    <&> (&& msHsFilePath ms `List.isSuffixOf` path)
-  filterM matches (GHC.mgModSummaries mg) >>= \case
+  lms <- getAllLoadedModules
+  let matches ms = msHsFilePath ms `List.isSuffixOf` path
+  case filter matches lms of
     [x] -> return x
     [] -> error $ "No Module matched " ++ path
     xs -> error $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path
+
+-- | List all loaded modules 'ModSummary's
+getAllLoadedModules :: Debugger [ModSummary]
+getAllLoadedModules =
+  (GHC.mgModSummaries <$> GHC.getModuleGraph) >>=
+    filterM (\ms -> GHC.isLoadedModule (ms_unitid ms) (ms_mod_name ms))
 
 --------------------------------------------------------------------------------
 -- General utilities
@@ -111,11 +112,8 @@ getModuleByPath path = do
 
 -- | Display an Outputable value as a String
 display :: Outputable a => a -> Debugger String
-display x = liftGhc $ do
+display x = do
   dflags <- getDynFlags
   return $ showSDoc dflags (ppr x)
 {-# INLINE display #-}
 
--- | Lift a 'Ghc' action into a 'Debugger' one.
-liftGhc :: Ghc a -> Debugger a
-liftGhc = Debugger
