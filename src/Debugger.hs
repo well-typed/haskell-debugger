@@ -5,6 +5,7 @@ import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Maybe
+import Data.Functor
 
 import System.Exit
 
@@ -13,34 +14,53 @@ import GHC.Driver.Ppr as GHC
 import GHC.Driver.DynFlags as GHC
 import GHC.Utils.Outputable as GHC
 import GHC.Unit.Module.Graph as GHC
+import GHC.Unit.Module.ModSummary as GHC
 import qualified GHC.Runtime.Debugger as GHCD
+import GHC.Runtime.Debugger.Breakpoints
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 import GHC.Runtime.Loader as GHC
-import GHC.Runtime.Eval as GHC
+import GHC.Runtime.Eval as GHC hiding (obtainTermFromId)
+import qualified GHCi.BreakArray as BA
+
 import qualified Data.List.NonEmpty as NE
 import qualified Data.List as List
+
+import Data.Array
+import qualified Data.IntMap as IM
 
 import Debugger.Monad
 import Debugger.Interface.Messages
 
 -- | Set a breakpoint in this session
 setBreakpoint :: Breakpoint -> Debugger Bool
-setBreakpoint ModuleBreak{path, lineNum, columNum=_} = do
-  mod <- getModuleByPath path
-  hsc_env <- getSession
-  let breakpoint_count = 0 -- how many times to skip this breakpoint?
+setBreakpoint ModuleBreak{path, lineNum, columnNum} = do
+  hsc_env <- liftGhc getSession
+  let breakpoint_count = BA.breakOn -- enable bp.
 
-  -- ROMES:TODO: To find bi_tick_index, look at `breakByModuleLine` in
-  -- GHCi/UI.hs
-  GHC.setupBreakpoint hsc_env
-        BreakpointId { bi_tick_Mod = ms_mod mod
-                     , bi_tick_index = }
-        breakpoint_count
-  return True
+  mod <- getModuleByPath path
+
+  mticks <- liftGhc $ makeModuleLineMap (ms_mod mod)
+  let mbid = fst <$> do
+        ticks <- mticks
+        case columnNum of
+          Nothing -> findBreakByLine lineNum ticks
+          Just col -> findBreakByCoord (lineNum, col) ticks
+
+  case mbid of
+    Nothing -> do
+      liftIO $ putStrLn "TODO: HOW TO REPORT ERROR"
+      return False
+    Just bid -> do
+      liftGhc $
+        GHC.setupBreakpoint hsc_env
+            BreakpointId { bi_tick_mod = ms_mod mod
+                         , bi_tick_index = bid }
+            breakpoint_count
+      return True
 
 -- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
 doEval :: String -> Debugger EvalResult
-doEval exp = Debugger $ do
+doEval exp = liftGhc $ do
   -- consider always using :trace like ghci-dap to always have a stacktrace?
   -- better solution could involve profiling stack traces or from IPE info?
   GHC.execStmt exp GHC.execOptions >>= \case
@@ -75,11 +95,12 @@ getModuleByPath :: FilePath -> Debugger ModSummary
 getModuleByPath path = liftGhc $ do
   -- do this everytime as the loaded modules may have changed
   mg <- GHC.getModuleGraph
-  let matches ms = isLoadedModSummary ms && msHsFilePath ms `List.isSuffixOf` path
-  case filter matches (GHC.mgModSummaries mg) of
+  let matches ms = GHC.isLoadedModule (ms_unitid ms) (ms_mod_name ms)
+                    <&> (&& msHsFilePath ms `List.isSuffixOf` path)
+  filterM matches (GHC.mgModSummaries mg) >>= \case
     [x] -> return x
     [] -> error $ "No Module matched " ++ path
-    xs -> error $ "Too many modules (" ++ show xs ++ ") matched " ++ path
+    xs -> error $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path
 
 --------------------------------------------------------------------------------
 -- General utilities
@@ -87,7 +108,7 @@ getModuleByPath path = liftGhc $ do
 
 -- | Display an Outputable value as a String
 display :: Outputable a => a -> Debugger String
-display x = Debugger $ do
+display x = liftGhc $ do
   dflags <- getDynFlags
   return $ showSDoc dflags (ppr x)
 {-# INLINE display #-}
