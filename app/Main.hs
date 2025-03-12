@@ -59,10 +59,6 @@ data Settings = Settings
       , units :: [String]
       }
 
--- ROMES: No, this is no good. The logic for handling flags and setting up the
--- session correctly alone is almost enough to justify implementing
--- ghc-debugger as a ghc mode.
-
 main :: IO ()
 main = do
   ghcInvocationFlags <- getArgs
@@ -124,3 +120,4 @@ execute = \case
   DoContinue -> undefined
   DoStepLocal -> undefined
   DoSingleStep -> undefined
+
