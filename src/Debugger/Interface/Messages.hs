@@ -58,7 +58,7 @@ data Request
   | DebugExecution { entryPoint :: EntryPoint, runArgs :: [String] }
 
 -- | An entry point for program execution.
-data EntryPoint = MainEntry | FunctionEntry { fnName :: String }
+data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnName :: String }
   deriving (Show, Generic)
 
 -- | A breakpoint can be set/removed on functions by name, or in modules by

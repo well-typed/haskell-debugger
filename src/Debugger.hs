@@ -21,6 +21,7 @@ import GHC.Driver.Env
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 import qualified GHCi.Message as GHCi
 
+import Data.Maybe
 import Control.Monad.Reader
 import qualified Data.List.NonEmpty as NE
 import qualified Data.List as List
@@ -75,19 +76,24 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
 -- | Run a program with debugging enabled
 debugExecution :: EntryPoint -> [String] {-^ Args -} -> Debugger EvalResult
 debugExecution entry args = do
-  let
-    entryExp
-      | MainEntry        <- entry = "main"
-      | FunctionEntry fn <- entry = fn
 
   -- consider always using :trace like ghci-dap to always have a stacktrace?
   -- better solution could involve profiling stack traces or from IPE info?
 
-  wrapper <- mkEvalWrapper entryExp args
+  (entryExp, exOpts) <- case entry of
 
-  GHC.execStmt entryExp
-    GHC.execOptions{execWrap = \fhv -> GHCi.EvalApp (GHCi.EvalThis wrapper) (GHCi.EvalThis fhv)}
-      >>= handleExecResult
+    MainEntry nm -> do
+      let prog = fromMaybe "main" nm
+      wrapper <- mkEvalWrapper prog args -- bit weird that the prog name is the expression but fine
+      let execWrap' fhv = GHCi.EvalApp (GHCi.EvalThis wrapper) (GHCi.EvalThis fhv)
+          opts = GHC.execOptions {execWrap = execWrap'}
+      return (prog, opts)
+
+    FunctionEntry fn ->
+      return (fn ++ " " ++ unwords args, GHC.execOptions)
+
+  GHC.execStmt entryExp exOpts >>= handleExecResult
+
   where
     -- It's not ideal to duplicate these two functions from ghci, but its unclear where they would better live. Perhaps next to compileParsedExprRemote? The issue is run
     mkEvalWrapper :: GhcMonad m => String -> [String] ->  m ForeignHValue
@@ -100,6 +106,8 @@ debugExecution entry args = do
         evalWrapper' =
           GHC.nlHsVar $ RdrName.mkOrig gHC_INTERNAL_GHCI_HELPERS (mkVarOccFS (fsLit "evalWrapper"))
 
+    -- run internal here serves to overwrite certain flags while executing the
+    -- internal "evalWrapper" computation which is not relevant to the user.
     runInternal :: GhcMonad m => m a -> m a
     runInternal =
         withTempSession mkTempSession
