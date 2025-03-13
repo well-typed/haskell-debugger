@@ -48,6 +48,19 @@ data Request
   -- | Single step always to the next breakpoint. Used for "step-in".
   | DoSingleStep
 
+  -- | Execute a prog with debugging enabled. Breaks on the existing breakpoints.
+  --
+  -- Constructed with an entry point function name and the arguments to pass it.
+  --
+  -- When the @'EntryPoint'@ is @'Main'@, @'runArgs'@ are set as process
+  -- invocation arguments (as in @argv@) rather than passed directly as a
+  -- Haskell function arguments.
+  | DebugExecution { entryPoint :: EntryPoint, runArgs :: [String] }
+
+-- | An entry point for program execution.
+data EntryPoint = MainEntry | FunctionEntry { fnName :: String }
+  deriving (Show, Generic)
+
 -- | A breakpoint can be set/removed on functions by name, or in modules by
 -- line number. And, globally, for all exceptions, or just uncaught exceptions.
 data Breakpoint
@@ -67,6 +80,10 @@ data Response
   | DidSetBreakpoint Bool
   | DidRemoveBreakpoint Bool
   | DidClearBreakpoints
+  | DidContinue EvalResult
+  | DidStep EvalResult
+  | DidExec EvalResult
+  | StoppedEvent
 
 data EvalResult
   = EvalCompleted { resultVal :: String, resultType :: String }
@@ -88,9 +105,11 @@ instance ToJSON Request    where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Breakpoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EvalResult where toEncoding = genericToEncoding defaultOptions
+instance ToJSON EntryPoint where toEncoding = genericToEncoding defaultOptions
 
 instance FromJSON Request
 instance FromJSON Breakpoint
 instance FromJSON Response
 instance FromJSON EvalResult
+instance FromJSON EntryPoint
 

@@ -23,7 +23,6 @@ import GHC.Types.Unique.Supply as GHC
 import GHC.Runtime.Loader as GHC
 import GHC.Unit.Module.Env as GHC
 
-import Data.Bifunctor
 import Data.IORef
 import Data.Maybe
 import qualified Data.List.NonEmpty as NE

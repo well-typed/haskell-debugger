@@ -116,7 +116,8 @@ execute = \case
   GetVariables -> undefined
   GetSource -> undefined
   DoEval exp_s -> DidEval <$> doEval exp_s
-  DoContinue -> undefined
-  DoStepLocal -> undefined
-  DoSingleStep -> undefined
+  DoContinue -> DidContinue <$> doContinue
+  DoSingleStep -> DidStep <$> doSingleStep
+  DoStepLocal -> DidStep <$> doLocalStep
+  DebugExecution { entryPoint, runArgs } -> DidExec <$> debugExecution entryPoint runArgs
 
