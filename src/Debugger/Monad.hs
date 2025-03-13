@@ -15,6 +15,7 @@ import GHC.Driver.Phases as GHC
 import GHC.Driver.Pipeline as GHC
 import GHC.Driver.Config.Logger as GHC
 import GHC.Driver.Session.Units as GHC
+import GHC.Unit.Module.ModSummary as GHC
 import GHC.Driver.Session.Mode as GHC
 import GHC.Driver.Session.Lint as GHC
 import GHC.Utils.Monad as GHC
@@ -143,6 +144,12 @@ runDebugger libdir units ghcInvocation' (Debugger action) = do
 
     -- TODO: Shouldn't initLoaderState be called somewhere?
 
+    -- Set interactive context to import all loaded modules
+    -- TODO: Think about Note [GHCi and local Preludes] and what is done in `getImplicitPreludeImports`
+    let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
+    mss <- getAllLoadedModules
+    GHC.setContext $ preludeImp : map (GHC.IIDecl . GHC.simpleImportDecl . GHC.ms_mod_name) mss
+
     runReaderT action =<< initialDebuggerState
 
 -- | Registers or deletes a breakpoint from the list of active breakpoints that
@@ -201,6 +208,12 @@ getActiveBreakpoints = do
     | (mod, im) <- moduleEnvToList m
     , bix <- IM.keys im
     ]
+
+-- | List all loaded modules 'ModSummary's
+getAllLoadedModules :: GHC.GhcMonad m => m [GHC.ModSummary]
+getAllLoadedModules =
+  (GHC.mgModSummaries <$> GHC.getModuleGraph) >>=
+    filterM (\ms -> GHC.isLoadedModule (GHC.ms_unitid ms) (GHC.ms_mod_name ms))
 
 --------------------------------------------------------------------------------
 -- Utilities

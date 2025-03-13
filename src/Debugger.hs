@@ -155,7 +155,7 @@ handleExecResult = \case
           Just (a, b) -> return (EvalCompleted a b)
           Nothing     -> liftIO $ fail "doEval failed"
     ExecBreak {breakNames, breakPointId} ->
-      undefined
+      return EvalStopped
 
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
 --
@@ -194,12 +194,6 @@ getModuleByPath path = do
     [x] -> return x
     [] -> error $ "No Module matched " ++ path
     xs -> error $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path
-
--- | List all loaded modules 'ModSummary's
-getAllLoadedModules :: Debugger [ModSummary]
-getAllLoadedModules =
-  (GHC.mgModSummaries <$> GHC.getModuleGraph) >>=
-    filterM (\ms -> GHC.isLoadedModule (ms_unitid ms) (ms_mod_name ms))
 
 --------------------------------------------------------------------------------
 -- General utilities
