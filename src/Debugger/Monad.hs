@@ -23,6 +23,7 @@ import GHC.Types.Unique.Supply as GHC
 import GHC.Runtime.Loader as GHC
 import GHC.Unit.Module.Env as GHC
 
+import Data.Bifunctor
 import Data.IORef
 import Data.Maybe
 import qualified Data.List.NonEmpty as NE
@@ -153,7 +154,6 @@ registerBreakpoint :: GHC.BreakpointId -> BreakpointStatus -> Debugger Bool
 registerBreakpoint GHC.BreakpointId
                     { GHC.bi_tick_mod = mod
                     , GHC.bi_tick_index = bid } status = do
-  -- no races since the debugger execution is run in a single thread
   brksRef <- asks activeBreakpoints
   oldBrks <- liftIO $ readIORef brksRef
   let
@@ -189,8 +189,19 @@ registerBreakpoint GHC.BreakpointId
                   brks = extendModuleEnv oldBrks mod im'
                in (brks, True)
 
+  -- no races since the debugger execution is run in a single thread
   liftIO $ writeIORef brksRef newBrks
   return changed
+
+-- | Get a list with all currently active breakpoints
+getActiveBreakpoints :: Debugger [GHC.BreakpointId]
+getActiveBreakpoints = do
+  m <- asks activeBreakpoints >>= liftIO . readIORef
+  return $
+    [ GHC.BreakpointId mod bix
+    | (mod, im) <- moduleEnvToList m
+    , bix <- IM.keys im
+    ]
 
 --------------------------------------------------------------------------------
 -- Utilities

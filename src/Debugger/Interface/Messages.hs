@@ -66,6 +66,7 @@ data Response
   = DidEval EvalResult
   | DidSetBreakpoint Bool
   | DidRemoveBreakpoint Bool
+  | DidClearBreakpoints
 
 data EvalResult
   = EvalCompleted { resultVal :: String, resultType :: String }

@@ -9,10 +9,12 @@ import GHC.Driver.Ppr as GHC
 import GHC.Driver.DynFlags as GHC
 import GHC.Utils.Outputable as GHC
 import GHC.Unit.Module.ModSummary as GHC
+import GHC.Unit.Module.Env as GHC
 import qualified GHC.Runtime.Debugger as GHCD
 import GHC.Runtime.Debugger.Breakpoints
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 
+import Control.Monad.Reader
 import qualified Data.List.NonEmpty as NE
 import qualified Data.List as List
 import Data.IORef
@@ -26,7 +28,14 @@ import Debugger.Interface.Messages
 -- | Remove all breakpoints set on loaded modules
 clearBreakpoints :: Debugger ()
 clearBreakpoints = do
-  return undefined
+  hsc_env <- getSession
+  bids <- getActiveBreakpoints
+  forM_ bids $ \bid -> do
+    GHC.setupBreakpoint hsc_env bid (breakpointStatusInt BreakpointDisabled)
+
+  -- Clear out the state
+  bpsRef <- asks activeBreakpoints
+  liftIO $ writeIORef bpsRef emptyModuleEnv
 
 -- | Set a breakpoint in this session
 setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger Bool
@@ -44,7 +53,7 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
 
   case mbid of
     Nothing -> do
-      liftIO $ putStrLn "TODO: HOW TO REPORT ERROR"
+      liftIO $ putStrLn "todo: Reply saying breakpoint was not set because the line doesn't exist."
       return False
     Just bix -> do
       let bid = BreakpointId { bi_tick_mod = ms_mod mod

@@ -109,9 +109,9 @@ debugger requests replies Settings{libdir, units, ghcInvocation} =
 
 execute :: Request -> Debugger Response
 execute = \case
-  ClearBreakpoints -> undefined
-  SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint BreakpointEnabled bp
-  DelBreakpoint bp -> DidDelBreakpoint <$> setBreakpoint BreakpointDisabled bp
+  ClearBreakpoints -> DidClearBreakpoints <$ clearBreakpoints
+  SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp BreakpointEnabled
+  DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
   GetStacktrace -> undefined -- decide whether to use a different callstack mechanism or really use :hist?
   GetVariables -> undefined
   GetSource -> undefined
