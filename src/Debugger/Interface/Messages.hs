@@ -24,7 +24,10 @@ data Request
 
   -- | Clear all breakpoints in the specified file.
   -- This is useful because DAP's `setBreakpoints` re-sets all breakpoints from zero for a source rather than incrementally.
-  | ClearBreakpoints { file :: FilePath, breakpointKind :: BreakpointKind {-^ Whether to clear all function breakpoints or all module breakpoints -} }
+  | ClearModBreakpoints { file :: FilePath }
+
+  -- | Clear all function breakpoints
+  | ClearFunctionBreakpoints
 
   -- | Get the evaluation stacktrace until the current breakpoint.
   | GetStacktrace

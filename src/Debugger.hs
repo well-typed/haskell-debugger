@@ -27,14 +27,16 @@ import Data.IORef
 import Debugger.Monad
 import Debugger.Interface.Messages
 
--- | Remove all breakpoints set on the given loaded module by path
-clearBreakpoints :: FilePath -> BreakpointKind -> Debugger ()
-clearBreakpoints file kind = do
+-- | Remove all module breakpoints set on the given loaded module by path
+--
+-- If the argument is @Nothing@, clear all function breakpoints instead.
+clearBreakpoints :: Maybe FilePath -> Debugger ()
+clearBreakpoints mfile = do
   -- It would be simpler to go to all loaded modules and disable all
   -- breakpoints for that module rather than keeping track,
   -- but much less efficient at scale.
   hsc_env <- getSession
-  bids <- getActiveBreakpoints file kind
+  bids <- getActiveBreakpoints mfile
   forM_ bids $ \bid -> do
     GHC.setupBreakpoint hsc_env bid (breakpointStatusInt BreakpointDisabled)
 

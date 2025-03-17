@@ -1,12 +1,12 @@
 {-# LANGUAGE CPP, GeneralizedNewtypeDeriving, NamedFieldPuns, TupleSections, LambdaCase #-}
 module Debugger.Monad where
 
+import System.Exit
 import Control.Monad
 import Control.Monad.IO.Class
+import Control.Exception (assert)
 
 import Control.Monad.Catch
-
-import System.Exit
 
 import qualified GHC
 import qualified GHCi.BreakArray as BA
@@ -52,13 +52,16 @@ data DebuggerState = DebuggerState
 
 -- | Enabling/Disabling a breakpoint
 data BreakpointStatus
-      -- | Breakpoint is enabled
-      = BreakpointEnabled
       -- | Breakpoint is disabled
-      | BreakpointDisabled
+      --
+      -- Note: this must be the first constructor s.t.
+      --  @BreakpointDisabled < {BreakpointEnabled, BreakpointAfterCount}@
+      = BreakpointDisabled
+      -- | Breakpoint is enabled
+      | BreakpointEnabled
       -- | Breakpoint is disabled the first N times and enabled afterwards
       | BreakpointAfterCount Int
-      deriving (Eq)
+      deriving (Eq, Ord)
 
 --------------------------------------------------------------------------------
 -- Operations
@@ -210,18 +213,33 @@ registerBreakpoint bp@GHC.BreakpointId
   liftIO $ writeIORef brksRef newBrks
   return changed
 
--- | Get a list with all currently active breakpoints of a certain @BreakpointKind@ for a given module
-getActiveBreakpoints :: FilePath -> BreakpointKind -> Debugger [GHC.BreakpointId]
-getActiveBreakpoints file kind = do
-  ms <- getModuleByPath file
+-- | Get a list with all currently active breakpoints on the given module (by path)
+--
+-- If the path argument is @Nothing@, get all active function breakpoints instead
+getActiveBreakpoints :: Maybe FilePath -> Debugger [GHC.BreakpointId]
+getActiveBreakpoints mfile = do
   m <- asks activeBreakpoints >>= liftIO . readIORef
-  return $
-    [ GHC.BreakpointId mod bix
-    | (mod, im) <- moduleEnvToList m
-    , mod == ms_mod ms
-    , (bix, (_status, kind')) <- IM.assocs im
-    , kind == kind'
-    ]
+  case mfile of
+    Just file -> do
+      ms <- getModuleByPath file
+      return $
+        [ GHC.BreakpointId mod bix
+        | (mod, im) <- moduleEnvToList m
+        , mod == ms_mod ms
+        , bix <- IM.keys im
+        -- assert: status is always > disabled
+        ]
+    Nothing -> do
+      return $
+        [ GHC.BreakpointId mod bix
+        | (mod, im) <- moduleEnvToList m
+        , (bix, (status, kind)) <- IM.assocs im
+
+        -- Keep only function breakpoints in this case
+        , FunctionBreakpointKind == kind
+
+        , assert (status > BreakpointDisabled) True
+        ]
 
 -- | List all loaded modules 'ModSummary's
 getAllLoadedModules :: GHC.GhcMonad m => m [GHC.ModSummary]
