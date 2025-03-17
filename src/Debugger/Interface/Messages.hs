@@ -60,6 +60,9 @@ data Request
   -- Haskell function arguments.
   | DebugExecution { entryPoint :: EntryPoint, runArgs :: [String] }
 
+  -- | Terminate ghc-debugger and exit
+  | TerminateProcess
+
 -- | An entry point for program execution.
 data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnName :: String }
   deriving (Show, Generic)

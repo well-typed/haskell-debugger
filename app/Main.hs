@@ -41,6 +41,7 @@ import Control.Monad.Catch
 import GHC.IO.Handle
 import GHC.IO.Encoding
 import System.IO
+import System.Exit
 import System.Environment (getArgs)
 
 import Debugger
@@ -121,4 +122,8 @@ execute = \case
   DoSingleStep -> DidStep <$> doSingleStep
   DoStepLocal -> DidStep <$> doLocalStep
   DebugExecution { entryPoint, runArgs } -> DidExec <$> debugExecution entryPoint runArgs
+  TerminateProcess -> liftIO $ do
+    -- Terminate!
+    putStrLn "Goodbye..."
+    exitWith ExitSuccess
 

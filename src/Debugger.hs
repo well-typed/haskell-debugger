@@ -3,6 +3,7 @@ module Debugger where
 
 import Control.Monad
 import Control.Monad.IO.Class
+import Data.Bits (xor)
 
 import GHC
 import GHC.Driver.Ppr as GHC
@@ -26,6 +27,10 @@ import Data.IORef
 
 import Debugger.Monad
 import Debugger.Interface.Messages
+
+--------------------------------------------------------------------------------
+-- * Breakpoints
+--------------------------------------------------------------------------------
 
 -- | Remove all module breakpoints set on the given loaded module by path
 --
@@ -76,7 +81,27 @@ setBreakpoint FunctionBreak{function} bp_status = do
                                  , bi_tick_index = bix }
           registerBreakpoint bid bp_status FunctionBreakpointKind
         xs -> error ("Ambiguous breakpoint found by name " ++ function ++ ": " ++ show xs)
+setBreakpoint exception_bp bp_status = do
+  let ch_opt | BreakpointDisabled <- bp_status
+             = gopt_unset
+             | otherwise
+             = gopt_set
+      opt | OnUncaughtExceptionsBreak <- exception_bp
+          = Opt_BreakOnError
+          | OnExceptionsBreak <- exception_bp
+          = Opt_BreakOnException
+  dflags <- GHC.getInteractiveDynFlags
+  let
+    -- changed if option is ON and bp is OFF (breakpoint disabled), or if
+    -- option is OFF and bp is ON (i.e. XOR)
+    breakOn = bp_status /= BreakpointDisabled
+    didChange = gopt opt dflags `xor` breakOn
+  GHC.setInteractiveDynFlags $ dflags `ch_opt` opt
+  return didChange
 
+--------------------------------------------------------------------------------
+-- * Evaluation
+--------------------------------------------------------------------------------
 
 -- | Run a program with debugging enabled
 debugExecution :: EntryPoint -> [String] {-^ Args -} -> Debugger EvalResult
@@ -173,7 +198,7 @@ continueToCompletion = do
     ExecComplete{} -> return execr
 
 --------------------------------------------------------------------------------
--- Ghc utilities
+-- * GHC Utilities
 --------------------------------------------------------------------------------
 
 -- | Get the value and type of a given 'Name' as rendered strings.
@@ -190,7 +215,7 @@ inspectName n = do
         (,) <$> (display =<< GHCD.showTerm term) <*> display (GHCI.termType term)
 
 --------------------------------------------------------------------------------
--- General utilities
+-- * General utilities
 --------------------------------------------------------------------------------
 
 -- | Display an Outputable value as a String

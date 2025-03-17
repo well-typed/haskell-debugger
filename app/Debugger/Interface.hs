@@ -9,7 +9,6 @@ module Debugger.Interface
 
 import Control.Concurrent
 import Control.Monad
-
 import System.IO (stdin, stderr, hPutStrLn, Handle)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
