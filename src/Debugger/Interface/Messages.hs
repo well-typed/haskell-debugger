@@ -92,13 +92,30 @@ data BreakpointKind
 -- | The responses sent by `ghc-debugger` to the client
 data Response
   = DidEval EvalResult
-  | DidSetBreakpoint Bool
-  | DidRemoveBreakpoint Bool
+  | DidSetBreakpoint BreakFound
+  | DidRemoveBreakpoint BreakFound
   | DidClearBreakpoints
   | DidContinue EvalResult
   | DidStep EvalResult
   | DidExec EvalResult
   | StoppedEvent
+
+data BreakFound
+  = BreakFound
+    { changed :: !Bool
+    -- ^ Did the status of the found breakpoint change?
+    , startLine :: {-# UNPACK #-} !Int
+    -- ^ RealSrcSpan start line
+    , endLine :: {-# UNPACK #-} !Int
+    -- ^ RealSrcSpan end line
+    , startCol :: {-# UNPACK #-} !Int
+    -- ^ RealSrcSpan start col
+    , endCol :: {-# UNPACK #-} !Int
+    -- ^ RealSrcSpan end col
+    }
+  | BreakFoundNoLoc
+    { changed :: Bool }
+  deriving (Show, Generic)
 
 data EvalResult
   = EvalCompleted { resultVal :: String, resultType :: String }
@@ -121,6 +138,7 @@ instance ToJSON Breakpoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON BreakpointKind where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EvalResult where toEncoding = genericToEncoding defaultOptions
+instance ToJSON BreakFound where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EntryPoint where toEncoding = genericToEncoding defaultOptions
 
 instance FromJSON Request
@@ -128,5 +146,6 @@ instance FromJSON Breakpoint
 instance FromJSON BreakpointKind
 instance FromJSON Response
 instance FromJSON EvalResult
+instance FromJSON BreakFound
 instance FromJSON EntryPoint
 

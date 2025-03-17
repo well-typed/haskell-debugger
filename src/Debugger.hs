@@ -50,12 +50,12 @@ clearBreakpoints mfile = do
   liftIO $ writeIORef bpsRef emptyModuleEnv
 
 -- | Set a breakpoint in this session
-setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger Bool
+setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger BreakFound
 setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
   mod <- getModuleByPath path
 
   mticks <- makeModuleLineMap (ms_mod mod)
-  let mbid = fst <$> do
+  let mbid = do
         ticks <- mticks
         case columnNum of
           Nothing -> findBreakByLine lineNum ticks
@@ -64,22 +64,36 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
   case mbid of
     Nothing -> do
       liftIO $ putStrLn "todo: Reply saying breakpoint was not set because the line doesn't exist."
-      return False
-    Just bix -> do
+      return $ BreakFoundNoLoc False
+    Just (bix, span) -> do
       let bid = BreakpointId { bi_tick_mod = ms_mod mod
                              , bi_tick_index = bix }
-      registerBreakpoint bid bp_status ModuleBreakpointKind
+      changed <- registerBreakpoint bid bp_status ModuleBreakpointKind
+      return $ BreakFound
+        { changed = changed
+        , startLine = srcSpanStartLine span
+        , endLine = srcSpanEndLine span
+        , startCol = srcSpanStartCol span
+        , endCol = srcSpanEndCol span
+        }
 setBreakpoint FunctionBreak{function} bp_status = do
   resolveFunctionBreakpoint function >>= \case
     Left e -> error (showPprUnsafe e)
     Right (mod, mod_info, fun_str) -> do
       let modBreaks = GHC.modInfoModBreaks mod_info
-      case (findBreakForBind fun_str modBreaks) of
+      case findBreakForBind fun_str modBreaks of
         [] -> error ("No breakpoint found by name " ++ function)
-        [(bix, _span)] -> do
+        [(bix, span)] -> do
           let bid = BreakpointId { bi_tick_mod = mod
                                  , bi_tick_index = bix }
-          registerBreakpoint bid bp_status FunctionBreakpointKind
+          changed <- registerBreakpoint bid bp_status FunctionBreakpointKind
+          return $ BreakFound
+            { changed = changed
+            , startLine = srcSpanStartLine span
+            , endLine = srcSpanEndLine span
+            , startCol = srcSpanStartCol span
+            , endCol = srcSpanEndCol span
+            }
         xs -> error ("Ambiguous breakpoint found by name " ++ function ++ ": " ++ show xs)
 setBreakpoint exception_bp bp_status = do
   let ch_opt | BreakpointDisabled <- bp_status
@@ -97,7 +111,7 @@ setBreakpoint exception_bp bp_status = do
     breakOn = bp_status /= BreakpointDisabled
     didChange = gopt opt dflags `xor` breakOn
   GHC.setInteractiveDynFlags $ dflags `ch_opt` opt
-  return didChange
+  return (BreakFoundNoLoc didChange)
 
 --------------------------------------------------------------------------------
 -- * Evaluation
