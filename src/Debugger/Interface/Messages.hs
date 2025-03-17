@@ -22,9 +22,9 @@ data Request
   -- | Delete a breakpoint on a given function, or module by line number
   | DelBreakpoint Breakpoint
 
-  -- | Clear all breakpoints.
-  -- This is useful considering DAP re-sets all breakpoints from zero rather than incrementally.
-  | ClearBreakpoints
+  -- | Clear all breakpoints in the specified file.
+  -- This is useful because DAP's `setBreakpoints` re-sets all breakpoints from zero for a source rather than incrementally.
+  | ClearBreakpoints { file :: FilePath, breakpointKind :: BreakpointKind {-^ Whether to clear all function breakpoints or all module breakpoints -} }
 
   -- | Get the evaluation stacktrace until the current breakpoint.
   | GetStacktrace
@@ -65,10 +65,19 @@ data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnNa
 -- line number. And, globally, for all exceptions, or just uncaught exceptions.
 data Breakpoint
   = ModuleBreak { path :: FilePath, lineNum :: Int, columnNum :: Maybe Int }
-  | FunctionBreak String
+  | FunctionBreak { function :: String }
   | OnExceptionsBreak
   | OnUncaughtExceptionsBreak
   deriving (Show, Generic)
+
+-- | What kind of breakpoint are we referring to, module or function breakpoints?
+-- Used e.g. in the 'ClearBreakpoints' request
+data BreakpointKind
+  -- | Module breakpoints
+  = ModuleBreakpointKind
+  -- | Function breakpoints
+  | FunctionBreakpointKind
+  deriving (Show, Generic, Eq)
 
 --------------------------------------------------------------------------------
 -- Responses
@@ -103,12 +112,14 @@ deriving instance Generic Response
 
 instance ToJSON Request    where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Breakpoint where toEncoding = genericToEncoding defaultOptions
+instance ToJSON BreakpointKind where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EvalResult where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EntryPoint where toEncoding = genericToEncoding defaultOptions
 
 instance FromJSON Request
 instance FromJSON Breakpoint
+instance FromJSON BreakpointKind
 instance FromJSON Response
 instance FromJSON EvalResult
 instance FromJSON EntryPoint

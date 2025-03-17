@@ -18,6 +18,7 @@ import GHC.Driver.Session.Units as GHC
 import GHC.Unit.Module.ModSummary as GHC
 import GHC.Driver.Session.Mode as GHC
 import GHC.Driver.Session.Lint as GHC
+import GHC.Utils.Outputable as GHC
 import GHC.Utils.Monad as GHC
 import GHC.Utils.Logger as GHC
 import GHC.Types.Unique.Supply as GHC
@@ -32,6 +33,8 @@ import qualified Data.IntMap as IM
 
 import Control.Monad.Reader
 
+import Debugger.Interface.Messages
+
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
   deriving ( Functor, Applicative, Monad, MonadIO
@@ -42,7 +45,7 @@ newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
 --
 -- - Keep track of active breakpoints to easily unset them all.
 data DebuggerState = DebuggerState
-      { activeBreakpoints :: IORef (ModuleEnv (IM.IntMap BreakpointStatus))
+      { activeBreakpoints :: IORef (ModuleEnv (IM.IntMap (BreakpointStatus, BreakpointKind)))
         -- ^ Maps a 'BreakpointId' in Trie representation to the
         -- 'BreakpointStatus' it was activated with.
       }
@@ -152,14 +155,22 @@ runDebugger libdir units ghcInvocation' (Debugger action) = do
 
     runReaderT action =<< initialDebuggerState
 
--- | Registers or deletes a breakpoint from the list of active breakpoints that
--- is kept in 'DebuggerState', depending on the 'BreakpointStatus' being set.
+-- | Registers or deletes a breakpoint in the GHC session and from the list of
+-- active breakpoints that is kept in 'DebuggerState', depending on the
+-- 'BreakpointStatus' being set.
 --
 -- Returns @True@ when the breakpoint status is changed.
-registerBreakpoint :: GHC.BreakpointId -> BreakpointStatus -> Debugger Bool
-registerBreakpoint GHC.BreakpointId
+registerBreakpoint :: GHC.BreakpointId -> BreakpointStatus -> BreakpointKind -> Debugger Bool
+registerBreakpoint bp@GHC.BreakpointId
                     { GHC.bi_tick_mod = mod
-                    , GHC.bi_tick_index = bid } status = do
+                    , GHC.bi_tick_index = bid } status kind = do
+
+  -- Set breakpoint in GHC session
+  let breakpoint_count = breakpointStatusInt status
+  hsc_env <- GHC.getSession
+  GHC.setupBreakpoint hsc_env bp breakpoint_count
+
+  -- Register breakpoint in Debugger state
   brksRef <- asks activeBreakpoints
   oldBrks <- liftIO $ readIORef brksRef
   let
@@ -177,21 +188,21 @@ registerBreakpoint GHC.BreakpointId
       -- We're enabling the breakpoint:
       _ -> case lookupModuleEnv oldBrks mod of
         Nothing ->
-          let im   = IM.singleton bid status
+          let im   = IM.singleton bid (status, kind)
               brks = extendModuleEnv oldBrks mod im
            in (brks, True)
         Just im -> case IM.lookup bid im of
           Nothing ->
             -- Not yet in IntMap, extend with new Breakpoint
-            let im' = IM.insert bid status im
+            let im' = IM.insert bid (status, kind) im
                 brks = extendModuleEnv oldBrks mod im'
              in (brks, True)
-          Just status' ->
+          Just (status', _kind) ->
             -- Found in IntMap
             if status' == status then
               (oldBrks, False)
             else
-              let im'  = IM.insert bid status im
+              let im'  = IM.insert bid (status, kind) im
                   brks = extendModuleEnv oldBrks mod im'
                in (brks, True)
 
@@ -199,14 +210,17 @@ registerBreakpoint GHC.BreakpointId
   liftIO $ writeIORef brksRef newBrks
   return changed
 
--- | Get a list with all currently active breakpoints
-getActiveBreakpoints :: Debugger [GHC.BreakpointId]
-getActiveBreakpoints = do
+-- | Get a list with all currently active breakpoints of a certain @BreakpointKind@ for a given module
+getActiveBreakpoints :: FilePath -> BreakpointKind -> Debugger [GHC.BreakpointId]
+getActiveBreakpoints file kind = do
+  ms <- getModuleByPath file
   m <- asks activeBreakpoints >>= liftIO . readIORef
   return $
     [ GHC.BreakpointId mod bix
     | (mod, im) <- moduleEnvToList m
-    , bix <- IM.keys im
+    , mod == ms_mod ms
+    , (bix, (_status, kind')) <- IM.assocs im
+    , kind == kind'
     ]
 
 -- | List all loaded modules 'ModSummary's
@@ -214,6 +228,17 @@ getAllLoadedModules :: GHC.GhcMonad m => m [GHC.ModSummary]
 getAllLoadedModules =
   (GHC.mgModSummaries <$> GHC.getModuleGraph) >>=
     filterM (\ms -> GHC.isLoadedModule (GHC.ms_unitid ms) (GHC.ms_mod_name ms))
+
+-- | Get a 'ModSummary' of a loaded module given its 'FilePath'
+getModuleByPath :: FilePath -> Debugger ModSummary
+getModuleByPath path = do
+  -- do this everytime as the loaded modules may have changed
+  lms <- getAllLoadedModules
+  let matches ms = msHsFilePath ms `List.isSuffixOf` path
+  case filter matches lms of
+    [x] -> return x
+    [] -> error $ "No Module matched " ++ path
+    xs -> error $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path
 
 --------------------------------------------------------------------------------
 -- Utilities

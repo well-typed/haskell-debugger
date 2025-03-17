@@ -8,7 +8,6 @@ import GHC
 import GHC.Driver.Ppr as GHC
 import GHC.Driver.DynFlags as GHC
 import GHC.Utils.Outputable as GHC
-import GHC.Unit.Module.ModSummary as GHC
 import GHC.Unit.Module.Env as GHC
 import GHC.Data.FastString
 import qualified GHC.Runtime.Debugger as GHCD
@@ -23,24 +22,19 @@ import qualified GHCi.Message as GHCi
 
 import Data.Maybe
 import Control.Monad.Reader
-import qualified Data.List.NonEmpty as NE
-import qualified Data.List as List
 import Data.IORef
-
-import Data.Array
-import qualified Data.IntMap as IM
 
 import Debugger.Monad
 import Debugger.Interface.Messages
 
--- | Remove all breakpoints set on loaded modules
-clearBreakpoints :: Debugger ()
-clearBreakpoints = do
+-- | Remove all breakpoints set on the given loaded module by path
+clearBreakpoints :: FilePath -> BreakpointKind -> Debugger ()
+clearBreakpoints file kind = do
   -- It would be simpler to go to all loaded modules and disable all
   -- breakpoints for that module rather than keeping track,
   -- but much less efficient at scale.
   hsc_env <- getSession
-  bids <- getActiveBreakpoints
+  bids <- getActiveBreakpoints file kind
   forM_ bids $ \bid -> do
     GHC.setupBreakpoint hsc_env bid (breakpointStatusInt BreakpointDisabled)
 
@@ -51,8 +45,6 @@ clearBreakpoints = do
 -- | Set a breakpoint in this session
 setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger Bool
 setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
-  hsc_env <- getSession
-  let breakpoint_count = breakpointStatusInt bp_status
   mod <- getModuleByPath path
 
   mticks <- makeModuleLineMap (ms_mod mod)
@@ -69,8 +61,19 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
     Just bix -> do
       let bid = BreakpointId { bi_tick_mod = ms_mod mod
                              , bi_tick_index = bix }
-      GHC.setupBreakpoint hsc_env bid breakpoint_count
-      registerBreakpoint bid bp_status
+      registerBreakpoint bid bp_status ModuleBreakpointKind
+setBreakpoint FunctionBreak{function} bp_status = do
+  resolveFunctionBreakpoint function >>= \case
+    Left e -> error (showPprUnsafe e)
+    Right (mod, mod_info, fun_str) -> do
+      let modBreaks = GHC.modInfoModBreaks mod_info
+      case (findBreakForBind fun_str modBreaks) of
+        [] -> error ("No breakpoint found by name " ++ function)
+        [(bix, _span)] -> do
+          let bid = BreakpointId { bi_tick_mod = mod
+                                 , bi_tick_index = bix }
+          registerBreakpoint bid bp_status FunctionBreakpointKind
+        xs -> error ("Ambiguous breakpoint found by name " ++ function ++ ": " ++ show xs)
 
 
 -- | Run a program with debugging enabled
@@ -183,17 +186,6 @@ inspectName n = do
       AnId i -> do
         term <- GHC.obtainTermFromId 100{-depth-} False{- only force on request (command)-} i
         (,) <$> (display =<< GHCD.showTerm term) <*> display (GHCI.termType term)
-
--- | Get a 'ModSummary' of a loaded module given its 'FilePath'
-getModuleByPath :: FilePath -> Debugger ModSummary
-getModuleByPath path = do
-  -- do this everytime as the loaded modules may have changed
-  lms <- getAllLoadedModules
-  let matches ms = msHsFilePath ms `List.isSuffixOf` path
-  case filter matches lms of
-    [x] -> return x
-    [] -> error $ "No Module matched " ++ path
-    xs -> error $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path
 
 --------------------------------------------------------------------------------
 -- General utilities
