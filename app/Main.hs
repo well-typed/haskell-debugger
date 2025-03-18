@@ -63,7 +63,7 @@ main :: IO ()
 main = do
   ghcInvocationFlags <- getArgs
 
-  setLocaleEncoding utf8
+  -- setLocaleEncoding utf8
 
   -- Duplicate @stdout@ as @hout@ and move @stdout@ to @stderr@. @hout@ still
   -- points to the standard output, which is now written exclusively by the sender.
@@ -71,7 +71,8 @@ main = do
   hout <- hDuplicate stdout
   stderr `hDuplicateTo` stdout
 
-  hSetBuffering stdout NoBuffering
+  hSetBuffering hout LineBuffering
+  hSetBuffering stdout LineBuffering -- ? the same handle as below?
   hSetBuffering stderr LineBuffering
 
   requests <- newChan
