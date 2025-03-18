@@ -99,6 +99,7 @@ data Response
   | DidStep EvalResult
   | DidExec EvalResult
   | StoppedEvent
+  | Aborted String
 
 data BreakFound
   = BreakFound

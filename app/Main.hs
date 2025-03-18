@@ -106,7 +106,9 @@ debugger requests replies Settings{libdir, units, ghcInvocation} =
       either bad reply resp
   where
     reply = liftIO . writeChan replies
-    bad   = liftIO . hPutStrLn stderr
+    bad m = liftIO $ do
+      hPutStrLn stderr m
+      writeChan replies (Aborted m)
 
 execute :: Request -> Debugger Response
 execute = \case
