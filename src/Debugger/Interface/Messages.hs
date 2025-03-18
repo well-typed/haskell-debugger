@@ -120,7 +120,7 @@ data BreakFound
 data EvalResult
   = EvalCompleted { resultVal :: String, resultType :: String }
   | EvalException { resultVal :: String, resultType :: String }
-  | EvalStopped
+  | EvalStopped   { exception :: Bool {-^ Did we stop at an exception (@True@) or at a breakpoint (@False@)? -} }
   deriving (Show, Generic)
 
 --------------------------------------------------------------------------------

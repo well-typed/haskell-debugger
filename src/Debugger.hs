@@ -198,8 +198,12 @@ handleExecResult = \case
         Right (n:ns) -> inspectName n >>= \case
           Just (a, b) -> return (EvalCompleted a b)
           Nothing     -> liftIO $ fail "doEval failed"
+    ExecBreak {breakNames, breakPointId=Nothing} ->
+      -- Stopped at an exception
+      -- todo: force exception to display string of exception?
+      return EvalStopped{exception = True}
     ExecBreak {breakNames, breakPointId} ->
-      return EvalStopped
+      return EvalStopped{exception = False}
 
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
 --
