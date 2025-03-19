@@ -1,6 +1,7 @@
-{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase #-}
+{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase, DuplicateRecordFields #-}
 module Debugger where
 
+import System.Exit
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Bits (xor)
@@ -13,6 +14,7 @@ import GHC.Unit.Module.Env as GHC
 import GHC.Data.FastString
 import qualified GHC.Runtime.Debugger as GHCD
 import GHC.Runtime.Debugger.Breakpoints
+import GHC.Types.Breakpoint
 import GHC.Types.Name.Reader as RdrName (mkOrig)
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Types.Name.Occurrence
@@ -27,6 +29,30 @@ import Data.IORef
 
 import Debugger.Monad
 import Debugger.Interface.Messages
+
+--------------------------------------------------------------------------------
+-- * Executing commands
+--------------------------------------------------------------------------------
+
+-- | Execute the given debugger command in the current 'Debugger' session
+execute :: Command -> Debugger Response
+execute = \case
+  ClearFunctionBreakpoints -> DidClearBreakpoints <$ clearBreakpoints Nothing
+  ClearModBreakpoints fp -> DidClearBreakpoints <$ clearBreakpoints (Just fp)
+  SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp BreakpointEnabled
+  DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
+  GetStacktrace -> undefined -- decide whether to use a different callstack mechanism or really use :hist?
+  GetVariables -> undefined
+  GetSource -> undefined
+  DoEval exp_s -> DidEval <$> doEval exp_s
+  DoContinue -> DidContinue <$> doContinue
+  DoSingleStep -> DidStep <$> doSingleStep
+  DoStepLocal -> DidStep <$> doLocalStep
+  DebugExecution { entryPoint, runArgs } -> DidExec <$> debugExecution entryPoint runArgs
+  TerminateProcess -> liftIO $ do
+    -- Terminate!
+    putStrLn "Goodbye..."
+    exitWith ExitSuccess
 
 --------------------------------------------------------------------------------
 -- * Breakpoints
@@ -75,6 +101,7 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
         , endLine = srcSpanEndLine span
         , startCol = srcSpanStartCol span
         , endCol = srcSpanEndCol span
+        , breakId = bid
         }
 setBreakpoint FunctionBreak{function} bp_status = do
   resolveFunctionBreakpoint function >>= \case
@@ -93,6 +120,7 @@ setBreakpoint FunctionBreak{function} bp_status = do
             , endLine = srcSpanEndLine span
             , startCol = srcSpanStartCol span
             , endCol = srcSpanEndCol span
+            , breakId = bid
             }
         xs -> error ("Ambiguous breakpoint found by name " ++ function ++ ": " ++ show xs)
 setBreakpoint exception_bp bp_status = do
@@ -201,9 +229,9 @@ handleExecResult = \case
     ExecBreak {breakNames, breakPointId=Nothing} ->
       -- Stopped at an exception
       -- todo: force exception to display string of exception?
-      return EvalStopped{exception = True}
+      return EvalStopped{breakId = Nothing}
     ExecBreak {breakNames, breakPointId} ->
-      return EvalStopped{exception = False}
+      return EvalStopped{breakId = toBreakpointId <$> breakPointId}
 
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
 --

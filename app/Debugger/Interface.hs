@@ -17,10 +17,10 @@ import qualified Data.Aeson as Aeson
 
 import Debugger.Interface.Messages
 
--- | Listens for 'Request' messages, deserializes them, and writes them to the given 'Chan', forever.
+-- | Listens for 'Command' messages, deserializes them, and writes them to the given 'Chan', forever.
 --
 -- Listens for requests in JSON format on stdin.
-receiver :: Chan Request -> IO ()
+receiver :: Chan Command -> IO ()
 receiver requests = forever $ do
   l <- BS.hGetLine stdin
   case Aeson.eitherDecode (BSL.fromStrict l) of

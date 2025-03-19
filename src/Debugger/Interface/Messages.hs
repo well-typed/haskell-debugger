@@ -1,20 +1,26 @@
 {-# LANGUAGE DeriveGeneric,
-             StandaloneDeriving
+             StandaloneDeriving,
+             OverloadedStrings,
+             DuplicateRecordFields
              #-}
 
 -- | Types for sending and receiving messages to/from ghc-debugger
 module Debugger.Interface.Messages where
 
+import qualified Data.ByteString.Char8 as BS
+import qualified Data.Binary as B
 import GHC.Generics
 import Data.Aeson
+import qualified GHC
+import qualified GHC.Utils.Outputable as GHC
+import GHC.Unit.Types () -- Binary
 
 --------------------------------------------------------------------------------
--- Requests
+-- Commands
 --------------------------------------------------------------------------------
 
--- | The requests sent by the client to `ghc-debugger`
-data Request
--- TODO: DAPLAUNCH? DAPCONTEXTMODULES? DAPSCOPES?
+-- | The commands sent to ghc debugger
+data Command
 
   -- | Set a breakpoint on a given function, or module by line number
   = SetBreakpoint Breakpoint
@@ -31,6 +37,7 @@ data Request
 
   -- | Get the evaluation stacktrace until the current breakpoint.
   | GetStacktrace
+
   -- | Get the variables in scope for the current breakpoint.
   --
   -- Note: for GHCs <9.13 this only reports the variables free in the expression
@@ -45,9 +52,10 @@ data Request
 
   -- | Continue executing from the current breakpoint
   | DoContinue
+
   -- | Step local, which executes until next breakpoint in the same function.
-  -- Used for "step-next".
   | DoStepLocal
+
   -- | Single step always to the next breakpoint. Used for "step-in".
   | DoSingleStep
 
@@ -113,6 +121,8 @@ data BreakFound
     -- ^ RealSrcSpan start col
     , endCol :: {-# UNPACK #-} !Int
     -- ^ RealSrcSpan end col
+    , breakId :: GHC.BreakpointId
+    -- ^ Internal breakpoint identifier (module + ix)
     }
   | BreakFoundNoLoc
     { changed :: Bool }
@@ -121,20 +131,20 @@ data BreakFound
 data EvalResult
   = EvalCompleted { resultVal :: String, resultType :: String }
   | EvalException { resultVal :: String, resultType :: String }
-  | EvalStopped   { exception :: Bool {-^ Did we stop at an exception (@True@) or at a breakpoint (@False@)? -} }
+  | EvalStopped   { breakId :: Maybe GHC.BreakpointId {-^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)? -} }
   deriving (Show, Generic)
 
 --------------------------------------------------------------------------------
 -- Instances
 --------------------------------------------------------------------------------
 
-deriving instance Show Request
-deriving instance Generic Request
+deriving instance Show Command
+deriving instance Generic Command
 
 deriving instance Show Response
 deriving instance Generic Response
 
-instance ToJSON Request    where toEncoding = genericToEncoding defaultOptions
+instance ToJSON Command    where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Breakpoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON BreakpointKind where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
@@ -142,11 +152,22 @@ instance ToJSON EvalResult where toEncoding = genericToEncoding defaultOptions
 instance ToJSON BreakFound where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EntryPoint where toEncoding = genericToEncoding defaultOptions
 
-instance FromJSON Request
+instance FromJSON Command
 instance FromJSON Breakpoint
 instance FromJSON BreakpointKind
 instance FromJSON Response
 instance FromJSON EvalResult
 instance FromJSON BreakFound
 instance FromJSON EntryPoint
+
+instance Show GHC.BreakpointId where
+  show (GHC.BreakpointId m ix) = "BreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix
+instance ToJSON GHC.BreakpointId where
+  toJSON (GHC.BreakpointId m ix) =
+    undefined -- todo: why isn't Binary Module available here? it should exist
+    -- object [ "module" .= BS.unpack (BS.toStrict (B.encode m))
+    --        , "ix" .= ix
+    --        ]
+instance FromJSON GHC.BreakpointId where
+  parseJSON = undefined -- for now, while developing with `dap` that needs no JSON
 

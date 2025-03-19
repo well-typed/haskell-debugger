@@ -95,9 +95,9 @@ mkSettings flags = Settings
   , units  = mapMaybe (\case ("-unit", u) -> Just u; _ -> Nothing) $ zip flags (drop 1 flags)
   }
 
--- | The main worker. Runs a GHC session which executes 'Request's received from
--- the given @'Chan' 'Request'@ and writes 'Response's to the @'Chan' 'Response'@ channel.
-debugger :: Chan Request -> Chan Response -> Settings -> IO ()
+-- | The main worker. Runs a GHC session which executes 'Command's received from
+-- the given @'Chan' 'Command'@ and writes 'Response's to the @'Chan' 'Response'@ channel.
+debugger :: Chan Command -> Chan Response -> Settings -> IO ()
 debugger requests replies Settings{libdir, units, ghcInvocation} =
   runDebugger libdir units ghcInvocation $
     forever $ do
@@ -110,23 +110,4 @@ debugger requests replies Settings{libdir, units, ghcInvocation} =
     bad m = liftIO $ do
       hPutStrLn stderr m
       writeChan replies (Aborted m)
-
-execute :: Request -> Debugger Response
-execute = \case
-  ClearFunctionBreakpoints -> DidClearBreakpoints <$ clearBreakpoints Nothing
-  ClearModBreakpoints fp -> DidClearBreakpoints <$ clearBreakpoints (Just fp)
-  SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp BreakpointEnabled
-  DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
-  GetStacktrace -> undefined -- decide whether to use a different callstack mechanism or really use :hist?
-  GetVariables -> undefined
-  GetSource -> undefined
-  DoEval exp_s -> DidEval <$> doEval exp_s
-  DoContinue -> DidContinue <$> doContinue
-  DoSingleStep -> DidStep <$> doSingleStep
-  DoStepLocal -> DidStep <$> doLocalStep
-  DebugExecution { entryPoint, runArgs } -> DidExec <$> debugExecution entryPoint runArgs
-  TerminateProcess -> liftIO $ do
-    -- Terminate!
-    putStrLn "Goodbye..."
-    exitWith ExitSuccess
 
