@@ -59,7 +59,7 @@ commandSetFunctionBreakpoints = do
 -- | Execute adaptor command set exception breakpoints
 commandSetExceptionBreakpoints :: DebugAdaptor ()
 commandSetExceptionBreakpoints = do
-  s@SetExceptionBreakpointsArguments{..} <- getArguments
+  SetExceptionBreakpointsArguments{..} <- getArguments
 
   -- Clear old exception breakpoints
   DidRemoveBreakpoint _ <- sendSync (DelBreakpoint OnExceptionsBreak)

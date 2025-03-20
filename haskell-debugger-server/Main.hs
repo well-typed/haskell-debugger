@@ -34,7 +34,8 @@ getConfig = do
     hostDefault = "0.0.0.0"
     portDefault = 4711
     capabilities = defaultCapabilities
-      { exceptionBreakpointFilters            = [ defaultExceptionBreakpointsFilter
+      { -- Exception breakpoints!
+        exceptionBreakpointFilters            = [ defaultExceptionBreakpointsFilter
                                                   { exceptionBreakpointsFilterLabel = "All exceptions"
                                                   , exceptionBreakpointsFilterFilter = BREAK_ON_EXCEPTION
                                                   }
@@ -43,6 +44,9 @@ getConfig = do
                                                   , exceptionBreakpointsFilterFilter = BREAK_ON_ERROR
                                                   }
                                                 ]
+        -- Function breakpoints!
+      , supportsFunctionBreakpoints           = True
+
       , supportsBreakpointLocationsRequest    = False -- display which breakpoints are valid when user intends to set breakpoint on given line. this happens before actually setting the breakpoint if I understand correctly.
       , supportsConfigurationDoneRequest      = True
       , supportsHitConditionalBreakpoints     = False

@@ -1,3 +1,5 @@
-# Tasks To Do
+# Features
 
-- [ ] Rename to `haskell-debugger-server`
+- [x] Module breakpoints
+- [x] Function breakpoints
+- [x] Exception breakpoints
