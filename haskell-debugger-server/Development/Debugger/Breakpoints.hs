@@ -60,9 +60,24 @@ commandSetFunctionBreakpoints = do
 commandSetExceptionBreakpoints :: DebugAdaptor ()
 commandSetExceptionBreakpoints = do
   s@SetExceptionBreakpointsArguments{..} <- getArguments
-  -- ROMES:TODO:Implement exceptions breakpoints (see how I did it in HDA)
-  logInfo $ BL8.pack $ "Set Exceptions: " ++ show s
-  sendSetExceptionBreakpointsResponse []
+
+  -- Clear old exception breakpoints
+  DidRemoveBreakpoint _ <- sendSync (DelBreakpoint OnExceptionsBreak)
+  DidRemoveBreakpoint _ <- sendSync (DelBreakpoint OnUncaughtExceptionsBreak)
+
+  let breakOnExceptions = BREAK_ON_EXCEPTION `elem` setExceptionBreakpointsArgumentsFilters
+  let breakOnError      = BREAK_ON_ERROR `elem` setExceptionBreakpointsArgumentsFilters
+
+  when breakOnExceptions $ do
+    DidSetBreakpoint _ <- sendSync (SetBreakpoint OnExceptionsBreak)
+    pure ()
+
+  when breakOnError $ do
+    DidSetBreakpoint _ <- sendSync (SetBreakpoint OnUncaughtExceptionsBreak)
+    pure ()
+
+  sendSetExceptionBreakpointsResponse
+    [ defaultBreakpoint | True <- [breakOnError, breakOnExceptions] ]
 
 --------------------------------------------------------------------------------
 -- * Aux
@@ -78,8 +93,11 @@ pattern BREAK_ON_ERROR = "break-on-error"
 registerBreakFound :: BreakFound -> DebugAdaptor DAP.Breakpoint
 registerBreakFound b =
   case b of
-    BreakFoundNoLoc _ch ->
-      -- exception breakpoint
+    BreakFoundNoLoc _ch -> do
+
+      logInfo $ BL8.pack $ "BreakFoundNoLoc " ++ show b
+
+      -- exception breakpoint (TODO: wait, not necessarily!?!?, also a failure mode, BAD)
       pure DAP.defaultBreakpoint {
         DAP.breakpointVerified = True
       }
