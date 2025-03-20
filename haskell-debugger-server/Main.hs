@@ -47,10 +47,11 @@ getConfig = do
         -- Function breakpoints!
       , supportsFunctionBreakpoints           = True
 
+      , supportsEvaluateForHovers             = False -- TODO: Use :print for single-variable, evaluate for the rest. Must match on evaluate type.
+
       , supportsBreakpointLocationsRequest    = False -- display which breakpoints are valid when user intends to set breakpoint on given line. this happens before actually setting the breakpoint if I understand correctly.
       , supportsConfigurationDoneRequest      = True
       , supportsHitConditionalBreakpoints     = False
-      , supportsEvaluateForHovers             = False -- TODO!!!
       , supportsModulesRequest                = False
       , additionalModuleColumns               = [ defaultColumnDescriptor
                                                   { columnDescriptorAttributeName = "Extra"
@@ -209,6 +210,10 @@ talk CommandNext = do
 talk CommandStepIn = do
   DidStep er <- sendInterleaved DoSingleStep sendStepInResponse
   handleEvalResult True er
+talk CommandStepOut = do
+  -- TODO: How to implement? Perhaps by step-local until the end of the function and then SingleStep?--no, that could still go "inside" the last statement
+  -- Do they say in the paper?
+  undefined
 ----------------------------------------------------------------------------
 talk CommandEvaluate = do
   EvaluateArguments {..} <- getArguments
