@@ -6,3 +6,8 @@
 
 3. Select "Extension" under the green arrow on the Debugger Tab and click F5
 
+4. In the window that pops up with the sample workspace, do "Create
+   launch.json".
+
+5. Ready to try it out
+

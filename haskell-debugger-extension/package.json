@@ -123,13 +123,19 @@
         "configurationAttributes": {
           "launch": {
             "required": [
+              "projectRoot",
               "entryFile"
             ],
             "properties": {
+              "projectRoot": {
+                "type": "string",
+                "description": "Absolute path to the project root.",
+                "default": "${workspaceFolder}"
+              },
               "entryFile": {
                 "type": "string",
-                "description": "Absolute path to the file with the entry point.",
-                "default": "${workspaceFolder}/app/Main.hs"
+                "description": "Path to the file with the entry point, relative to the root",
+                "default": "app/Main.hs"
               },
               "entryPoint": {
                 "type": "string",
@@ -149,7 +155,8 @@
             "type": "ghc-debugger",
             "request": "launch",
             "name": "Haskell Debugger",
-            "entryFile": "${workspaceFolder}/app/Main.hs",
+            "projectRoot": "${workspaceFolder}",
+            "entryFile": "app/Main.hs",
             "entryPoint": "main",
             "entryArgs": []
           }
@@ -162,7 +169,8 @@
               "type": "ghc-debugger",
               "request": "launch",
               "name": "Haskell Debugger",
-              "entryFile": "^\"\\${workspaceFolder}/app/Main.hs\"",
+              "projectRoot": "^\"\\${workspaceFolder}\"",
+              "entryFile": "app/Main.hs",
               "entryPoint": "main",
               "entryArgs": []
             }

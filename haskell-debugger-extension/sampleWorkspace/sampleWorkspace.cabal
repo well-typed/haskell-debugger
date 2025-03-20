@@ -1,0 +1,19 @@
+cabal-version:   3.14
+name:            sampleWorkspace
+version:         0.1.0.0
+license:         NONE
+author:          Rodrigo Mesquita
+maintainer:      rodrigo.m.mesquita@gmail.com
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+common warnings
+    ghc-options: -Wall
+
+executable sampleWorkspace
+    import:           warnings
+    main-is:          Main.hs
+    other-modules:    Hi
+    build-depends:    base ^>=4.21.0.0
+    hs-source-dirs:   app
+    default-language: Haskell2010
