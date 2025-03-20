@@ -15,6 +15,7 @@ import GHC.Data.FastString
 import qualified GHC.Runtime.Debugger as GHCD
 import GHC.Runtime.Debugger.Breakpoints
 import GHC.Types.Breakpoint
+import GHC.Types.SrcLoc
 import GHC.Types.Name.Reader as RdrName (mkOrig)
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Types.Name.Occurrence
@@ -41,9 +42,9 @@ execute = \case
   ClearModBreakpoints fp -> DidClearBreakpoints <$ clearBreakpoints (Just fp)
   SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp BreakpointEnabled
   DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
-  GetStacktrace -> undefined -- decide whether to use a different callstack mechanism or really use :hist?
-  GetVariables -> undefined
+  GetStacktrace -> GotStacktrace <$> getStacktrace
   GetSource -> undefined
+  GetVariables -> undefined
   DoEval exp_s -> DidEval <$> doEval exp_s
   DoContinue -> DidContinue <$> doContinue
   DoSingleStep -> DidStep <$> doSingleStep
@@ -205,8 +206,10 @@ doSingleStep = GHC.resumeExec SingleStep Nothing >>= handleExecResult
 -- | Resume execution but stop at the next tick within the same function.
 doLocalStep :: Debugger EvalResult
 doLocalStep = do
-  -- TODO: Get the resume Ctxt to read the current SrcSpan we are currently stopped at
-  GHC.resumeExec (LocalStep $ error "TODO:doLocalStep") Nothing >>= handleExecResult
+  GHC.getResumeContext >>= \case
+    [] -> error "doing local step but not stopped at a breakpoint?!" 
+    r:_ -> do
+      GHC.resumeExec (LocalStep (resumeSpan r)) Nothing >>= handleExecResult
 
 -- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
 doEval :: String -> Debugger EvalResult
@@ -242,6 +245,27 @@ continueToCompletion = do
   case execr of
     ExecBreak{} -> continueToCompletion
     ExecComplete{} -> return execr
+
+--------------------------------------------------------------------------------
+-- * Stack trace
+--------------------------------------------------------------------------------
+
+-- | Get the stack frames at the point we're stopped at
+getStacktrace :: Debugger [StackFrame]
+getStacktrace = do
+  topStackFrame <- GHC.getResumeContext >>= \case
+    [] -> error "doing local step but not stopped at a breakpoint?!"
+    r:_ -> do
+      let ss = fromMaybe (error "getStacktrace") (srcSpanToRealSrcSpan $ GHC.resumeSpan r)
+      return StackFrame {
+        name = GHC.resumeDecl r
+      , file = unpackFS $ srcSpanFile ss
+      , startLine = srcSpanStartLine ss
+      , startCol = srcSpanStartCol ss
+      , endLine = srcSpanEndLine ss
+      , endCol = srcSpanEndCol ss
+      }
+  return [topStackFrame]
 
 --------------------------------------------------------------------------------
 -- * GHC Utilities

@@ -106,7 +106,7 @@ data Response
   | DidContinue EvalResult
   | DidStep EvalResult
   | DidExec EvalResult
-  | StoppedEvent
+  | GotStacktrace [StackFrame]
   | Aborted String
 
 data BreakFound
@@ -122,7 +122,7 @@ data BreakFound
     , endCol :: {-# UNPACK #-} !Int
     -- ^ RealSrcSpan end col
     , breakId :: GHC.BreakpointId
-    -- ^ Internal breakpoint identifier (module + ix)
+    -- ^ Internal breakpoint identifier (module + ix) (TODO: Don't expose GHC)
     }
   | BreakFoundNoLoc
     { changed :: Bool }
@@ -132,6 +132,23 @@ data EvalResult
   = EvalCompleted { resultVal :: String, resultType :: String }
   | EvalException { resultVal :: String, resultType :: String }
   | EvalStopped   { breakId :: Maybe GHC.BreakpointId {-^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)? -} }
+  deriving (Show, Generic)
+
+data StackFrame
+  = StackFrame
+    { name :: String
+    -- ^ Title of stack frame
+    , file :: FilePath
+    -- ^ Path to file where this stackframe is located
+    , startLine :: {-# UNPACK #-} !Int
+    -- ^ RealSrcSpan start line
+    , endLine :: {-# UNPACK #-} !Int
+    -- ^ RealSrcSpan end line
+    , startCol :: {-# UNPACK #-} !Int
+    -- ^ RealSrcSpan start col
+    , endCol :: {-# UNPACK #-} !Int
+    -- ^ RealSrcSpan end col
+    }
   deriving (Show, Generic)
 
 --------------------------------------------------------------------------------
@@ -151,6 +168,7 @@ instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EvalResult where toEncoding = genericToEncoding defaultOptions
 instance ToJSON BreakFound where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EntryPoint where toEncoding = genericToEncoding defaultOptions
+instance ToJSON StackFrame where toEncoding = genericToEncoding defaultOptions
 
 instance FromJSON Command
 instance FromJSON Breakpoint
@@ -159,12 +177,14 @@ instance FromJSON Response
 instance FromJSON EvalResult
 instance FromJSON BreakFound
 instance FromJSON EntryPoint
+instance FromJSON StackFrame
 
 instance Show GHC.BreakpointId where
   show (GHC.BreakpointId m ix) = "BreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix
 instance ToJSON GHC.BreakpointId where
   toJSON (GHC.BreakpointId m ix) =
     undefined -- todo: why isn't Binary Module available here? it should exist
+      -- In any case, we DO NOT want to expose GHC outside.
     -- object [ "module" .= BS.unpack (BS.toStrict (B.encode m))
     --        , "ix" .= ix
     --        ]

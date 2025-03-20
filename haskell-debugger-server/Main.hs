@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, CPP, DeriveAnyClass, DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards #-}
+{-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass, DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards #-}
 module Main where
 
 import Data.Maybe
@@ -113,6 +113,30 @@ handleEvalResult stepping er = case er of
           = maybe [] IS.toList (M.lookup bid breakpointMap)
       }
 
+
+-- | Command to fetch stack trace
+--
+-- TODO:
+--  [ ] Move to StackTrace module
+commandStackTrace :: DebugAdaptor ()
+commandStackTrace = do
+  StackTraceArguments{..} <- getArguments
+  GotStacktrace [f] <- sendSync GetStacktrace
+  let topStackFrame = defaultStackFrame
+        { stackFrameId = 0
+        , stackFrameName = T.pack f.name
+        , stackFrameLine = f.startLine
+        , stackFrameColumn = f.startCol
+        , stackFrameEndLine = Just f.endLine
+        , stackFrameEndColumn = Just f.endCol
+        , stackFrameSource = Just defaultSource{sourcePath = Just (T.pack f.file)}
+        }
+
+  sendStackTraceResponse StackTraceResponse
+    { stackFrames = [topStackFrame]
+    , totalFrames = Just 1
+    }
+
 --------------------------------------------------------------------------------
 -- * Talk
 --------------------------------------------------------------------------------
@@ -152,11 +176,7 @@ talk CommandThreads = -- TODO:
       , threadName  = T.pack "dummy thread"
       }
   ]
-talk CommandStackTrace = -- TODO:
-  sendStackTraceResponse StackTraceResponse
-    { stackFrames = []
-    , totalFrames = Just 0
-    }
+talk CommandStackTrace = commandStackTrace
 talk CommandScopes = -- TODO:
   sendScopesResponse (ScopesResponse [])
 talk CommandVariables = -- TODO:
