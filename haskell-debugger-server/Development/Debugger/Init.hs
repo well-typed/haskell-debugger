@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards, DerivingStrategies, DeriveGeneric, DeriveAnyClass #-}
 module Development.Debugger.Init where
 
+import qualified Data.Text as T
 import Control.Monad.IO.Class
 import Data.Functor
 import System.IO
@@ -27,9 +28,9 @@ import DAP
 -- | Client arguments are custom for launch
 data LaunchArgs
   = LaunchArgs
-  { -- __sessionId :: Text
-    -- ^ SessionID from VSCode?
-    target :: FilePath
+  { __sessionId :: Maybe String
+    -- ^ SessionID, set by VSCode client
+  , entryFile :: FilePath
     -- ^ The file with the entry point e.g. @app/Main.hs@
   , entryPoint :: String
     -- ^ Either @main@ or a function name
@@ -50,16 +51,16 @@ data LaunchArgs
 -- [ ] Consider exception handling leading to termination
 -- [ ] Keep map from fresh breakpoint ids to breakpoint internally
 initDebugger :: LaunchArgs -> DebugAdaptor ()
-initDebugger LaunchArgs{target, entryPoint, entryArgs} = do
+initDebugger LaunchArgs{__sessionId, entryFile, entryPoint, entryArgs} = do
 
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
-  flags <- liftIO $ hieBiosFlags target
+  flags <- liftIO $ hieBiosFlags entryFile
 
   let nextFreshBreakpointId = 0
       breakpointMap = mempty
 
-  registerNewDebugSession "debug-session" DAS{..}
+  registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
     [ \_withAdaptor -> debuggerThread flags syncRequests syncResponses
 
     -- , if we make the debugger emit events (rather than always replying synchronously),

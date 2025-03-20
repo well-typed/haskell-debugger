@@ -34,26 +34,29 @@ getConfig = do
     portDefault = 4711
     capabilities = defaultCapabilities
       { exceptionBreakpointFilters            = [ defaultExceptionBreakpointsFilter
-                                                  { exceptionBreakpointsFilterLabel = "Break on exceptions"
+                                                  { exceptionBreakpointsFilterLabel = "All exceptions"
                                                   , exceptionBreakpointsFilterFilter = BREAK_ON_EXCEPTION
                                                   }
                                                 , defaultExceptionBreakpointsFilter
-                                                  { exceptionBreakpointsFilterLabel = "Break on uncaught exceptions"
+                                                  { exceptionBreakpointsFilterLabel = "Uncaught exceptions"
                                                   , exceptionBreakpointsFilterFilter = BREAK_ON_ERROR
                                                   }
                                                 ]
+      , supportsBreakpointLocationsRequest    = False -- display which breakpoints are valid when user intends to set breakpoint on given line. this happens before actually setting the breakpoint if I understand correctly.
       , supportsConfigurationDoneRequest      = True
       , supportsHitConditionalBreakpoints     = False
-      , supportsEvaluateForHovers             = False
-      , supportsModulesRequest                = True
+      , supportsEvaluateForHovers             = False -- TODO!!!
+      , supportsModulesRequest                = False
       , additionalModuleColumns               = [ defaultColumnDescriptor
                                                   { columnDescriptorAttributeName = "Extra"
                                                   , columnDescriptorLabel = "Label"
                                                   }
                                                 ]
-      , supportsValueFormattingOptions        = True
+      , supportsValueFormattingOptions        = False
       , supportTerminateDebuggee              = True
-      , supportsLoadedSourcesRequest          = True
+      , supportsLoadedSourcesRequest          = False
+      , supportsExceptionOptions              = True
+      , supportsExceptionFilterOptions        = False
       }
   ServerConfig
     <$> do fromMaybe hostDefault <$> lookupEnv "DAP_HOST"
@@ -135,6 +138,8 @@ talk CommandSetExceptionBreakpoints   = commandSetExceptionBreakpoints
 talk CommandSetDataBreakpoints        = undefined
 talk CommandSetInstructionBreakpoints = undefined
 ----------------------------------------------------------------------------
+talk CommandLoadedSources = undefined
+----------------------------------------------------------------------------
 talk CommandConfigurationDone = do
   sendConfigurationDoneResponse
   -- now that it has been configured, start executing until it halts, then send an event
@@ -172,7 +177,7 @@ talk CommandStepIn = do
 ----------------------------------------------------------------------------
 talk CommandEvaluate = do
   EvaluateArguments {..} <- getArguments
-  DidContinue er <- sendSync (DoEval (T.unpack evaluateArgumentsExpression))
+  DidEval er <- sendSync (DoEval (T.unpack evaluateArgumentsExpression))
   case er of
     EvalStopped{} -> error "impossible, execution is resumed automatically"
     _ -> do
@@ -195,7 +200,6 @@ talk CommandDisconnect = do
   sendDisconnectResponse
 ----------------------------------------------------------------------------
 talk CommandBreakpointLocations       = undefined
-talk CommandLoadedSources = undefined
 talk CommandModules = sendModulesResponse (ModulesResponse [] Nothing)
 talk CommandSource = undefined
 talk CommandPause = undefined
