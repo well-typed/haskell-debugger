@@ -256,16 +256,21 @@ getStacktrace = do
   topStackFrame <- GHC.getResumeContext >>= \case
     [] -> error "doing local step but not stopped at a breakpoint?!"
     r:_ -> do
-      let ss = fromMaybe (error "getStacktrace") (srcSpanToRealSrcSpan $ GHC.resumeSpan r)
-      return StackFrame {
-        name = GHC.resumeDecl r
-      , file = unpackFS $ srcSpanFile ss
-      , startLine = srcSpanStartLine ss
-      , startCol = srcSpanStartCol ss
-      , endLine = srcSpanEndLine ss
-      , endCol = srcSpanEndCol ss
-      }
-  return [topStackFrame]
+      case (srcSpanToRealSrcSpan $ GHC.resumeSpan r) of
+        Just ss ->
+          return $ Just StackFrame {
+            name = GHC.resumeDecl r
+          , file = unpackFS $ srcSpanFile ss
+          , startLine = srcSpanStartLine ss
+          , startCol = srcSpanStartCol ss
+          , endLine = srcSpanEndLine ss
+          , endCol = srcSpanEndCol ss
+          }
+        Nothing ->
+          -- No resume span; which should mean we're stopped on an exception
+          return Nothing
+
+  return $ catMaybes [topStackFrame]
 
 --------------------------------------------------------------------------------
 -- * GHC Utilities

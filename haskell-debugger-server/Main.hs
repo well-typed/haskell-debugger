@@ -123,24 +123,30 @@ commandStackTrace :: DebugAdaptor ()
 commandStackTrace = do
   StackTraceArguments{..} <- getArguments
   root <- Development.Debugger.Adaptor.projectRoot <$> getDebugSession
-  GotStacktrace [f] <- sendSync GetStacktrace
-  let
-    fullFile = T.pack $
-      if isAbsolute f.file then f.file else root </> f.file
+  GotStacktrace fs <- sendSync GetStacktrace
+  case fs of
+    []  ->
+      -- No frames; should be stopped on exception
+      sendStackTraceResponse StackTraceResponse { stackFrames = [], totalFrames = Nothing }
+    [f] -> do
+      let
+        fullFile = T.pack $
+          if isAbsolute f.file then f.file else root </> f.file
 
-    topStackFrame = defaultStackFrame
-      { stackFrameId = 0
-      , stackFrameName = T.pack f.name
-      , stackFrameLine = f.startLine
-      , stackFrameColumn = f.startCol
-      , stackFrameEndLine = Just f.endLine
-      , stackFrameEndColumn = Just f.endCol
-      , stackFrameSource = Just defaultSource{sourcePath = Just fullFile}
-      }
-  sendStackTraceResponse StackTraceResponse
-    { stackFrames = [topStackFrame]
-    , totalFrames = Just 1
-    }
+        topStackFrame = defaultStackFrame
+          { stackFrameId = 0
+          , stackFrameName = T.pack f.name
+          , stackFrameLine = f.startLine
+          , stackFrameColumn = f.startCol
+          , stackFrameEndLine = Just f.endLine
+          , stackFrameEndColumn = Just f.endCol
+          , stackFrameSource = Just defaultSource{sourcePath = Just fullFile}
+          }
+      sendStackTraceResponse StackTraceResponse
+        { stackFrames = [topStackFrame]
+        , totalFrames = Just 1
+        }
+    fs -> error $ "Unexpected multiple frames since implementation doesn't support it yet: " ++ show fs
 
 --------------------------------------------------------------------------------
 -- * Talk
