@@ -1,0 +1,174 @@
+{
+  "name": "haskell-debugger-extension",
+  "displayName": "Haskell Debugger",
+  "version": "0.1.0",
+  "publisher": "romes",
+  "description": "The GHC Haskell Debugger",
+  "author": {
+    "name": "Rodrigo Mesquita",
+    "email": "rodrigo@well-typed.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "debug",
+    "haskell",
+    "ghc",
+    "ghci",
+    "cabal",
+    "stack"
+  ],
+  "engines": {
+    "vscode": "^1.66.0"
+  },
+  "icon": "images/mock-debug-icon.png",
+  "categories": [
+    "Debuggers"
+  ],
+  "scripts": {
+    "compile": "tsc -p ./",
+    "lint": "eslint src --ext ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js",
+    "watch": "npm run -S esbuild-base -- --sourcemap --sources-content=false --watch",
+    "build": "npm run -S esbuild-base -- --sourcemap --sources-content=false && npm run -S esbuild-web -- --sourcemap --sources-content=false",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "publish-pre-release": "vsce publish --pre-release",
+    "vscode:prepublish": "rimraf dist && npm run -S esbuild-base -- --minify && npm run -S esbuild-web -- --minify",
+    "test": "npm run typecheck"
+  },
+  "devDependencies": {
+    "@types/glob": "^7.2.0",
+    "@types/mocha": "^9.1.0",
+    "@types/node": "^14.14.37",
+    "@types/vscode": "^1.66.0",
+    "@typescript-eslint/eslint-plugin": "^5.17.0",
+    "@typescript-eslint/parser": "^5.17.0",
+    "await-notify": "^1.0.1",
+    "base64-js": "^1.5.1",
+    "esbuild": "^0.14.29",
+    "eslint": "^8.12.0",
+    "events": "^3.3.0",
+    "glob": "^7.2.0",
+    "mocha": "^9.2.2",
+    "path-browserify": "^1.0.1",
+    "rimraf": "^3.0.2",
+    "typescript": "^4.6.3",
+    "url": "^0.11.0",
+    "vsce": "^2.7.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onDebug",
+    "onDebugResolve:ghc-debugger"
+  ],
+  "workspaceTrust": {
+    "request": "never"
+  },
+  "contributes": {
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "extension.haskell-debugger-extension.runEditorContents",
+          "when": "resourceLangId == haskell",
+          "group": "navigation@1"
+        },
+        {
+          "command": "extension.haskell-debugger-extension.debugEditorContents",
+          "when": "resourceLangId == haskell",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "extension.haskell-debugger-extension.debugEditorContents",
+          "when": "resourceLangId == haskell"
+        },
+        {
+          "command": "extension.haskell-debugger-extension.runEditorContents",
+          "when": "resourceLangId == haskell"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "extension.haskell-debugger-extension.debugEditorContents",
+        "title": "Debug File",
+        "category": "Haskell Debug",
+        "enablement": "!inDebugMode",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "extension.haskell-debugger-extension.runEditorContents",
+        "title": "Run File",
+        "category": "Haskell Debug",
+        "enablement": "!inDebugMode",
+        "icon": "$(play)"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "haskell"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "ghc-debugger",
+        "languages": [
+          "haskell"
+        ],
+        "label": "Haskell Debugger",
+        "program": "./bin/launchDebugger.js",
+        "runtime": "node",
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "entryFile"
+            ],
+            "properties": {
+              "entryFile": {
+                "type": "string",
+                "description": "Absolute path to the file with the entry point.",
+                "default": "${workspaceFolder}/app/Main.hs"
+              },
+              "entryPoint": {
+                "type": "string",
+                "description": "The entry point for debugging. Either 'main' or a function name",
+                "default": "main"
+              },
+              "entryArgs": {
+                "type": "array",
+                "description": "The arguments passed to the entry point (directly or via the environment if 'main')",
+                "default": []
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "ghc-debugger",
+            "request": "launch",
+            "name": "Haskell Debugger",
+            "entryFile": "${workspaceFolder}/app/Main.hs",
+            "entryPoint": "main",
+            "entryArgs": []
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Haskell Debugger: Launch",
+            "description": "A new configuration for 'debugging' a Haskell project.",
+            "body": {
+              "type": "ghc-debugger",
+              "request": "launch",
+              "name": "Haskell Debugger",
+              "entryFile": "^\"\\${workspaceFolder}/app/Main.hs\"",
+              "entryPoint": "main",
+              "entryArgs": []
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

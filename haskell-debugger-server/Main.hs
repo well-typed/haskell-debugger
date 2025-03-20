@@ -131,7 +131,6 @@ commandStackTrace = do
         , stackFrameEndColumn = Just f.endCol
         , stackFrameSource = Just defaultSource{sourcePath = Just (T.pack f.file)}
         }
-
   sendStackTraceResponse StackTraceResponse
     { stackFrames = [topStackFrame]
     , totalFrames = Just 1
