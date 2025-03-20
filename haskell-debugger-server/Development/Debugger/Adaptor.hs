@@ -23,6 +23,7 @@ data DebugAdaptorState = DAS
       , breakpointMap :: Map.Map GHC.BreakpointId BreakpointSet
       , entryPoint :: String
       , entryArgs :: [String]
+      , projectRoot :: FilePath
       }
 
 type BreakpointId = Int

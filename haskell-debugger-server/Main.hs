@@ -3,6 +3,7 @@ module Main where
 
 import Data.Maybe
 import System.Environment
+import System.FilePath
 import Text.Read
 
 import qualified Data.IntSet as IS
@@ -121,16 +122,21 @@ handleEvalResult stepping er = case er of
 commandStackTrace :: DebugAdaptor ()
 commandStackTrace = do
   StackTraceArguments{..} <- getArguments
+  root <- Development.Debugger.Adaptor.projectRoot <$> getDebugSession
   GotStacktrace [f] <- sendSync GetStacktrace
-  let topStackFrame = defaultStackFrame
-        { stackFrameId = 0
-        , stackFrameName = T.pack f.name
-        , stackFrameLine = f.startLine
-        , stackFrameColumn = f.startCol
-        , stackFrameEndLine = Just f.endLine
-        , stackFrameEndColumn = Just f.endCol
-        , stackFrameSource = Just defaultSource{sourcePath = Just (T.pack f.file)}
-        }
+  let
+    fullFile = T.pack $
+      if isAbsolute f.file then f.file else root </> f.file
+
+    topStackFrame = defaultStackFrame
+      { stackFrameId = 0
+      , stackFrameName = T.pack f.name
+      , stackFrameLine = f.startLine
+      , stackFrameColumn = f.startCol
+      , stackFrameEndLine = Just f.endLine
+      , stackFrameEndColumn = Just f.endCol
+      , stackFrameSource = Just defaultSource{sourcePath = Just fullFile}
+      }
   sendStackTraceResponse StackTraceResponse
     { stackFrames = [topStackFrame]
     , totalFrames = Just 1

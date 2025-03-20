@@ -18,6 +18,8 @@ import qualified Debugger
 import qualified Debugger.Monad as Debugger
 import Debugger.Interface.Messages hiding (Command, Response)
 import qualified Debugger.Interface.Messages as D (Command, Response)
+import System.Directory
+import System.FilePath
 
 import DAP
 
@@ -30,6 +32,8 @@ data LaunchArgs
   = LaunchArgs
   { __sessionId :: Maybe String
     -- ^ SessionID, set by VSCode client
+  , projectRoot :: FilePath
+    -- ^ Absolute path to the project root
   , entryFile :: FilePath
     -- ^ The file with the entry point e.g. @app/Main.hs@
   , entryPoint :: String
@@ -51,11 +55,21 @@ data LaunchArgs
 -- [ ] Consider exception handling leading to termination
 -- [ ] Keep map from fresh breakpoint ids to breakpoint internally
 initDebugger :: LaunchArgs -> DebugAdaptor ()
-initDebugger LaunchArgs{__sessionId, entryFile, entryPoint, entryArgs} = do
+initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs} = do
+
+  -- This is a unfortunate because the current directory is global to the
+  -- process. But cabal and ghc require the current directory to be the root of
+  -- the project so we set it here.
+  --
+  -- TODO: This means we don't support debugging using the same server two
+  -- different projects on separate workspaces.
+  --
+  -- PRIORITY:IMPORTANT
+  liftIO $ setCurrentDirectory projectRoot
 
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
-  flags <- liftIO $ hieBiosFlags entryFile
+  flags <- liftIO $ hieBiosFlags (projectRoot </> entryFile)
 
   let nextFreshBreakpointId = 0
       breakpointMap = mempty

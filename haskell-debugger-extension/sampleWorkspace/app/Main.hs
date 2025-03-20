@@ -6,3 +6,4 @@ main :: IO ()
 main = do
   putStrLn "Hello, Haskell!"
   hi
+  putStrLn "Goodbye!"
