@@ -1,14 +1,9 @@
 {-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass, DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards #-}
 module Main where
 
-import Data.Maybe
 import System.Environment
-import System.FilePath
+import Data.Maybe
 import Text.Read
-
-import qualified Data.IntSet as IS
-import qualified Data.Map as M
-import qualified Data.Text as T
 
 import DAP
 
@@ -16,6 +11,8 @@ import Debugger.Interface.Messages hiding (Command, Response)
 
 import Development.Debugger.Init
 import Development.Debugger.Breakpoints
+import Development.Debugger.Stopped
+import Development.Debugger.Evaluation
 import Development.Debugger.Interface
 import Development.Debugger.Adaptor
 
@@ -47,7 +44,7 @@ getConfig = do
         -- Function breakpoints!
       , supportsFunctionBreakpoints           = True
 
-      , supportsEvaluateForHovers             = False -- TODO: Use :print for single-variable, evaluate for the rest. Must match on evaluate type.
+      , supportsEvaluateForHovers             = True  -- TODO: Use :print for single-variable, evaluate for the rest. Must match on evaluate req 'hover' type.
 
       , supportsBreakpointLocationsRequest    = False -- display which breakpoints are valid when user intends to set breakpoint on given line. this happens before actually setting the breakpoint if I understand correctly.
       , supportsConfigurationDoneRequest      = True
@@ -69,89 +66,6 @@ getConfig = do
     <*> do fromMaybe portDefault . (readMaybe =<<) <$> do lookupEnv "DAP_PORT"
     <*> pure capabilities
     <*> pure True
-
---------------------------------------------------------------------------------
--- * Executing debuggee
---------------------------------------------------------------------------------
-
--- | Start executing from entry point
---
--- TODO:
---  [ ] Consider using Output events for debuggee evaluation.
-startExecution :: DebugAdaptor EvalResult
-startExecution = do
-  DAS{entryPoint, entryArgs} <- getDebugSession
-  let entry
-        | entryPoint == "main" = MainEntry Nothing
-        | otherwise            = FunctionEntry entryPoint
-  DidExec er <- sendSync DebugExecution{entryPoint = entry, runArgs = entryArgs}
-  return er
-
--- | Handle an EvalResult by sending a stopped or exited event.
---
--- In particular, the result of evaluation is ignored by this function.
--- The 'EvaluateRequest' inspects the EvalResult itself and reports on the result.
-handleEvalResult :: Bool {-^ Whether we are "stepping" -} -> EvalResult -> DebugAdaptor ()
-handleEvalResult stepping er = case er of
-  EvalCompleted{} -> do
-    sendTerminatedEvent defaultTerminatedEvent
-    sendExitedEvent (ExitedEvent 0)
-  EvalException{} -> do
-    sendTerminatedEvent defaultTerminatedEvent
-    sendExitedEvent (ExitedEvent 42)
-  EvalStopped {breakId = Nothing} ->
-    sendStoppedEvent
-      defaultStoppedEvent {
-        stoppedEventAllThreadsStopped = True
-      , stoppedEventReason = StoppedEventReasonException
-      , stoppedEventHitBreakpointIds = []
-      }
-  EvalStopped {breakId = Just bid} -> do
-    DAS{breakpointMap} <- getDebugSession
-    sendStoppedEvent
-      defaultStoppedEvent {
-        stoppedEventAllThreadsStopped = True
-         -- could be more precise here by saying "function breakpoint" rather than always "breakpoint"
-      , stoppedEventReason
-          = if stepping then StoppedEventReasonStep
-                        else StoppedEventReasonBreakpoint
-      , stoppedEventHitBreakpointIds
-          = maybe [] IS.toList (M.lookup bid breakpointMap)
-      }
-
-
--- | Command to fetch stack trace
---
--- TODO:
---  [ ] Move to StackTrace module
-commandStackTrace :: DebugAdaptor ()
-commandStackTrace = do
-  StackTraceArguments{..} <- getArguments
-  root <- Development.Debugger.Adaptor.projectRoot <$> getDebugSession
-  GotStacktrace fs <- sendSync GetStacktrace
-  case fs of
-    []  ->
-      -- No frames; should be stopped on exception
-      sendStackTraceResponse StackTraceResponse { stackFrames = [], totalFrames = Nothing }
-    [f] -> do
-      let
-        fullFile = T.pack $
-          if isAbsolute f.file then f.file else root </> f.file
-
-        topStackFrame = defaultStackFrame
-          { stackFrameId = 0
-          , stackFrameName = T.pack f.name
-          , stackFrameLine = f.startLine
-          , stackFrameColumn = f.startCol
-          , stackFrameEndLine = Just f.endLine
-          , stackFrameEndColumn = Just f.endCol
-          , stackFrameSource = Just defaultSource{sourcePath = Just fullFile}
-          }
-      sendStackTraceResponse StackTraceResponse
-        { stackFrames = [topStackFrame]
-        , totalFrames = Just 1
-        }
-    fs -> error $ "Unexpected multiple frames since implementation doesn't support it yet: " ++ show fs
 
 --------------------------------------------------------------------------------
 -- * Talk
@@ -185,16 +99,9 @@ talk CommandConfigurationDone = do
   -- now that it has been configured, start executing until it halts, then send an event
   startExecution >>= handleEvalResult False
 ----------------------------------------------------------------------------
-talk CommandThreads = -- TODO:
-  sendThreadsResponse [
-    Thread
-      { threadId    = 0
-      , threadName  = T.pack "dummy thread"
-      }
-  ]
+talk CommandThreads    = commandThreads
 talk CommandStackTrace = commandStackTrace
-talk CommandScopes = -- TODO:
-  sendScopesResponse (ScopesResponse [])
+talk CommandScopes     = commandScopes
 talk CommandVariables = -- TODO:
   sendVariablesResponse (VariablesResponse [])
 ----------------------------------------------------------------------------
@@ -215,21 +122,7 @@ talk CommandStepOut = do
   -- Do they say in the paper?
   undefined
 ----------------------------------------------------------------------------
-talk CommandEvaluate = do
-  EvaluateArguments {..} <- getArguments
-  DidEval er <- sendSync (DoEval (T.unpack evaluateArgumentsExpression))
-  case er of
-    EvalStopped{} -> error "impossible, execution is resumed automatically"
-    _ -> do
-      sendEvaluateResponse EvaluateResponse
-        { evaluateResponseResult  = T.pack $ resultVal er
-        , evaluateResponseType    = T.pack $ resultType er
-        , evaluateResponsePresentationHint    = Nothing
-        , evaluateResponseVariablesReference  = 0
-        , evaluateResponseNamedVariables      = Nothing
-        , evaluateResponseIndexedVariables    = Nothing
-        , evaluateResponseMemoryReference     = Nothing
-        }
+talk CommandEvaluate = commandEvaluate
 ----------------------------------------------------------------------------
 talk CommandTerminate = do
   destroyDebugSession
