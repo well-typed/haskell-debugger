@@ -44,9 +44,6 @@ data Command
   -- we're stopped at rather than all variables in scope.
   | GetVariables
 
-  -- | Lists the source code for the current breakpoint.
-  | GetSource
-
   -- | Evaluate an expression at the current breakpoint.
   | DoEval String
 
@@ -93,6 +90,21 @@ data BreakpointKind
   | FunctionBreakpointKind
   deriving (Show, Generic, Eq)
 
+-- | A source span type for the interface. Like 'RealSrcSpan'.
+data SourceSpan = SourceSpan
+      { file :: !FilePath
+      -- ^ Path to file where this span is located
+      , startLine :: {-# UNPACK #-} !Int
+      -- ^ RealSrcSpan start line
+      , endLine :: {-# UNPACK #-} !Int
+      -- ^ RealSrcSpan end line
+      , startCol :: {-# UNPACK #-} !Int
+      -- ^ RealSrcSpan start col
+      , endCol :: {-# UNPACK #-} !Int
+      -- ^ RealSrcSpan end col
+      }
+      deriving (Show, Generic)
+
 --------------------------------------------------------------------------------
 -- Responses
 --------------------------------------------------------------------------------
@@ -113,16 +125,10 @@ data BreakFound
   = BreakFound
     { changed :: !Bool
     -- ^ Did the status of the found breakpoint change?
-    , startLine :: {-# UNPACK #-} !Int
-    -- ^ RealSrcSpan start line
-    , endLine :: {-# UNPACK #-} !Int
-    -- ^ RealSrcSpan end line
-    , startCol :: {-# UNPACK #-} !Int
-    -- ^ RealSrcSpan start col
-    , endCol :: {-# UNPACK #-} !Int
-    -- ^ RealSrcSpan end col
     , breakId :: GHC.BreakpointId
     -- ^ Internal breakpoint identifier (module + ix) (TODO: Don't expose GHC)
+    , sourceSpan :: SourceSpan
+    -- ^ Source span for interface
     }
   | BreakFoundNoLoc
     { changed :: Bool }
@@ -138,16 +144,8 @@ data StackFrame
   = StackFrame
     { name :: String
     -- ^ Title of stack frame
-    , file :: FilePath
-    -- ^ Path to file where this stackframe is located
-    , startLine :: {-# UNPACK #-} !Int
-    -- ^ RealSrcSpan start line
-    , endLine :: {-# UNPACK #-} !Int
-    -- ^ RealSrcSpan end line
-    , startCol :: {-# UNPACK #-} !Int
-    -- ^ RealSrcSpan start col
-    , endCol :: {-# UNPACK #-} !Int
-    -- ^ RealSrcSpan end col
+    , sourceSpan :: SourceSpan
+    -- ^ Source span for this stack frame
     }
   deriving (Show, Generic)
 
@@ -167,6 +165,7 @@ instance ToJSON BreakpointKind where toEncoding = genericToEncoding defaultOptio
 instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EvalResult where toEncoding = genericToEncoding defaultOptions
 instance ToJSON BreakFound where toEncoding = genericToEncoding defaultOptions
+instance ToJSON SourceSpan where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EntryPoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON StackFrame where toEncoding = genericToEncoding defaultOptions
 
@@ -176,6 +175,7 @@ instance FromJSON BreakpointKind
 instance FromJSON Response
 instance FromJSON EvalResult
 instance FromJSON BreakFound
+instance FromJSON SourceSpan
 instance FromJSON EntryPoint
 instance FromJSON StackFrame
 

@@ -43,7 +43,6 @@ execute = \case
   SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp BreakpointEnabled
   DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
   GetStacktrace -> GotStacktrace <$> getStacktrace
-  GetSource -> undefined
   GetVariables -> undefined
   DoEval exp_s -> DidEval <$> doEval exp_s
   DoContinue -> DidContinue <$> doContinue
@@ -98,10 +97,7 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
       changed <- registerBreakpoint bid bp_status ModuleBreakpointKind
       return $ BreakFound
         { changed = changed
-        , startLine = srcSpanStartLine span
-        , endLine = srcSpanEndLine span
-        , startCol = srcSpanStartCol span
-        , endCol = srcSpanEndCol span
+        , sourceSpan = realSrcSpanToSourceSpan span
         , breakId = bid
         }
 setBreakpoint FunctionBreak{function} bp_status = do
@@ -117,10 +113,7 @@ setBreakpoint FunctionBreak{function} bp_status = do
           changed <- registerBreakpoint bid bp_status FunctionBreakpointKind
           return $ BreakFound
             { changed = changed
-            , startLine = srcSpanStartLine span
-            , endLine = srcSpanEndLine span
-            , startCol = srcSpanStartCol span
-            , endCol = srcSpanEndCol span
+            , sourceSpan = realSrcSpanToSourceSpan span
             , breakId = bid
             }
         xs -> error ("Ambiguous breakpoint found by name " ++ function ++ ": " ++ show xs)
@@ -260,11 +253,7 @@ getStacktrace = do
         Just ss ->
           return $ Just StackFrame {
             name = GHC.resumeDecl r
-          , file = unpackFS $ srcSpanFile ss
-          , startLine = srcSpanStartLine ss
-          , startCol = srcSpanStartCol ss
-          , endLine = srcSpanEndLine ss
-          , endCol = srcSpanEndCol ss
+          , sourceSpan = realSrcSpanToSourceSpan ss
           }
         Nothing ->
           -- No resume span; which should mean we're stopped on an exception
@@ -288,6 +277,16 @@ inspectName n = do
       AnId i -> do
         term <- GHC.obtainTermFromId 100{-depth-} False{- only force on request (command)-} i
         (,) <$> (display =<< GHCD.showTerm term) <*> display (GHCI.termType term)
+
+-- | Convert a GHC's src span into an interface one
+realSrcSpanToSourceSpan :: RealSrcSpan -> SourceSpan
+realSrcSpanToSourceSpan ss = SourceSpan
+  { file = unpackFS $ srcSpanFile ss
+  , startLine = srcSpanStartLine ss
+  , startCol = srcSpanStartCol ss
+  , endLine = srcSpanEndLine ss
+  , endCol = srcSpanEndCol ss
+  }
 
 --------------------------------------------------------------------------------
 -- * General utilities

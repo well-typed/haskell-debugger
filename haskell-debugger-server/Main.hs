@@ -1,4 +1,8 @@
 {-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass, DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards #-}
+
+-- TODO list:
+--
+-- [ ]
 module Main where
 
 import System.Environment
@@ -16,9 +20,6 @@ import Development.Debugger.Evaluation
 import Development.Debugger.Interface
 import Development.Debugger.Adaptor
 
--- TODO:
---
--- [ ] Set the working directory to the current directory of the Client project (VSCode/...)
 main :: IO ()
 main = do
   config <- getConfig
@@ -44,7 +45,9 @@ getConfig = do
         -- Function breakpoints!
       , supportsFunctionBreakpoints           = True
 
-      , supportsEvaluateForHovers             = True  -- TODO: Use :print for single-variable, evaluate for the rest. Must match on evaluate req 'hover' type.
+        -- TODO: Use :print for single-variable, evaluate for the rest. Must match on evaluate req 'hover' type?
+        -- Ideally DAP supports "lazy variables" for hover? S.t. hovering doesn't force them unless requested?
+      , supportsEvaluateForHovers             = True
 
       , supportsBreakpointLocationsRequest    = False -- display which breakpoints are valid when user intends to set breakpoint on given line. this happens before actually setting the breakpoint if I understand correctly.
       , supportsConfigurationDoneRequest      = True
@@ -102,8 +105,7 @@ talk CommandConfigurationDone = do
 talk CommandThreads    = commandThreads
 talk CommandStackTrace = commandStackTrace
 talk CommandScopes     = commandScopes
-talk CommandVariables = -- TODO:
-  sendVariablesResponse (VariablesResponse [])
+talk CommandVariables  = commandVariables
 ----------------------------------------------------------------------------
 talk CommandContinue = do
   DidContinue er <- sendInterleaved DoContinue $

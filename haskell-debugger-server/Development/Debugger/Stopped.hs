@@ -1,5 +1,6 @@
 {-# LANGUAGE RecordWildCards, OverloadedRecordDot #-}
--- | Getting information about where we're stopped at.
+
+-- | Getting information about where we're stopped at (current suspended state).
 --
 -- Includes the commands to execute the following requests on the debuggee state:
 -- 
@@ -14,7 +15,6 @@
 module Development.Debugger.Stopped where
 
 import qualified Data.Text as T
-import System.FilePath
 
 import DAP
 
@@ -44,25 +44,22 @@ commandThreads = do -- TODO
 commandStackTrace :: DebugAdaptor ()
 commandStackTrace = do
   StackTraceArguments{..} <- getArguments
-  root <- Development.Debugger.Adaptor.projectRoot <$> getDebugSession
   GotStacktrace fs <- sendSync GetStacktrace
   case fs of
     []  ->
       -- No frames; should be stopped on exception
       sendStackTraceResponse StackTraceResponse { stackFrames = [], totalFrames = Nothing }
     [f] -> do
+      source <- fileToSource f.sourceSpan.file
       let
-        fullFile = T.pack $
-          if isAbsolute f.file then f.file else root </> f.file
-
         topStackFrame = defaultStackFrame
           { stackFrameId = 0
           , stackFrameName = T.pack f.name
-          , stackFrameLine = f.startLine
-          , stackFrameColumn = f.startCol
-          , stackFrameEndLine = Just f.endLine
-          , stackFrameEndColumn = Just f.endCol
-          , stackFrameSource = Just defaultSource{sourcePath = Just fullFile}
+          , stackFrameLine = f.sourceSpan.startLine
+          , stackFrameColumn = f.sourceSpan.startCol
+          , stackFrameEndLine = Just f.sourceSpan.endLine
+          , stackFrameEndColumn = Just f.sourceSpan.endCol
+          , stackFrameSource = Just source
           }
       sendStackTraceResponse StackTraceResponse
         { stackFrames = [topStackFrame]
@@ -78,8 +75,14 @@ commandStackTrace = do
 -- | Command to get scopes for current stopped point
 commandScopes :: DebugAdaptor ()
 commandScopes = do
+  ScopesArguments{scopesArgumentsFrameId} <- getArguments
   sendScopesResponse (ScopesResponse [])
 
 --------------------------------------------------------------------------------
 -- * Variables
 --------------------------------------------------------------------------------
+
+commandVariables :: DebugAdaptor ()
+commandVariables = do
+  sendVariablesResponse (VariablesResponse [])
+

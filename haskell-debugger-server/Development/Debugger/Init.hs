@@ -85,6 +85,11 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
 -- to the given synchronization variables in a new 'Debugger' session.
 debuggerThread :: HieBiosFlags -> MVar D.Command -> MVar D.Response -> IO ()
 debuggerThread HieBiosFlags{..} requests replies =
+
+  -- TODO: It's probably best for the debugger to be run in an individual
+  -- process with a bridge here. Better for output/stderr handling and better
+  -- for current-working-directory setting.
+
   Debugger.runDebugger libdir units ghcInvocation $
     forever $ do
       req <- liftIO $ takeMVar requests

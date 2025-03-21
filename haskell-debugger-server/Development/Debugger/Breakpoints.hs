@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, RecordWildCards, PatternSynonyms #-}
+{-# LANGUAGE OverloadedStrings, OverloadedRecordDot, RecordWildCards, PatternSynonyms #-}
 module Development.Debugger.Breakpoints where
 
 import qualified Data.ByteString.Lazy.Char8 as BL8 ( pack )
@@ -101,14 +101,16 @@ registerBreakFound b =
       pure DAP.defaultBreakpoint {
         DAP.breakpointVerified = True
       }
-    BreakFound _ch sl el sc ec iid -> do
+    BreakFound _ch iid ss -> do
       bid <- registerNewBreakpoint iid
+      source <- fileToSource ss.file
       pure DAP.defaultBreakpoint
         { DAP.breakpointVerified = True
-        , DAP.breakpointLine = Just sl
-        , DAP.breakpointEndLine = Just el
-        , DAP.breakpointColumn = Just sc
-        , DAP.breakpointEndColumn = Just ec
+        , DAP.breakpointSource = Just source
+        , DAP.breakpointLine = Just ss.startLine
+        , DAP.breakpointEndLine = Just ss.endLine
+        , DAP.breakpointColumn = Just ss.startCol
+        , DAP.breakpointEndColumn = Just ss.endCol
         , DAP.breakpointId = Just bid
         }
 
