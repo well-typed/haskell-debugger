@@ -84,12 +84,27 @@ data Breakpoint
   | OnUncaughtExceptionsBreak
   deriving (Show, Generic)
 
+-- | Information about a scope
 data ScopeInfo = ScopeInfo
       { kind :: VariablesKind
       , sourceSpan :: SourceSpan
       , numVars :: Maybe Int
       , expensive :: Bool }
   deriving (Show, Generic)
+
+-- | Information about a variable
+data VarInfo = VarInfo
+      { varName :: String
+      , varType :: String
+      , varValue :: String
+      , isThunk :: Bool
+      -- TODO:
+      --  namedVariables
+      --  indexedVariables
+      -- TODO:
+      --  memory reference using ghc-debug.
+      }
+      deriving (Show, Generic)
 
 -- | What kind of breakpoint are we referring to, module or function breakpoints?
 -- Used e.g. in the 'ClearBreakpoints' request
@@ -110,6 +125,9 @@ data VariablesKind
   | GlobalVariables
   -- | Variables which will be bound when this expression returns (typically just @it@)
   | ReturnVariables
+
+  -- TODO: DrilldownVariables VarId -> ...
+
   deriving (Show, Generic, Eq, Ord, Bounded, Enum)
 
 -- | A source span type for the interface. Like 'RealSrcSpan'.
@@ -142,6 +160,7 @@ data Response
   | DidExec EvalResult
   | GotStacktrace [StackFrame]
   | GotScopes [ScopeInfo]
+  | GotVariables [VarInfo]
   | Aborted String
 
 data BreakFound
@@ -193,6 +212,7 @@ instance ToJSON SourceSpan where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EntryPoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON StackFrame where toEncoding = genericToEncoding defaultOptions
 instance ToJSON ScopeInfo  where toEncoding = genericToEncoding defaultOptions
+instance ToJSON VarInfo    where toEncoding = genericToEncoding defaultOptions
 
 instance FromJSON Command
 instance FromJSON Breakpoint
@@ -205,6 +225,7 @@ instance FromJSON SourceSpan
 instance FromJSON EntryPoint
 instance FromJSON StackFrame
 instance FromJSON ScopeInfo
+instance FromJSON VarInfo
 
 instance Show GHC.BreakpointId where
   show (GHC.BreakpointId m ix) = "BreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix

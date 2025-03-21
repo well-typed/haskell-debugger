@@ -108,7 +108,26 @@ scopeInfoToScope ScopeInfo{..} = do
 -- * Variables
 --------------------------------------------------------------------------------
 
+-- | Command to get variables by reference number
 commandVariables :: DebugAdaptor ()
 commandVariables = do
-  sendVariablesResponse (VariablesResponse [])
+  VariablesArguments{..} <- getArguments
+  let vk = toEnum variablesArgumentsVariablesReference
+  GotVariables vars <- sendSync (GetVariables vk)
+  sendVariablesResponse $ VariablesResponse $
+    map (varInfoToVariable vk) vars
+
+
+-- | 'VarInfo' to 'Variable'
+varInfoToVariable :: VariablesKind -> VarInfo -> Variable
+varInfoToVariable vk VarInfo{..} =
+  defaultVariable
+    { variableName = T.pack varName
+    , variableValue = T.pack varValue
+    , variableType = Just $ T.pack varType
+    , variableEvaluateName = if vk == GlobalVariables then Nothing else Just $ T.pack varName
+    , variableVariablesReference = 0 -- FIXME
+    , variableNamedVariables = Just 0 -- FIXME
+    , variableIndexedVariables = Just 0 -- FIXME
+    }
 

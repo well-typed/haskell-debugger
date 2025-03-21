@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase, DuplicateRecordFields #-}
+{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase, DuplicateRecordFields, RecordWildCards #-}
 module Debugger where
 
 import System.Exit
@@ -7,21 +7,24 @@ import Control.Monad.IO.Class
 import Data.Bits (xor)
 
 import GHC
-import GHC.Driver.Ppr as GHC
-import GHC.Driver.DynFlags as GHC
-import GHC.Utils.Outputable as GHC
-import GHC.Unit.Module.Env as GHC
-import GHC.Data.FastString
-import qualified GHC.Runtime.Debugger as GHCD
-import GHC.Runtime.Eval.Types as GHC
-import GHC.Runtime.Debugger.Breakpoints
-import GHC.Types.Breakpoint
-import GHC.Types.SrcLoc
-import GHC.Types.Name.Reader as RdrName (mkOrig)
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
-import GHC.Types.Name.Occurrence
-import GHC.Driver.Monad
+import GHC.Data.FastString
+import GHC.Data.Maybe (expectJust)
+import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
+import GHC.Driver.Monad
+import GHC.Driver.Ppr as GHC
+import GHC.Runtime.Debugger.Breakpoints
+import GHC.Runtime.Eval.Types as GHC
+import GHC.Runtime.Eval
+import GHC.Types.Breakpoint
+import GHC.Types.Id
+import GHC.Types.Name.Occurrence
+import GHC.Types.Name.Reader as RdrName (mkOrig, globalRdrEnvElts, greName)
+import GHC.Types.SrcLoc
+import GHC.Unit.Module.Env as GHC
+import GHC.Utils.Outputable as GHC
+import qualified GHC.Runtime.Debugger as GHCD
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 import qualified GHCi.Message as GHCi
 
@@ -45,7 +48,7 @@ execute = \case
   DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
   GetStacktrace -> GotStacktrace <$> getStacktrace
   GetScopes -> GotScopes <$> getScopes
-  GetVariables kind -> undefined
+  GetVariables kind -> GotVariables <$> getVariables kind
   DoEval exp_s -> DidEval <$> doEval exp_s
   DoContinue -> DidContinue <$> doContinue
   DoSingleStep -> DidStep <$> doSingleStep
@@ -225,7 +228,7 @@ handleExecResult = \case
         Left e -> return (EvalException (show e) "SomeException")
         Right [] -> error $ "Nothing bound for expression"
         Right (n:ns) -> inspectName n >>= \case
-          Just (a, b) -> return (EvalCompleted a b)
+          Just VarInfo{varValue, varType} -> return (EvalCompleted varValue varType)
           Nothing     -> liftIO $ fail "doEval failed"
     ExecBreak {breakNames, breakPointId=Nothing} ->
       -- Stopped at an exception
@@ -279,50 +282,130 @@ getScopes = do
       Just rss -> do
         let sourceSpan = realSrcSpanToSourceSpan rss
         return
-          [ ScopeInfo { kind = InteractiveVariables
-                      , expensive = False
-                      , numVars = Just $! length $ fst $ GHC.resumeBindings r
-                      , sourceSpan
-                      }
-          , ScopeInfo { kind = LocalVariables
+          [ ScopeInfo { kind = LocalVariables
                       , expensive = False
                       , numVars = Nothing
                       , sourceSpan
                       }
+          -- , ScopeInfo { kind = ReturnVariables
+          --             , expensive = False
+          --             , numVars = Just $! length $ GHC.resumeFinalIds r
+          --             , sourceSpan
+          --             }
           , ScopeInfo { kind = GlobalVariables
                       , expensive = False
-                      , numVars = Just $ length $
-                                    nonDetOccEnvElts $
-                                      GHC.igre_env $ snd $
-                                        GHC.resumeBindings r
+                      , numVars = Nothing
+                      -- , numVars = Just $ length $
+                      --               nonDetOccEnvElts $
+                      --                 igre_env $ snd $
+                      --                   GHC.resumeBindings r
                       , sourceSpan
                       }
-          , ScopeInfo { kind = ReturnVariables
-                      , expensive = False
-                      , numVars = Just $! length $ GHC.resumeFinalIds r
-                      , sourceSpan
-                      }
+          -- , ScopeInfo { kind = InteractiveVariables
+          --             , expensive = False
+          --             , numVars = Just $! length $ fst $ GHC.resumeBindings r
+          --             , sourceSpan
+          --             }
           ]
       Nothing ->
         -- No resume span; which should mean we're stopped on an exception
         return []
 
 --------------------------------------------------------------------------------
+-- * Variables
+--------------------------------------------------------------------------------
+
+getVariables :: VariablesKind -> Debugger [VarInfo]
+getVariables vk = do
+  hsc_env <- getSession
+  GHC.getResumeContext >>= \case
+    [] -> error "not stopped at a breakpoint?!"
+    r:_ -> case vk of
+      LocalVariables ->
+        -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
+        mapM tyThingToVarInfo =<< GHC.getBindings
+      InteractiveVariables ->
+        -- Weird: this reports less than 'getBindings'.
+        -- --------------------------------------------
+        return []
+        -- --------------------------------------------
+        -- mapM tyThingToVarInfo $ fst $
+        --   GHC.resumeBindings r
+      ReturnVariables ->
+        -- Keep it simple for now
+        -- ----------------------
+        return []
+        -- ---------------------
+        -- fmap catMaybes $
+        --   mapM (inspectName . idName) $
+        --     GHC.resumeFinalIds r
+      -- TODO: DrilldownVariables VarId -> ...
+      GlobalVariables -> do
+        names <-
+          mapM (display . greName) $
+            globalRdrEnvElts $ igre_env $ snd $
+              GHC.resumeBindings r
+        return $
+          flip map names $ \name ->
+            VarInfo { varName = name
+                    , varType = ""
+                    , varValue = ""
+                    , isThunk = False -- well, CAFs are.
+                    }
+
+        -- TODO: If I try to inspect the names I get:
+        --
+        -- @
+        -- main: ^^ Could not load '_ghczminternal_GHCziInternalziPrimopWrappers_seq_closure', dependency unresolved. See top entry above. You might consider using --optimistic-linking
+        --
+        -- GHC.Linker.Loader.loadName
+        -- During interactive linking, GHCi couldn't find the following symbol:
+        --   closure:seq
+        -- This may be due to you not asking GHCi to load extra object files,
+        -- archives or DLLs needed by your current session.  Restart GHCi, specifying
+        -- the missing library using the -L/path/to/object/dir and -lmissinglibname
+        -- flags, or simply by naming the relevant files on the GHCi command line.
+        -- Alternatively, this link failure might indicate a bug in GHCi.
+        -- If you suspect the latter, please report this as a GHC bug:
+        --   https://www.haskell.org/ghc/reportabug
+        -- @
+        --
+        --
+        -- fmap catMaybes $
+        --   mapM (inspectName . greName) $
+        --     globalRdrEnvElts $ igre_env $ snd $
+        --       GHC.resumeBindings r
+        --
+
+--------------------------------------------------------------------------------
 -- * GHC Utilities
 --------------------------------------------------------------------------------
 
--- | Get the value and type of a given 'Name' as rendered strings.
-inspectName :: Name -> Debugger (Maybe (String {-^ Value -}, String {-^ Type -}))
+-- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
+inspectName :: Name -> Debugger (Maybe VarInfo)
 inspectName n = do
   GHC.lookupName n >>= \case
-    Nothing -> pure Nothing
-    Just tt -> Just <$> case tt of
-      t@(AConLike c) -> (,) <$> display c <*> display t
-      t@(ATyCon c)   -> (,) <$> display c <*> display t
-      t@(ACoAxiom c) -> (,) <$> display c <*> display t
-      AnId i -> do
-        term <- GHC.obtainTermFromId 100{-depth-} False{- only force on request (command)-} i
-        (,) <$> (display =<< GHCD.showTerm term) <*> display (GHCI.termType term)
+    Nothing -> do
+      liftIO . putStrLn =<< display (text "Failed to lookup name: " <+> ppr n)
+      pure Nothing
+    Just tt -> Just <$> tyThingToVarInfo tt
+
+-- | 'TyThing' to 'VarInfo'
+tyThingToVarInfo :: TyThing -> Debugger VarInfo
+tyThingToVarInfo = \case
+  t@(AConLike c) -> VarInfo <$> display c <*> display t <*> pure "<AConLike>" <*> pure False
+  t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> pure "<ATyCon>" <*> pure False
+  t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> pure "<ACoAxiom>" <*> pure False
+  AnId i -> do
+    term <- GHC.obtainTermFromId 100{-depth-} False{- only force on request (command)-} i
+    let isThunk
+         | Suspension{} <- term = True
+         | otherwise = False
+    varName <- display i
+    varType <- display (GHCI.termType term)
+    varValue <- display =<< GHCD.showTerm term
+    return VarInfo{..}
+
 
 -- | Convert a GHC's src span into an interface one
 realSrcSpanToSourceSpan :: RealSrcSpan -> SourceSpan
