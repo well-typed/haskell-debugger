@@ -7,7 +7,9 @@ import Control.Exception
 import Hi
 
 abc :: Integer
-abc = 456 ^345
+abc = 456 ^ 345
+
+data MyData = DataCon String
 
 main :: IO ()
 main = do

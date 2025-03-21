@@ -87,9 +87,11 @@ scopeInfoToScope ScopeInfo{..} = do
   return defaultScope
     { scopeName = case kind of
         LocalVariables -> "Locals"
-        GlobalVariables -> "Globals"
+        ModuleVariables -> "Module"
+        GlobalVariables -> "Imported"
     , scopePresentationHint = Just $ case kind of
         LocalVariables -> ScopePresentationHintLocals
+        ModuleVariables -> ScopePresentationHint "module"
         GlobalVariables -> ScopePresentationHint "globals"
     , scopeNamedVariables = numVars
     , scopeSource = Just source
@@ -108,10 +110,14 @@ scopeInfoToScope ScopeInfo{..} = do
 commandVariables :: DebugAdaptor ()
 commandVariables = do
   VariablesArguments{..} <- getArguments
-  let vk = toEnum (variablesArgumentsVariablesReference - 1)
-  GotVariables vars <- sendSync (GetVariables vk)
-  sendVariablesResponse $ VariablesResponse $
-    map (varInfoToVariable vk) vars
+  if variablesArgumentsVariablesReference == 0
+     -- 0 is a reference to nothing, so just do nothing.
+     then sendVariablesResponse $ VariablesResponse []
+     else do
+       let vk = toEnum (variablesArgumentsVariablesReference - 1)
+       GotVariables vars <- sendSync (GetVariables vk)
+       sendVariablesResponse $ VariablesResponse $
+         map (varInfoToVariable vk) vars
 
 -- | 'VarInfo' to 'Variable'
 varInfoToVariable :: VariableReference -> VarInfo -> Variable

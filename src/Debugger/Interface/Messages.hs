@@ -119,7 +119,11 @@ data BreakpointKind
 data VariableReference
   -- | Variables in the local context (includes arguments, previous bindings)
   = LocalVariables
-  -- | Variables in the global context (this may include interactive variables? FIXME)
+
+  -- | Variables in the module where we're stopped
+  | ModuleVariables
+
+  -- | Variables in the global context
   | GlobalVariables
 
   -- TODO: DrilldownVariables VarId -> ...

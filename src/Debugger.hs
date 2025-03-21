@@ -290,25 +290,16 @@ getScopes = do
                       , numVars = Nothing
                       , sourceSpan
                       }
-          -- , ScopeInfo { kind = ReturnVariables
-          --             , expensive = False
-          --             , numVars = Just $! length $ GHC.resumeFinalIds r
-          --             , sourceSpan
-          --             }
+          , ScopeInfo { kind = ModuleVariables
+                      , expensive = False
+                      , numVars = Nothing
+                      , sourceSpan
+                      }
           , ScopeInfo { kind = GlobalVariables
                       , expensive = False
                       , numVars = Nothing
-                      -- , numVars = Just $ length $
-                      --               nonDetOccEnvElts $
-                      --                 igre_env $ snd $
-                      --                   GHC.resumeBindings r
                       , sourceSpan
                       }
-          -- , ScopeInfo { kind = InteractiveVariables
-          --             , expensive = False
-          --             , numVars = Just $! length $ fst $ GHC.resumeBindings r
-          --             , sourceSpan
-          --             }
           ]
       Nothing ->
         -- No resume span; which should mean we're stopped on an exception
@@ -328,29 +319,38 @@ getVariables vk = do
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
         mapM tyThingToVarInfo =<< GHC.getBindings
       -- TODO: DrilldownVariables VarId -> ...
-      GlobalVariables -> do
-        let select (greName -> n) = liftIO $ do
-              let modl = nameModule n
-              hmi <- HUG.lookupHugByModule modl (hsc_HUG hsc_env)
-              case hmi of
-                Nothing ->
-                  -- not in home units, don't show.
-                  pure Nothing
-                Just _ -> do
-                  mty <- GHC.lookupType hsc_env n
-                  case mty of
-                    Nothing ->
-                      pure Nothing
-                    Just ty ->
-                      pure $ Just (n, ty)
-        things <- fmap catMaybes $
-          mapM select $
-            globalRdrEnvElts $ igre_env $ snd $
-              GHC.resumeBindings r
+
+      ModuleVariables -> do
+        things <- filter (sameMod r) <$> hugGlobalVars hsc_env r
         mapM (\(n, tt) -> do
           name <- display n
           vi <- tyThingToVarInfo tt
           return vi{varName = name}) things
+
+      GlobalVariables -> do
+        things <- filter (not . sameMod r) <$> hugGlobalVars hsc_env r
+        mapM (\(n, tt) -> do
+          name <- display n
+          vi <- tyThingToVarInfo tt
+          return vi{varName = name}) things
+  where
+    sameMod r (nameModule -> modl, _) = (ibi_tick_mod <$> GHC.resumeBreakpointId r) == Just modl
+    hugGlobalVars hsc_env r = catMaybes <$> mapM (select hsc_env) (globalElts r)
+    globalElts = globalRdrEnvElts . igre_env . snd . GHC.resumeBindings
+    select hsc_env (greName -> n) = liftIO $ do
+      let modl = nameModule n
+      hmi <- HUG.lookupHugByModule modl (hsc_HUG hsc_env)
+      case hmi of
+        Nothing ->
+          -- not in home units, don't show.
+          pure Nothing
+        Just _ -> do
+          mty <- GHC.lookupType hsc_env n
+          case mty of
+            Nothing ->
+              pure Nothing
+            Just ty ->
+              pure $ Just (n, ty)
 
 --------------------------------------------------------------------------------
 -- * GHC Utilities
@@ -368,9 +368,9 @@ inspectName n = do
 -- | 'TyThing' to 'VarInfo'
 tyThingToVarInfo :: TyThing -> Debugger VarInfo
 tyThingToVarInfo = \case
-  t@(AConLike c) -> VarInfo <$> display c <*> display t <*> pure "<AConLike>" <*> pure False
-  t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> pure "<ATyCon>" <*> pure False
-  t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> pure "<ACoAxiom>" <*> pure False
+  t@(AConLike c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False
+  t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False
+  t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False
   AnId i -> do
     term <- GHC.obtainTermFromId 100{-depth-} False{- only force on request (command)-} i
     let isThunk
