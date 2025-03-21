@@ -97,7 +97,7 @@ scopeInfoToScope ScopeInfo{..} = do
     , scopeColumn = Just sourceSpan.startCol
     , scopeEndLine = Just sourceSpan.endLine
     , scopeEndColumn = Just sourceSpan.endCol
-    , scopeVariablesReference = fromEnum kind
+    , scopeVariablesReference = fromEnum kind + 1
     }
 
 --------------------------------------------------------------------------------
@@ -108,7 +108,7 @@ scopeInfoToScope ScopeInfo{..} = do
 commandVariables :: DebugAdaptor ()
 commandVariables = do
   VariablesArguments{..} <- getArguments
-  let vk = toEnum variablesArgumentsVariablesReference
+  let vk = toEnum (variablesArgumentsVariablesReference - 1)
   GotVariables vars <- sendSync (GetVariables vk)
   sendVariablesResponse $ VariablesResponse $
     map (varInfoToVariable vk) vars

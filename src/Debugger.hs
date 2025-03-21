@@ -1,4 +1,6 @@
-{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase, DuplicateRecordFields, RecordWildCards, TupleSections #-}
+{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
+   DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
+   TypeApplications #-}
 module Debugger where
 
 import System.Exit
@@ -27,6 +29,7 @@ import GHC.Utils.Outputable as GHC
 import qualified GHC.Runtime.Debugger as GHCD
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 import qualified GHCi.Message as GHCi
+import qualified GHC.Unit.Home.Graph as HUG
 
 import Data.Maybe
 import Control.Monad.Reader
@@ -326,8 +329,22 @@ getVariables vk = do
         mapM tyThingToVarInfo =<< GHC.getBindings
       -- TODO: DrilldownVariables VarId -> ...
       GlobalVariables -> do
-        things <- liftIO $ fmap catMaybes $
-          mapM ((\n -> fmap (n,) <$> GHC.lookupType hsc_env n) . greName) $
+        let select (greName -> n) = liftIO $ do
+              let modl = nameModule n
+              hmi <- HUG.lookupHugByModule modl (hsc_HUG hsc_env)
+              case hmi of
+                Nothing ->
+                  -- not in home units, don't show.
+                  pure Nothing
+                Just _ -> do
+                  mty <- GHC.lookupType hsc_env n
+                  case mty of
+                    Nothing ->
+                      pure Nothing
+                    Just ty ->
+                      pure $ Just (n, ty)
+        things <- fmap catMaybes $
+          mapM select $
             globalRdrEnvElts $ igre_env $ snd $
               GHC.resumeBindings r
         mapM (\(n, tt) -> do
