@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards, OverloadedRecordDot #-}
+{-# LANGUAGE RecordWildCards, OverloadedRecordDot, OverloadedStrings #-}
 
 -- | Getting information about where we're stopped at (current suspended state).
 --
@@ -75,8 +75,34 @@ commandStackTrace = do
 -- | Command to get scopes for current stopped point
 commandScopes :: DebugAdaptor ()
 commandScopes = do
-  ScopesArguments{scopesArgumentsFrameId} <- getArguments
-  sendScopesResponse (ScopesResponse [])
+  ScopesArguments{scopesArgumentsFrameId=0} <- getArguments
+  GotScopes scopes <- sendSync GetScopes
+  sendScopesResponse . ScopesResponse =<<
+    mapM scopeInfoToScope scopes
+
+-- | 'ScopeInfo' to 'Scope'
+scopeInfoToScope :: ScopeInfo -> DebugAdaptor Scope
+scopeInfoToScope ScopeInfo{..} = do
+  source <- fileToSource sourceSpan.file
+  return defaultScope
+    { scopeName = case kind of
+        LocalVariables -> "Locals"
+        InteractiveVariables -> "Interactive"
+        GlobalVariables -> "Globals"
+        ReturnVariables -> "Returns"
+    , scopePresentationHint = Just $ case kind of
+        LocalVariables -> ScopePresentationHintLocals
+        InteractiveVariables -> ScopePresentationHint "interactive"
+        GlobalVariables -> ScopePresentationHint "globals"
+        ReturnVariables -> ScopePresentationHint "returnValue"
+    , scopeNamedVariables = numVars
+    , scopeSource = Just source
+    , scopeLine = Just sourceSpan.startLine
+    , scopeColumn = Just sourceSpan.startCol
+    , scopeEndLine = Just sourceSpan.endLine
+    , scopeEndColumn = Just sourceSpan.endCol
+    , scopeVariablesReference = fromEnum kind
+    }
 
 --------------------------------------------------------------------------------
 -- * Variables

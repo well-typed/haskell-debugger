@@ -13,6 +13,7 @@ import GHC.Utils.Outputable as GHC
 import GHC.Unit.Module.Env as GHC
 import GHC.Data.FastString
 import qualified GHC.Runtime.Debugger as GHCD
+import GHC.Runtime.Eval.Types as GHC
 import GHC.Runtime.Debugger.Breakpoints
 import GHC.Types.Breakpoint
 import GHC.Types.SrcLoc
@@ -43,7 +44,8 @@ execute = \case
   SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp BreakpointEnabled
   DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
   GetStacktrace -> GotStacktrace <$> getStacktrace
-  GetVariables -> undefined
+  GetScopes -> GotScopes <$> getScopes
+  GetVariables kind -> undefined
   DoEval exp_s -> DidEval <$> doEval exp_s
   DoContinue -> DidContinue <$> doContinue
   DoSingleStep -> DidStep <$> doSingleStep
@@ -156,6 +158,9 @@ debugExecution entry args = do
       return (prog, opts)
 
     FunctionEntry fn ->
+      -- TODO: if "args" is unescaped (e.g. "some", "thing"), then "some" and
+      -- "thing" will be interpreted as variables. To pass strings it needs to
+      -- be "\"some\"" "\"things\"".
       return (fn ++ " " ++ unwords args, GHC.execOptions)
 
   GHC.execStmt entryExp exOpts >>= handleExecResult
@@ -247,10 +252,10 @@ continueToCompletion = do
 getStacktrace :: Debugger [StackFrame]
 getStacktrace = do
   topStackFrame <- GHC.getResumeContext >>= \case
-    [] -> error "doing local step but not stopped at a breakpoint?!"
+    [] -> error "not stopped at a breakpoint?!"
     r:_ -> do
       case (srcSpanToRealSrcSpan $ GHC.resumeSpan r) of
-        Just ss ->
+        Just ss -> do
           return $ Just StackFrame {
             name = GHC.resumeDecl r
           , sourceSpan = realSrcSpanToSourceSpan ss
@@ -260,6 +265,47 @@ getStacktrace = do
           return Nothing
 
   return $ catMaybes [topStackFrame]
+
+--------------------------------------------------------------------------------
+-- * Scopes
+--------------------------------------------------------------------------------
+
+-- | Get the stack frames at the point we're stopped at
+getScopes :: Debugger [ScopeInfo]
+getScopes = do
+  GHC.getResumeContext >>= \case
+    [] -> error "not stopped at a breakpoint?!"
+    r:_ -> case (srcSpanToRealSrcSpan $ GHC.resumeSpan r) of
+      Just rss -> do
+        let sourceSpan = realSrcSpanToSourceSpan rss
+        return
+          [ ScopeInfo { kind = InteractiveVariables
+                      , expensive = False
+                      , numVars = Just $! length $ fst $ GHC.resumeBindings r
+                      , sourceSpan
+                      }
+          , ScopeInfo { kind = LocalVariables
+                      , expensive = False
+                      , numVars = Nothing
+                      , sourceSpan
+                      }
+          , ScopeInfo { kind = GlobalVariables
+                      , expensive = False
+                      , numVars = Just $ length $
+                                    nonDetOccEnvElts $
+                                      GHC.igre_env $ snd $
+                                        GHC.resumeBindings r
+                      , sourceSpan
+                      }
+          , ScopeInfo { kind = ReturnVariables
+                      , expensive = False
+                      , numVars = Just $! length $ GHC.resumeFinalIds r
+                      , sourceSpan
+                      }
+          ]
+      Nothing ->
+        -- No resume span; which should mean we're stopped on an exception
+        return []
 
 --------------------------------------------------------------------------------
 -- * GHC Utilities

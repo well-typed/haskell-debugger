@@ -38,11 +38,14 @@ data Command
   -- | Get the evaluation stacktrace until the current breakpoint.
   | GetStacktrace
 
+  -- | Get the list of available scopes at the current breakpoint
+  | GetScopes
+
   -- | Get the variables in scope for the current breakpoint.
   --
   -- Note: for GHCs <9.13 this only reports the variables free in the expression
   -- we're stopped at rather than all variables in scope.
-  | GetVariables
+  | GetVariables VariablesKind
 
   -- | Evaluate an expression at the current breakpoint.
   | DoEval String
@@ -81,6 +84,13 @@ data Breakpoint
   | OnUncaughtExceptionsBreak
   deriving (Show, Generic)
 
+data ScopeInfo = ScopeInfo
+      { kind :: VariablesKind
+      , sourceSpan :: SourceSpan
+      , numVars :: Maybe Int
+      , expensive :: Bool }
+  deriving (Show, Generic)
+
 -- | What kind of breakpoint are we referring to, module or function breakpoints?
 -- Used e.g. in the 'ClearBreakpoints' request
 data BreakpointKind
@@ -89,6 +99,18 @@ data BreakpointKind
   -- | Function breakpoints
   | FunctionBreakpointKind
   deriving (Show, Generic, Eq)
+
+-- | The type of variables that are referred
+data VariablesKind
+  -- | Variables introduced in the interactive context (in the prompt)
+  = InteractiveVariables
+  -- | Variables in the local context (includes arguments, previous bindings)
+  | LocalVariables
+  -- | Variables in the global context (this may include interactive variables? FIXME)
+  | GlobalVariables
+  -- | Variables which will be bound when this expression returns (typically just @it@)
+  | ReturnVariables
+  deriving (Show, Generic, Eq, Ord, Bounded, Enum)
 
 -- | A source span type for the interface. Like 'RealSrcSpan'.
 data SourceSpan = SourceSpan
@@ -119,6 +141,7 @@ data Response
   | DidStep EvalResult
   | DidExec EvalResult
   | GotStacktrace [StackFrame]
+  | GotScopes [ScopeInfo]
   | Aborted String
 
 data BreakFound
@@ -162,22 +185,26 @@ deriving instance Generic Response
 instance ToJSON Command    where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Breakpoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON BreakpointKind where toEncoding = genericToEncoding defaultOptions
+instance ToJSON VariablesKind where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EvalResult where toEncoding = genericToEncoding defaultOptions
 instance ToJSON BreakFound where toEncoding = genericToEncoding defaultOptions
 instance ToJSON SourceSpan where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EntryPoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON StackFrame where toEncoding = genericToEncoding defaultOptions
+instance ToJSON ScopeInfo  where toEncoding = genericToEncoding defaultOptions
 
 instance FromJSON Command
 instance FromJSON Breakpoint
 instance FromJSON BreakpointKind
+instance FromJSON VariablesKind
 instance FromJSON Response
 instance FromJSON EvalResult
 instance FromJSON BreakFound
 instance FromJSON SourceSpan
 instance FromJSON EntryPoint
 instance FromJSON StackFrame
+instance FromJSON ScopeInfo
 
 instance Show GHC.BreakpointId where
   show (GHC.BreakpointId m ix) = "BreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix

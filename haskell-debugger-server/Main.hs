@@ -47,7 +47,7 @@ getConfig = do
 
         -- TODO: Use :print for single-variable, evaluate for the rest. Must match on evaluate req 'hover' type?
         -- Ideally DAP supports "lazy variables" for hover? S.t. hovering doesn't force them unless requested?
-      , supportsEvaluateForHovers             = True
+      , supportsEvaluateForHovers             = False
 
       , supportsBreakpointLocationsRequest    = False -- display which breakpoints are valid when user intends to set breakpoint on given line. this happens before actually setting the breakpoint if I understand correctly.
       , supportsConfigurationDoneRequest      = True
