@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase, DuplicateRecordFields, RecordWildCards #-}
+{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase, DuplicateRecordFields, RecordWildCards, TupleSections #-}
 module Debugger where
 
 import System.Exit
@@ -11,7 +11,7 @@ import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Data.FastString
 import GHC.Data.Maybe (expectJust)
 import GHC.Driver.DynFlags as GHC
-import GHC.Driver.Env
+import GHC.Driver.Env as GHC
 import GHC.Driver.Monad
 import GHC.Driver.Ppr as GHC
 import GHC.Runtime.Debugger.Breakpoints
@@ -315,7 +315,7 @@ getScopes = do
 -- * Variables
 --------------------------------------------------------------------------------
 
-getVariables :: VariablesKind -> Debugger [VarInfo]
+getVariables :: VariableReference -> Debugger [VarInfo]
 getVariables vk = do
   hsc_env <- getSession
   GHC.getResumeContext >>= \case
@@ -324,58 +324,16 @@ getVariables vk = do
       LocalVariables ->
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
         mapM tyThingToVarInfo =<< GHC.getBindings
-      InteractiveVariables ->
-        -- Weird: this reports less than 'getBindings'.
-        -- --------------------------------------------
-        return []
-        -- --------------------------------------------
-        -- mapM tyThingToVarInfo $ fst $
-        --   GHC.resumeBindings r
-      ReturnVariables ->
-        -- Keep it simple for now
-        -- ----------------------
-        return []
-        -- ---------------------
-        -- fmap catMaybes $
-        --   mapM (inspectName . idName) $
-        --     GHC.resumeFinalIds r
       -- TODO: DrilldownVariables VarId -> ...
       GlobalVariables -> do
-        names <-
-          mapM (display . greName) $
+        things <- liftIO $ fmap catMaybes $
+          mapM ((\n -> fmap (n,) <$> GHC.lookupType hsc_env n) . greName) $
             globalRdrEnvElts $ igre_env $ snd $
               GHC.resumeBindings r
-        return $
-          flip map names $ \name ->
-            VarInfo { varName = name
-                    , varType = ""
-                    , varValue = ""
-                    , isThunk = False -- well, CAFs are.
-                    }
-
-        -- TODO: If I try to inspect the names I get:
-        --
-        -- @
-        -- main: ^^ Could not load '_ghczminternal_GHCziInternalziPrimopWrappers_seq_closure', dependency unresolved. See top entry above. You might consider using --optimistic-linking
-        --
-        -- GHC.Linker.Loader.loadName
-        -- During interactive linking, GHCi couldn't find the following symbol:
-        --   closure:seq
-        -- This may be due to you not asking GHCi to load extra object files,
-        -- archives or DLLs needed by your current session.  Restart GHCi, specifying
-        -- the missing library using the -L/path/to/object/dir and -lmissinglibname
-        -- flags, or simply by naming the relevant files on the GHCi command line.
-        -- Alternatively, this link failure might indicate a bug in GHCi.
-        -- If you suspect the latter, please report this as a GHC bug:
-        --   https://www.haskell.org/ghc/reportabug
-        -- @
-        --
-        --
-        -- fmap catMaybes $
-        --   mapM (inspectName . greName) $
-        --     globalRdrEnvElts $ igre_env $ snd $
-        --       GHC.resumeBindings r
-        --
+        mapM (\(n, tt) -> do
+          name <- display n
+          vi <- tyThingToVarInfo tt
+          return vi{varName = name}) things
 
 --------------------------------------------------------------------------------
 -- * GHC Utilities

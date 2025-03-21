@@ -87,14 +87,10 @@ scopeInfoToScope ScopeInfo{..} = do
   return defaultScope
     { scopeName = case kind of
         LocalVariables -> "Locals"
-        InteractiveVariables -> "Interactive"
         GlobalVariables -> "Globals"
-        ReturnVariables -> "Returns"
     , scopePresentationHint = Just $ case kind of
         LocalVariables -> ScopePresentationHintLocals
-        InteractiveVariables -> ScopePresentationHint "interactive"
         GlobalVariables -> ScopePresentationHint "globals"
-        ReturnVariables -> ScopePresentationHint "returnValue"
     , scopeNamedVariables = numVars
     , scopeSource = Just source
     , scopeLine = Just sourceSpan.startLine
@@ -117,9 +113,8 @@ commandVariables = do
   sendVariablesResponse $ VariablesResponse $
     map (varInfoToVariable vk) vars
 
-
 -- | 'VarInfo' to 'Variable'
-varInfoToVariable :: VariablesKind -> VarInfo -> Variable
+varInfoToVariable :: VariableReference -> VarInfo -> Variable
 varInfoToVariable vk VarInfo{..} =
   defaultVariable
     { variableName = T.pack varName
@@ -129,5 +124,8 @@ varInfoToVariable vk VarInfo{..} =
     , variableVariablesReference = 0 -- FIXME
     , variableNamedVariables = Just 0 -- FIXME
     , variableIndexedVariables = Just 0 -- FIXME
+    , variablePresentationHint = Just defaultVariablePresentationHint
+        { variablePresentationHintLazy = Just isThunk
+        }
     }
 
