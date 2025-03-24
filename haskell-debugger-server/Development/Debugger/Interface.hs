@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE LambdaCase, RecordWildCards #-}
 module Development.Debugger.Interface where
 
 import Control.Concurrent.MVar
@@ -15,7 +15,9 @@ sendSync cmd = do
   DAS{..} <- getDebugSession
   liftIO $ do
     putMVar syncRequests cmd
-    takeMVar syncResponses
+    takeMVar syncResponses >>= \case
+      Aborted s -> error s
+      x         -> return x
 
 -- | Sends a command to the debugger, then runs the given action, and only after running the action it waits for the result of the debugger
 sendInterleaved :: D.Command -> DebugAdaptor () -> DebugAdaptor Response

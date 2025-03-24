@@ -58,7 +58,7 @@ getConfig = do
                                                   , columnDescriptorLabel = "Label"
                                                   }
                                                 ]
-      , supportsValueFormattingOptions        = False
+      , supportsValueFormattingOptions        = True
       , supportTerminateDebuggee              = True
       , supportsLoadedSourcesRequest          = False
       , supportsExceptionOptions              = True

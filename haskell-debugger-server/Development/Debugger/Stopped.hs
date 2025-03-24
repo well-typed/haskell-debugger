@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards, OverloadedRecordDot, OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards, OverloadedRecordDot, OverloadedStrings, LambdaCase #-}
 
 -- | Getting information about where we're stopped at (current suspended state).
 --
@@ -86,20 +86,20 @@ scopeInfoToScope ScopeInfo{..} = do
   source <- fileToSource sourceSpan.file
   return defaultScope
     { scopeName = case kind of
-        LocalVariables -> "Locals"
-        ModuleVariables -> "Module"
-        GlobalVariables -> "Globals"
+        LocalVariablesScope -> "Locals"
+        ModuleVariablesScope -> "Module"
+        GlobalVariablesScope -> "Globals"
     , scopePresentationHint = Just $ case kind of
-        LocalVariables -> ScopePresentationHintLocals
-        ModuleVariables -> ScopePresentationHint "module"
-        GlobalVariables -> ScopePresentationHint "globals"
+        LocalVariablesScope -> ScopePresentationHintLocals
+        ModuleVariablesScope -> ScopePresentationHint "module"
+        GlobalVariablesScope -> ScopePresentationHint "globals"
     , scopeNamedVariables = numVars
     , scopeSource = Just source
     , scopeLine = Just sourceSpan.startLine
     , scopeColumn = Just sourceSpan.startCol
     , scopeEndLine = Just sourceSpan.endLine
     , scopeEndColumn = Just sourceSpan.endCol
-    , scopeVariablesReference = fromEnum kind + 1
+    , scopeVariablesReference = fromEnum (scopeToVarRef kind)
     }
 
 --------------------------------------------------------------------------------
@@ -110,28 +110,36 @@ scopeInfoToScope ScopeInfo{..} = do
 commandVariables :: DebugAdaptor ()
 commandVariables = do
   VariablesArguments{..} <- getArguments
-  if variablesArgumentsVariablesReference == 0
-     -- 0 is a reference to nothing, so just do nothing.
-     then sendVariablesResponse $ VariablesResponse []
-     else do
-       let vk = toEnum (variablesArgumentsVariablesReference - 1)
-       GotVariables vars <- sendSync (GetVariables vk)
-       sendVariablesResponse $ VariablesResponse $
-         map (varInfoToVariable vk) vars
+  let vk = toEnum variablesArgumentsVariablesReference
+  GotVariables vars <- sendSync (GetVariables vk)
+  sendVariablesResponse $ VariablesResponse $
+    map varInfoToVariable vars
 
--- | 'VarInfo' to 'Variable'
-varInfoToVariable :: VariableReference -> VarInfo -> Variable
-varInfoToVariable vk VarInfo{..} =
+-- | 'VarInfo' to 'Variable'. Only returns an evaluate name if the reference is
+-- not 'GlobalVariables'
+varInfoToVariable :: VarInfo -> Variable
+varInfoToVariable VarInfo{..} =
   defaultVariable
     { variableName = T.pack varName
     , variableValue = T.pack varValue
     , variableType = Just $ T.pack varType
-    , variableEvaluateName = if vk == GlobalVariables then Nothing else Just $ T.pack varName
-    , variableVariablesReference = 0 -- FIXME
-    , variableNamedVariables = Just 0 -- FIXME
-    , variableIndexedVariables = Just 0 -- FIXME
+    , variableEvaluateName = Just $ T.pack varName
+    , variableVariablesReference = fromEnum varRef
+    , variableNamedVariables = Nothing -- FIXME
+    , variableIndexedVariables = Nothing -- FIXME
     , variablePresentationHint = Just defaultVariablePresentationHint
         { variablePresentationHintLazy = Just isThunk
         }
     }
+
+--------------------------------------------------------------------------------
+-- * Utilities
+--------------------------------------------------------------------------------
+
+-- | From 'ScopeVariablesReference' to a 'VariableReference' that can be used in @"variable"@ requests
+scopeToVarRef :: ScopeVariablesReference -> VariableReference
+scopeToVarRef = \case
+  LocalVariablesScope -> LocalVariables
+  ModuleVariablesScope -> ModuleVariables
+  GlobalVariablesScope -> GlobalVariables
 

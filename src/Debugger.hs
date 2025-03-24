@@ -285,17 +285,17 @@ getScopes = do
       Just rss -> do
         let sourceSpan = realSrcSpanToSourceSpan rss
         return
-          [ ScopeInfo { kind = LocalVariables
+          [ ScopeInfo { kind = LocalVariablesScope
                       , expensive = False
                       , numVars = Nothing
                       , sourceSpan
                       }
-          , ScopeInfo { kind = ModuleVariables
+          , ScopeInfo { kind = ModuleVariablesScope
                       , expensive = False
                       , numVars = Nothing
                       , sourceSpan
                       }
-          , ScopeInfo { kind = GlobalVariables
+          , ScopeInfo { kind = GlobalVariablesScope
                       , expensive = False
                       , numVars = Nothing
                       , sourceSpan
@@ -303,22 +303,46 @@ getScopes = do
           ]
       Nothing ->
         -- No resume span; which should mean we're stopped on an exception
+        -- TODO: Use exception context to create source span, or at least
+        -- return the source span null to have Scopes at least.
         return []
 
 --------------------------------------------------------------------------------
 -- * Variables
 --------------------------------------------------------------------------------
 
+-- | Get variables using a variable/variables reference
 getVariables :: VariableReference -> Debugger [VarInfo]
 getVariables vk = do
   hsc_env <- getSession
   GHC.getResumeContext >>= \case
     [] -> error "not stopped at a breakpoint?!"
     r:_ -> case vk of
+      SpecificVariable n -> do
+        -- Only force thing when scrutinizing specific variable
+        -- TODO: Would it be possible to unwrap one layer without expanding children?
+        -- TODO: Try setting depth=1
+        lookupVarByReference n >>= \case
+          Nothing -> error "lookupVarByReference failed"
+          Just i -> do
+            term <- GHC.obtainTermFromId 100{-depth == 1 only-} True{- force! -} i
+            let isThunk
+                 | Suspension{} <- term = True
+                 | otherwise = False
+            varName <- display i
+            varType <- display (GHCI.termType term)
+            varValue <- display =<< GHCD.showTerm term
+            -- varRef indicates how to fetch fields of this variable,
+            -- but this request is already responding to that!
+            -- the VarInfo for this @SpecificVariable@ must have @NoVariables@ reference.
+            -- Other fields may have others.
+            let varRef = NoVariables
+            return [VarInfo{..}]
+
+
       LocalVariables ->
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
         mapM tyThingToVarInfo =<< GHC.getBindings
-      -- TODO: DrilldownVariables VarId -> ...
 
       ModuleVariables -> do
         things <- filter (sameMod r) <$> hugGlobalVars hsc_env r
@@ -333,6 +357,9 @@ getVariables vk = do
           name <- display n
           vi <- tyThingToVarInfo tt
           return vi{varName = name}) things
+
+      NoVariables -> do
+        return []
   where
     sameMod r (nameModule -> modl, _) = (ibi_tick_mod <$> GHC.resumeBreakpointId r) == Just modl
     hugGlobalVars hsc_env r = catMaybes <$> mapM (select hsc_env) (globalElts r)
@@ -365,22 +392,38 @@ inspectName n = do
       pure Nothing
     Just tt -> Just <$> tyThingToVarInfo tt
 
--- | 'TyThing' to 'VarInfo'
+-- | 'TyThing' to 'VarInfo'. The 'Bool' argument indicates whether to force the
+-- value of the thing (as in @True = :force@, @False = :print@)
 tyThingToVarInfo :: TyThing -> Debugger VarInfo
 tyThingToVarInfo = \case
-  t@(AConLike c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False
-  t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False
-  t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False
+  t@(AConLike c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
+  t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
+  t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
   AnId i -> do
-    term <- GHC.obtainTermFromId 100{-depth-} False{- only force on request (command)-} i
+    term <- GHC.obtainTermFromId 100{-depth-} False{- force only on request, in other calls to obtainTermFromId -} i
     let isThunk
          | Suspension{} <- term = True
          | otherwise = False
     varName <- display i
     varType <- display (GHCI.termType term)
     varValue <- display =<< GHCD.showTerm term
-    return VarInfo{..}
 
+    -- The VarReference allows user to expand variable structure and inspect value.
+    -- Here, we do not want to allow "expanding" a value that is fully computed.
+    -- We only want to return @SpecificVariable@ (which allows expansion) for
+    -- values with sub-fields or thunks. Computed values should return @NoVariables@.
+    varRef <-
+      if not isThunk
+       then return NoVariables
+       else lookupVarById i >>= \case
+        Nothing -> do
+          ir <- freshInt
+          insertVarBimap ir i
+          return (SpecificVariable ir)
+        Just ir ->
+          return (SpecificVariable ir)
+
+    return VarInfo{..}
 
 -- | Convert a GHC's src span into an interface one
 realSrcSpanToSourceSpan :: RealSrcSpan -> SourceSpan

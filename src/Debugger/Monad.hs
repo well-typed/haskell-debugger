@@ -1,6 +1,7 @@
-{-# LANGUAGE CPP, GeneralizedNewtypeDeriving, NamedFieldPuns, TupleSections, LambdaCase #-}
+{-# LANGUAGE BangPatterns, CPP, GeneralizedNewtypeDeriving, NamedFieldPuns, TupleSections, LambdaCase #-}
 module Debugger.Monad where
 
+import Data.Function
 import System.Exit
 import Control.Monad
 import Control.Monad.IO.Class
@@ -10,6 +11,8 @@ import Control.Monad.Catch
 
 import qualified GHC
 import qualified GHCi.BreakArray as BA
+import GHC (Id)
+import GHC.Types.Var.Env
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Phases as GHC
 import GHC.Driver.Pipeline as GHC
@@ -48,6 +51,10 @@ data DebuggerState = DebuggerState
       { activeBreakpoints :: IORef (ModuleEnv (IM.IntMap (BreakpointStatus, BreakpointKind)))
         -- ^ Maps a 'BreakpointId' in Trie representation to the
         -- 'BreakpointStatus' it was activated with.
+      , varReferences     :: IORef (IdEnv Int, IM.IntMap Id)
+      -- ^ A Bimap between Ints and Ids
+      , genUniq           :: IORef Int
+      -- ^ Generates unique ints
       }
 
 -- | Enabling/Disabling a breakpoint
@@ -259,6 +266,35 @@ getModuleByPath path = do
     xs -> error $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path
 
 --------------------------------------------------------------------------------
+-- Variable references
+--------------------------------------------------------------------------------
+-- There's a bidirectional map between Var references (Ints) and Var Ids (Id)
+
+-- | Find a variable reference ('Int') in the bidirectional map from variable reference @Int <-> Id@
+lookupVarByReference :: Int -> Debugger (Maybe Id)
+-- | Find an 'Id' in the bidirectional map from variable reference @Int <-> Id@
+lookupVarById        :: Id  -> Debugger (Maybe Int)
+
+lookupVarByReference n = do
+  ioref <- asks varReferences
+  (_lm, rm) <- readIORef ioref & liftIO
+  return $ IM.lookup n rm
+lookupVarById i = do
+  ioref <- asks varReferences
+  (lm, _rm) <- readIORef ioref & liftIO
+  return $ lookupVarEnv lm i
+
+-- | Inserts a variable reference (Int) <-> Id entry in the bidirectional map between them.
+insertVarBimap :: Int -> Id -> Debugger ()
+insertVarBimap n i = do
+  ioref <- asks varReferences
+  (lm, rm) <- readIORef ioref & liftIO
+  let
+    rm' = IM.insert n i rm
+    lm' = extendVarEnv lm i n
+  writeIORef ioref (lm', rm') & liftIO
+
+--------------------------------------------------------------------------------
 -- Utilities
 --------------------------------------------------------------------------------
 
@@ -269,9 +305,20 @@ breakpointStatusInt = \case
   BreakpointDisabled     -> BA.breakOff -- -1
   BreakpointAfterCount n -> n           -- n
 
+-- | Generate a new unique 'Int'
+freshInt :: Debugger Int
+freshInt = do
+  ioref <- asks genUniq
+  i <- readIORef ioref & liftIO
+  let !i' = i+1
+  writeIORef ioref i'  & liftIO
+  return i
+
 -- | Initialize a 'DebuggerState'
 initialDebuggerState :: GHC.Ghc DebuggerState
 initialDebuggerState = DebuggerState <$> liftIO (newIORef emptyModuleEnv)
+                                     <*> liftIO (newIORef (emptyVarEnv, IM.empty))
+                                     <*> liftIO (newIORef 0)
 
 -- | Lift a 'Ghc' action into a 'Debugger' one.
 liftGhc :: GHC.Ghc a -> Debugger a

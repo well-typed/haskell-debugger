@@ -1,7 +1,8 @@
 {-# LANGUAGE DeriveGeneric,
              StandaloneDeriving,
              OverloadedStrings,
-             DuplicateRecordFields
+             DuplicateRecordFields,
+             TypeApplications
              #-}
 
 -- | Types for sending and receiving messages to/from ghc-debugger
@@ -86,7 +87,7 @@ data Breakpoint
 
 -- | Information about a scope
 data ScopeInfo = ScopeInfo
-      { kind :: VariableReference
+      { kind :: ScopeVariablesReference
       , sourceSpan :: SourceSpan
       , numVars :: Maybe Int
       , expensive :: Bool }
@@ -94,10 +95,13 @@ data ScopeInfo = ScopeInfo
 
 -- | Information about a variable
 data VarInfo = VarInfo
-      { varName :: String
-      , varType :: String
+      { varName  :: String
+      , varType  :: String
       , varValue :: String
-      , isThunk :: Bool
+      , isThunk  :: Bool
+      , varRef   :: VariableReference
+      -- ^ A reference back to this variable
+
       -- TODO:
       --  namedVariables
       --  indexedVariables
@@ -115,10 +119,20 @@ data BreakpointKind
   | FunctionBreakpointKind
   deriving (Show, Generic, Eq)
 
+-- | Referring to existing scopes
+data ScopeVariablesReference
+  = LocalVariablesScope
+  | ModuleVariablesScope
+  | GlobalVariablesScope
+  deriving (Show, Generic, Eq, Ord)
+
 -- | The type of variables referenced, or a particular variable referenced for its fields or value (when inspecting a thunk)
 data VariableReference
+  -- | A void reference to nothing at all. Used e.g. for ty cons and data cons
+  = NoVariables
+
   -- | Variables in the local context (includes arguments, previous bindings)
-  = LocalVariables
+  | LocalVariables
 
   -- | Variables in the module where we're stopped
   | ModuleVariables
@@ -126,9 +140,28 @@ data VariableReference
   -- | Variables in the global context
   | GlobalVariables
 
-  -- TODO: DrilldownVariables VarId -> ...
+  -- | A reference to a specific variable.
+  -- Used to force its result or get its structured children
+  | SpecificVariable Int
 
-  deriving (Show, Generic, Eq, Ord, Bounded, Enum)
+  deriving (Show, Generic, Eq, Ord)
+
+instance Bounded VariableReference where
+  minBound = NoVariables
+  maxBound = SpecificVariable maxBound
+
+instance Enum VariableReference where
+  toEnum 0 = NoVariables
+  toEnum 1 = LocalVariables
+  toEnum 2 = ModuleVariables
+  toEnum 3 = GlobalVariables
+  toEnum n = SpecificVariable (n - 4)
+
+  fromEnum NoVariables          = 0
+  fromEnum LocalVariables       = 1
+  fromEnum ModuleVariables      = 2
+  fromEnum GlobalVariables      = 3
+  fromEnum (SpecificVariable n) = 4 + n
 
 -- | A source span type for the interface. Like 'RealSrcSpan'.
 data SourceSpan = SourceSpan
@@ -204,6 +237,7 @@ deriving instance Generic Response
 instance ToJSON Command    where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Breakpoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON BreakpointKind where toEncoding = genericToEncoding defaultOptions
+instance ToJSON ScopeVariablesReference where toEncoding = genericToEncoding defaultOptions
 instance ToJSON VariableReference where toEncoding = genericToEncoding defaultOptions
 instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
 instance ToJSON EvalResult where toEncoding = genericToEncoding defaultOptions
@@ -217,6 +251,7 @@ instance ToJSON VarInfo    where toEncoding = genericToEncoding defaultOptions
 instance FromJSON Command
 instance FromJSON Breakpoint
 instance FromJSON BreakpointKind
+instance FromJSON ScopeVariablesReference
 instance FromJSON VariableReference
 instance FromJSON Response
 instance FromJSON EvalResult
