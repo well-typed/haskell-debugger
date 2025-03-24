@@ -15,7 +15,7 @@ main :: IO ()
 main = do
   args <- getArgs
   let str = f "Hello, Haskell!" "test"
-    in putStrLn str
+  putStrLn str
   hi
   fail "hello" `catch` \(x :: SomeException) ->
     putStrLn $ "All is OK\n" ++ unlines args ++ show x

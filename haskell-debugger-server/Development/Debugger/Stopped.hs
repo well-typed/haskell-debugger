@@ -88,7 +88,7 @@ scopeInfoToScope ScopeInfo{..} = do
     { scopeName = case kind of
         LocalVariables -> "Locals"
         ModuleVariables -> "Module"
-        GlobalVariables -> "Imported"
+        GlobalVariables -> "Globals"
     , scopePresentationHint = Just $ case kind of
         LocalVariables -> ScopePresentationHintLocals
         ModuleVariables -> ScopePresentationHint "module"
