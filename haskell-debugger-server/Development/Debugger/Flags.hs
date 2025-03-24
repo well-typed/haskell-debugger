@@ -42,7 +42,8 @@ hieBiosFlags target = do
 #endif
 
   return HieBiosFlags
-    { ghcInvocation = [ target | not $ any (`L.isSuffixOf` target) flags ] ++ flags
+    { ghcInvocation = -- [ target | not $ any (`L.isSuffixOf` target) flags ] ++ -- TODO is this correct?
+                      flags ++ ghcDebuggerFlags
     , libdir = Just libdir
     , units  = mapMaybe (\case ("-unit", u) -> Just u; _ -> Nothing) $ zip flags (drop 1 flags)
     }
@@ -51,3 +52,9 @@ hieBiosFlags target = do
       HIE.CradleNone     -> error $ "HIE.CradleNone\n" ++ m
       HIE.CradleFail err -> error $ (unlines $ HIE.cradleErrorStderr err) ++ "\n" ++ m
       HIE.CradleSuccess x -> return x
+
+-- | Flags specific to ghc-debugger to append to all GHC invocations.
+ghcDebuggerFlags :: [String]
+ghcDebuggerFlags =
+  [ "-fno-it" -- don't introduce @it@ after evaluating something at the prompt
+  ]
