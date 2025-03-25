@@ -1,4 +1,6 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards, DerivingStrategies, DeriveGeneric, DeriveAnyClass #-}
+
+-- | TODO: This module should be called Launch.
 module Development.Debugger.Init where
 
 import qualified Data.Text as T
@@ -8,7 +10,7 @@ import System.IO
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Catch
-import Data.Aeson
+import Data.Aeson as Aeson
 import GHC.Generics
 
 import Development.Debugger.Flags
@@ -20,6 +22,9 @@ import Debugger.Interface.Messages hiding (Command, Response)
 import qualified Debugger.Interface.Messages as D (Command, Response)
 import System.Directory
 import System.FilePath
+import qualified System.Process as P
+import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy.Char8 as BSL8
 
 import DAP
 
@@ -50,22 +55,10 @@ data LaunchArgs
 
 -- | Initialize debugger
 --
--- todo items:
--- [ ] Consider Events (Async) vs Responses (Sync)
+-- Todo:
 -- [ ] Consider exception handling leading to termination
--- [ ] Keep map from fresh breakpoint ids to breakpoint internally
 initDebugger :: LaunchArgs -> DebugAdaptor ()
 initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs} = do
-
-  -- This is a unfortunate because the current directory is global to the
-  -- process. But cabal and ghc require the current directory to be the root of
-  -- the project so we set it here.
-  --
-  -- TODO: This means we don't support debugging using the same server two
-  -- different projects on separate workspaces.
-  --
-  -- PRIORITY:IMPORTANT
-  liftIO $ setCurrentDirectory projectRoot
 
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
@@ -75,30 +68,71 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
       breakpointMap = mempty
 
   registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-    [ \_withAdaptor -> debuggerThread flags syncRequests syncResponses
+    [ \_withAdaptor -> debuggerThread projectRoot flags syncRequests syncResponses
 
     -- , if we make the debugger emit events (rather than always replying synchronously),
     -- we will listen for them here to forward them to the client.
     ]
 
--- | The main debugger thread reads commands and writes responses synchronously
--- to the given synchronization variables in a new 'Debugger' session.
-debuggerThread :: HieBiosFlags -> MVar D.Command -> MVar D.Response -> IO ()
-debuggerThread HieBiosFlags{..} requests replies =
+-- | The main debugger thread launches a `ghc-debugger` process.
+--
+-- Then, forever:
+--  1. Reads commands from the given 'D.Command' 'MVar'
+--  2. Sends them to the process's stdin
+--  3. Reads responses from stdout
+--  4. Writes responses to the given 'D.Response' 'MVar'
+--
+-- Concurrently, it reads from the process's stderr forever and outputs it through OutputEvents.
+--
+--  TODO:
+--    [ ] Detect the process crashes?
+--    [ ] Intercept "Abort" commands and kill the process
+--    [ ] Make sure "Abort" commands are sent here when session should terminate.
+--    [ ] Receive the ghc-debugger executable path as an argument or at least env variable.
+--
+-- Notes:
+--  * It's necessary for the GHC session to be run in the project root.
+--    Launching a separate process allows a concurrent DAP sessions with
+--    appropriate current working directories for simultaneous GHC sessions.
+debuggerThread :: FilePath        -- ^ Working directory for GHC session
+               -> HieBiosFlags    -- ^ GHC Invocation flags
+               -> MVar D.Command  -- ^ Read commands
+               -> MVar D.Response -- ^ Write reponses
+               -> IO ()
+debuggerThread workDir HieBiosFlags{..} requests replies = do
 
-  -- TODO: It's probably best for the debugger to be run in an individual
-  -- process with a bridge here. Better for output/stderr handling and better
-  -- for current-working-directory setting.
+  (readFromServer, writeToDebugger) <- P.createPipe
+  (readFromDebugger, writeToServer) <- P.createPipe
+  (readDebuggerOutput, writeDebuggerOutput) <- P.createPipe
+  mapM (`hSetBuffering` LineBuffering) [ readFromServer, writeToDebugger
+                                       , readFromDebugger, writeToServer
+                                       , readDebuggerOutput, writeDebuggerOutput
+                                       ]
 
-  Debugger.runDebugger libdir units ghcInvocation $
-    forever $ do
-      req <- liftIO $ takeMVar requests
-      resp <- (Debugger.execute req <&> Right)
-                `catch` \(e :: SomeException) -> pure (Left (displayException e))
-      either bad reply resp
+  let args = ["-B" ++ libdir]
+              ++ concatMap (\u -> ["-unit", u]) units
+              ++ ghcInvocation
+
+  -- TODO: Log args
+  print args
+
+  ghcDebuggerProc <-
+    P.runProcess "ghc-debugger" args
+                 (Just workDir) Nothing
+                 (Just readFromServer)      -- stdin
+                 (Just writeToServer)       -- stdout
+                 (Just stderr) -- stderr
+
+  forever $ do
+    req <- takeMVar requests
+    -- TODO: Read/Write without newline buffering?
+    BSL8.hPutStrLn writeToDebugger (Aeson.encode req)
+    resp <- BS8.hGetLine readFromDebugger >>= pure . Aeson.eitherDecodeStrict
+    either bad reply resp
+
   where
-    reply = liftIO . putMVar replies
-    bad m = liftIO $ do
+    reply = putMVar replies
+    bad m = do
       hPutStrLn stderr m
       putMVar replies (Aborted m)
 

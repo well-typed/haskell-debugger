@@ -82,7 +82,7 @@ data BreakpointStatus
 --------------------------------------------------------------------------------
 
 -- | Run a 'Debugger' action on a session constructed from a given GHC invocation.
-runDebugger :: Maybe FilePath -- ^ The libdir (given with -B as an arg)
+runDebugger :: FilePath -- ^ The libdir (given with -B as an arg)
             -> [String]       -- ^ The list of units included in the invocation
             -> [String]       -- ^ The full ghc invocation (as constructed by hie-bios flags)
             -> Debugger a     -- ^ 'Debugger' action to run on the session constructed from this invocation
@@ -90,7 +90,7 @@ runDebugger :: Maybe FilePath -- ^ The libdir (given with -B as an arg)
 runDebugger libdir units ghcInvocation' (Debugger action) = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
 
-  GHC.runGhc libdir $ do
+  GHC.runGhc (Just libdir) $ do
 
     dflags0 <- GHC.getSessionDynFlags
 
@@ -297,7 +297,9 @@ insertVarReference i name term = do
 -- Utilities
 --------------------------------------------------------------------------------
 
--- | Evaluate a suspended Term to WHNF
+-- | Evaluate a suspended Term to WHNF.
+--
+-- Used in @'getVariables'@ to reply to a variable introspection request.
 seqTerm :: Term -> Debugger Term
 seqTerm term = do
   hsc_env <- GHC.getSession

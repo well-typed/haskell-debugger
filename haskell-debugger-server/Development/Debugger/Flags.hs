@@ -10,7 +10,7 @@ import qualified HIE.Bios.Environment as HIE
 -- | Flags inferred by @hie-bios@ to invoke GHC
 data HieBiosFlags = HieBiosFlags
       { ghcInvocation :: [String]
-      , libdir :: Maybe FilePath
+      , libdir :: FilePath
       , units :: [String]
       }
 
@@ -43,7 +43,7 @@ hieBiosFlags target = do
   return HieBiosFlags
     { ghcInvocation = -- [ target | not $ any (`L.isSuffixOf` target) flags ] ++ -- TODO is this correct?
                       flags ++ ghcDebuggerFlags
-    , libdir = Just libdir
+    , libdir = libdir
     , units  = mapMaybe (\case ("-unit", u) -> Just u; _ -> Nothing) $ zip flags (drop 1 flags)
     }
   where

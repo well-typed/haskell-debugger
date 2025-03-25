@@ -55,7 +55,7 @@ data Settings = Settings
         -- , force inspect?
         -- , context-modules?
         ghcInvocation :: [String]
-      , libdir :: Maybe FilePath
+      , libdir :: FilePath
       , units :: [String]
       }
 
@@ -91,7 +91,8 @@ main = do
 mkSettings :: [String] -> Settings
 mkSettings flags = Settings
   { ghcInvocation = flags
-  , libdir = listToMaybe $ mapMaybe (\case '-':'B':dir -> Just dir; _ -> Nothing) flags
+  , libdir = fromMaybe (error "Libdir must be specified with -B!") $ listToMaybe $
+             mapMaybe (\case '-':'B':dir -> Just dir; _ -> Nothing) flags
   , units  = mapMaybe (\case ("-unit", u) -> Just u; _ -> Nothing) $ zip flags (drop 1 flags)
   }
 
