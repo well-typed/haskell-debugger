@@ -435,10 +435,11 @@ termToVarInfo top_name top_term = do
             -- to have more information we could match further on @Heap.ClosureType@
            | Suspension{} <- term = True
            | otherwise = False
-      let hasSubterms
-           | Prim{} <- term         = False
-           | Term{subTerms} <- term = not (null subTerms)
-           | otherwise              = True
+      let getSubterms t = case t of
+           Prim{}                    -> []
+           Term{subTerms}            -> subTerms
+           NewtypeWrap{wrapped_term} -> getSubterms wrapped_term
+           otherwise                 -> []
       varName <- display n
       varType <- display (GHCI.termType term)
       varValue <- display =<< GHCD.showTerm term
@@ -448,7 +449,13 @@ termToVarInfo top_name top_term = do
       -- We only want to return @SpecificVariable@ (which allows expansion) for
       -- values with sub-fields or thunks.
       varRef <- do
-        if GHCI.isFullyEvaluatedTerm term && not hasSubterms
+        if GHCI.isFullyEvaluatedTerm term
+           -- Even if it is already evaluated, we do want to display a
+           -- structure as long as it is more than one field
+           --
+           -- Fully evaluated structures with only one field are better seen inline.
+           -- (e.g. consider how awkward it is to expand Char# 10 and I# 20)
+           && length (getSubterms term) <= 1
          then
             return NoVariables
          else do
