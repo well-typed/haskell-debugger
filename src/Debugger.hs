@@ -10,7 +10,7 @@ import Data.Bits (xor)
 
 import GHC
 import GHC.Types.FieldLabel
-import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
+import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS, mkUnboundName)
 import GHC.Data.FastString
 import GHC.Data.Maybe (expectJust)
 import GHC.Driver.DynFlags as GHC
@@ -20,6 +20,7 @@ import GHC.Driver.Ppr as GHC
 import GHC.Runtime.Debugger.Breakpoints
 import GHC.Runtime.Eval.Types as GHC
 import GHC.Runtime.Eval
+import GHC.Core.DataCon
 import GHC.Types.Breakpoint
 import GHC.Types.Id as GHC
 import GHC.Types.Name.Occurrence
@@ -406,8 +407,17 @@ termToVarInfo top_name top_term = do
   sub_vis <- case top_term of
     -- Make 'VarInfo's for the first layer of subTerms only.
     Term{dc=Right dc, subTerms} -> do
-      let names = map flSelector $ dataConFieldLabels dc
-      LabeledFields <$> mapM (uncurry go) (zipEqual names subTerms)
+      case dataConFieldLabels dc of
+        -- Not a record type,
+        -- Use indexed fields
+        [] -> do
+          let names = zipWith (\ix _ -> mkUnboundName (mkVarOcc ("_" ++ show ix))) [1..] (dataConOrigArgTys dc)
+          IndexedFields <$> mapM (uncurry go) (zipEqual names subTerms)
+        -- Is a record type,
+        -- Use field labels
+        dataConFields -> do
+          let names = map flSelector dataConFields
+          LabeledFields <$> mapM (uncurry go) (zipEqual names subTerms)
     NewtypeWrap{dc=Right dc} -> undefined
     _ -> return NoFields
 
@@ -415,7 +425,7 @@ termToVarInfo top_name top_term = do
 
   where
     -- Make a VarInfo for a term, but don't recurse into the fields and return
-    -- an empty list for 'varFields'.
+    -- @NoFields@ for 'varFields'.
     --
     -- We do this because we don't want to recursively return all sub-fields --
     -- only the first layer of fields for the top term.
@@ -425,6 +435,10 @@ termToVarInfo top_name top_term = do
             -- to have more information we could match further on @Heap.ClosureType@
            | Suspension{} <- term = True
            | otherwise = False
+      let hasSubterms
+           | Prim{} <- term         = False
+           | Term{subTerms} <- term = not (null subTerms)
+           | otherwise              = True
       varName <- display n
       varType <- display (GHCI.termType term)
       varValue <- display =<< GHCD.showTerm term
@@ -434,7 +448,7 @@ termToVarInfo top_name top_term = do
       -- We only want to return @SpecificVariable@ (which allows expansion) for
       -- values with sub-fields or thunks.
       varRef <- do
-        if GHCI.isFullyEvaluatedTerm term
+        if GHCI.isFullyEvaluatedTerm term && not hasSubterms
          then
             return NoVariables
          else do
