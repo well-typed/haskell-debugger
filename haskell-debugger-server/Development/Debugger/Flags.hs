@@ -2,7 +2,6 @@
 module Development.Debugger.Flags where
 
 import Data.Maybe
-import qualified Data.List as L
 
 import qualified HIE.Bios as HIE
 import qualified HIE.Bios.Types as HIE

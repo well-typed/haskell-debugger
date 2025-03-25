@@ -11,8 +11,7 @@ import Control.Monad.Catch
 
 import qualified GHC
 import qualified GHCi.BreakArray as BA
-import GHC (Id)
-import GHC.Types.Var.Env
+import GHC (Name)
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Phases as GHC
 import GHC.Driver.Pipeline as GHC
@@ -26,7 +25,10 @@ import GHC.Utils.Monad as GHC
 import GHC.Utils.Logger as GHC
 import GHC.Types.Unique.Supply as GHC
 import GHC.Runtime.Loader as GHC
+import GHC.Runtime.Interpreter as GHCi
+import GHC.Runtime.Heap.Inspect
 import GHC.Unit.Module.Env as GHC
+import GHC.Driver.Env
 
 import Data.IORef
 import Data.Maybe
@@ -51,8 +53,13 @@ data DebuggerState = DebuggerState
       { activeBreakpoints :: IORef (ModuleEnv (IM.IntMap (BreakpointStatus, BreakpointKind)))
         -- ^ Maps a 'BreakpointId' in Trie representation to the
         -- 'BreakpointStatus' it was activated with.
-      , varReferences     :: IORef (IdEnv Int, IM.IntMap Id)
-      -- ^ A Bimap between Ints and Ids
+      , varReferences     :: IORef (IM.IntMap (Name, Term))
+      -- ^ When we're stopped at a breakpoint, this maps variable reference to
+      -- Terms to allow further inspection and forcing by reference.
+      --
+      -- This map is only valid while stopped in this context. After stepping
+      -- or resuming evaluation in any available way, this map becomes invalid
+      -- and should therefore be cleaned.
       , genUniq           :: IORef Int
       -- ^ Generates unique ints
       }
@@ -268,35 +275,51 @@ getModuleByPath path = do
 --------------------------------------------------------------------------------
 -- Variable references
 --------------------------------------------------------------------------------
--- There's a bidirectional map between Var references (Ints) and Var Ids (Id)
 
--- | Find a variable reference ('Int') in the bidirectional map from variable reference @Int <-> Id@
-lookupVarByReference :: Int -> Debugger (Maybe Id)
--- | Find an 'Id' in the bidirectional map from variable reference @Int <-> Id@
-lookupVarById        :: Id  -> Debugger (Maybe Int)
+-- | Find a variable's associated Term and Name by reference ('Int')
+lookupVarByReference :: Int -> Debugger (Maybe (Name, Term))
+lookupVarByReference i = do
+  ioref <- asks varReferences
+  rm <- readIORef ioref & liftIO
+  return $ IM.lookup i rm
 
-lookupVarByReference n = do
+-- | Inserts a mapping from the given variable reference to the variable's
+-- associated Term and the Name it is bound to for display
+insertVarReference :: Int -> Name -> Term -> Debugger ()
+insertVarReference i name term = do
   ioref <- asks varReferences
-  (_lm, rm) <- readIORef ioref & liftIO
-  return $ IM.lookup n rm
-lookupVarById i = do
-  ioref <- asks varReferences
-  (lm, _rm) <- readIORef ioref & liftIO
-  return $ lookupVarEnv lm i
-
--- | Inserts a variable reference (Int) <-> Id entry in the bidirectional map between them.
-insertVarBimap :: Int -> Id -> Debugger ()
-insertVarBimap n i = do
-  ioref <- asks varReferences
-  (lm, rm) <- readIORef ioref & liftIO
+  rm <- readIORef ioref & liftIO
   let
-    rm' = IM.insert n i rm
-    lm' = extendVarEnv lm i n
-  writeIORef ioref (lm', rm') & liftIO
+    rm' = IM.insert i (name, term) rm
+  writeIORef ioref rm' & liftIO
 
 --------------------------------------------------------------------------------
 -- Utilities
 --------------------------------------------------------------------------------
+
+-- | Evaluate a suspended Term to WHNF
+seqTerm :: Term -> Debugger Term
+seqTerm term = do
+  hsc_env <- GHC.getSession
+  let
+    interp = hscInterp hsc_env
+    unit_env = hsc_unit_env hsc_env
+  case term of
+    Suspension{val, ty} -> liftIO $ do
+      r <- GHCi.seqHValue interp unit_env val
+      () <- fromEvalResult r
+      cvObtainTerm hsc_env 100 False ty val
+    _ -> return term
+
+-- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
+--
+-- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
+continueToCompletion :: Debugger GHC.ExecResult
+continueToCompletion = do
+  execr <- GHC.resumeExec GHC.RunToCompletion Nothing
+  case execr of
+    GHC.ExecBreak{} -> continueToCompletion
+    GHC.ExecComplete{} -> return execr
 
 -- | Turn a 'BreakpointStatus' into its 'Int' representation for 'BreakArray'
 breakpointStatusInt :: BreakpointStatus -> Int
@@ -317,7 +340,7 @@ freshInt = do
 -- | Initialize a 'DebuggerState'
 initialDebuggerState :: GHC.Ghc DebuggerState
 initialDebuggerState = DebuggerState <$> liftIO (newIORef emptyModuleEnv)
-                                     <*> liftIO (newIORef (emptyVarEnv, IM.empty))
+                                     <*> liftIO (newIORef IM.empty)
                                      <*> liftIO (newIORef 0)
 
 -- | Lift a 'Ghc' action into a 'Debugger' one.

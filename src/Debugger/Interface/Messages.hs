@@ -93,6 +93,11 @@ data ScopeInfo = ScopeInfo
       , expensive :: Bool }
   deriving (Show, Generic)
 
+data VarFields = LabeledFields [VarInfo]
+               | IndexedFields [VarInfo]
+               | NoFields
+               deriving (Show, Generic)
+
 -- | Information about a variable
 data VarInfo = VarInfo
       { varName  :: String
@@ -102,9 +107,9 @@ data VarInfo = VarInfo
       , varRef   :: VariableReference
       -- ^ A reference back to this variable
 
-      -- TODO:
-      --  namedVariables
-      --  indexedVariables
+      , varFields :: VarFields
+      -- ^ A 'VarInfo' for each field. These may be named (@Left@) or indexed fields (@Right@).
+
       -- TODO:
       --  memory reference using ghc-debug.
       }
@@ -247,6 +252,7 @@ instance ToJSON EntryPoint where toEncoding = genericToEncoding defaultOptions
 instance ToJSON StackFrame where toEncoding = genericToEncoding defaultOptions
 instance ToJSON ScopeInfo  where toEncoding = genericToEncoding defaultOptions
 instance ToJSON VarInfo    where toEncoding = genericToEncoding defaultOptions
+instance ToJSON VarFields where toEncoding = genericToEncoding defaultOptions
 
 instance FromJSON Command
 instance FromJSON Breakpoint
@@ -261,6 +267,7 @@ instance FromJSON EntryPoint
 instance FromJSON StackFrame
 instance FromJSON ScopeInfo
 instance FromJSON VarInfo
+instance FromJSON VarFields
 
 instance Show GHC.BreakpointId where
   show (GHC.BreakpointId m ix) = "BreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix

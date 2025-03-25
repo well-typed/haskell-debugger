@@ -113,20 +113,29 @@ commandVariables = do
   let vk = toEnum variablesArgumentsVariablesReference
   GotVariables vars <- sendSync (GetVariables vk)
   sendVariablesResponse $ VariablesResponse $
-    map varInfoToVariable vars
+    map varInfoToVariables vars
 
--- | 'VarInfo' to 'Variable'. Only returns an evaluate name if the reference is
--- not 'GlobalVariables'
-varInfoToVariable :: VarInfo -> Variable
-varInfoToVariable VarInfo{..} =
+-- | 'VarInfo' to 'Variable's.
+--
+-- Note that if 'VarInfo' is a nested structure, only the top-most VarInfo is
+-- returned (with the according namedVariables and indexedVariables sizes).
+--
+-- The @'varFields'@ are ignored. If they are meant to be returned, they should
+-- be matched against and returned explicitly (see @'getVariables'@).
+varInfoToVariables :: VarInfo -> Variable
+varInfoToVariables VarInfo{..} =
   defaultVariable
     { variableName = T.pack varName
     , variableValue = T.pack varValue
     , variableType = Just $ T.pack varType
     , variableEvaluateName = Just $ T.pack varName
     , variableVariablesReference = fromEnum varRef
-    , variableNamedVariables = Nothing -- FIXME
-    , variableIndexedVariables = Nothing -- FIXME
+    , variableNamedVariables = case varFields of
+        LabeledFields xs -> Just $ length xs
+        _                -> Nothing
+    , variableIndexedVariables = case varFields of
+        IndexedFields xs -> Just $ length xs
+        _                -> Nothing
     , variablePresentationHint = Just defaultVariablePresentationHint
         { variablePresentationHintLazy = Just isThunk
         }

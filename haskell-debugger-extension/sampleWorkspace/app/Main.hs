@@ -15,16 +15,18 @@ main :: IO ()
 main = do
   args <- getArgs
   let str = f "Hello, Haskell!" "test"
-  let str' = g str
+  let str' = g $ MyFls (fst str) (snd str)
   hi
   putStrLn str'
   fail "hello" `catch` \(x :: SomeException) ->
     putStrLn $ "All is OK\n" ++ unlines args ++ show x
   putStrLn "Goodbye!"
 
+data MyFields = MyFls { abcdef :: String, abcdefg :: String }
+
 f :: String -> String -> (String, String)
 f x y = (x, y)
 {-# OPAQUE f #-}
 
-g :: (String, String) -> String
-g a = fst a ++ " " ++ snd a
+g :: MyFields -> String
+g a = abcdef a ++ abcdefg a

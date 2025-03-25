@@ -9,6 +9,7 @@ import Control.Monad.IO.Class
 import Data.Bits (xor)
 
 import GHC
+import GHC.Types.FieldLabel
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Data.FastString
 import GHC.Data.Maybe (expectJust)
@@ -20,12 +21,13 @@ import GHC.Runtime.Debugger.Breakpoints
 import GHC.Runtime.Eval.Types as GHC
 import GHC.Runtime.Eval
 import GHC.Types.Breakpoint
-import GHC.Types.Id
+import GHC.Types.Id as GHC
 import GHC.Types.Name.Occurrence
 import GHC.Types.Name.Reader as RdrName (mkOrig, globalRdrEnvElts, greName)
 import GHC.Types.SrcLoc
 import GHC.Unit.Module.Env as GHC
 import GHC.Utils.Outputable as GHC
+import GHC.Utils.Misc (zipEqual)
 import qualified GHC.Runtime.Debugger as GHCD
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 import qualified GHCi.Message as GHCi
@@ -235,20 +237,10 @@ handleExecResult = \case
           Nothing     -> liftIO $ fail "doEval failed"
     ExecBreak {breakNames, breakPointId=Nothing} ->
       -- Stopped at an exception
-      -- todo: force exception to display string of exception?
+      -- TODO: force the exception to display string with Backtrace?
       return EvalStopped{breakId = Nothing}
     ExecBreak {breakNames, breakPointId} ->
       return EvalStopped{breakId = toBreakpointId <$> breakPointId}
-
--- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
---
--- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
-continueToCompletion :: Debugger ExecResult
-continueToCompletion = do
-  execr <- GHC.resumeExec RunToCompletion Nothing
-  case execr of
-    ExecBreak{} -> continueToCompletion
-    ExecComplete{} -> return execr
 
 --------------------------------------------------------------------------------
 -- * Stack trace
@@ -320,25 +312,26 @@ getVariables vk = do
     r:_ -> case vk of
       SpecificVariable n -> do
         -- Only force thing when scrutinizing specific variable
-        -- TODO: Would it be possible to unwrap one layer without expanding children?
-        -- TODO: Try setting depth=1
         lookupVarByReference n >>= \case
           Nothing -> error "lookupVarByReference failed"
-          Just i -> do
-            term <- GHC.obtainTermFromId 100{-depth == 1 only-} True{- force! -} i
-            let isThunk
-                 | Suspension{} <- term = True
-                 | otherwise = False
-            varName <- display i
-            varType <- display (GHCI.termType term)
-            varValue <- display =<< GHCD.showTerm term
-            -- varRef indicates how to fetch fields of this variable,
-            -- but this request is already responding to that!
-            -- the VarInfo for this @SpecificVariable@ must have @NoVariables@ reference.
-            -- Other fields may have others.
-            let varRef = NoVariables
-            return [VarInfo{..}]
-
+          Just (n, term) -> do
+            term' <- seqTerm term
+            vi <- termToVarInfo n term'
+            case term of
+              Suspension{} -> do
+                -- Original Term is a suspension:
+                -- It is a "lazy" DAP variable, so our reply can ONLY include
+                -- this single variable. So we erase the @varFields@ after
+                -- computing them.
+                return [vi{varFields = NoFields}]
+              _ -> do
+                -- Original Term was already something else;
+                -- Meaning the @SpecificVariable@ request means to inspect the structure.
+                -- Return ONLY the fields
+                case varFields vi of
+                  NoFields -> return []
+                  LabeledFields xs -> return xs
+                  IndexedFields xs -> return xs
 
       LocalVariables ->
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
@@ -396,34 +389,60 @@ inspectName n = do
 -- value of the thing (as in @True = :force@, @False = :print@)
 tyThingToVarInfo :: TyThing -> Debugger VarInfo
 tyThingToVarInfo = \case
-  t@(AConLike c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
-  t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
-  t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
+  t@(AConLike c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
+  t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
+  t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   AnId i -> do
-    term <- GHC.obtainTermFromId 100{-depth-} False{- force only on request, in other calls to obtainTermFromId -} i
-    let isThunk
-         | Suspension{} <- term = True
-         | otherwise = False
-    varName <- display i
-    varType <- display (GHCI.termType term)
-    varValue <- display =<< GHCD.showTerm term
+    term <- GHC.obtainTermFromId 100{-depth-} False{-don't force-} i
+    termToVarInfo (GHC.idName i) term
 
-    -- The VarReference allows user to expand variable structure and inspect value.
-    -- Here, we do not want to allow "expanding" a value that is fully computed.
-    -- We only want to return @SpecificVariable@ (which allows expansion) for
-    -- values with sub-fields or thunks. Computed values should return @NoVariables@.
-    varRef <-
-      if not isThunk
-       then return NoVariables
-       else lookupVarById i >>= \case
-        Nothing -> do
-          ir <- freshInt
-          insertVarBimap ir i
-          return (SpecificVariable ir)
-        Just ir ->
-          return (SpecificVariable ir)
+-- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
+termToVarInfo :: Name -> Term -> Debugger VarInfo
+termToVarInfo top_name top_term = do
 
-    return VarInfo{..}
+  -- Make a VarInfo for the top term.
+  top_vi <- go top_name top_term
+
+  sub_vis <- case top_term of
+    -- Make 'VarInfo's for the first layer of subTerms only.
+    Term{dc=Right dc, subTerms} -> do
+      let names = map flSelector $ dataConFieldLabels dc
+      LabeledFields <$> mapM (uncurry go) (zipEqual names subTerms)
+    NewtypeWrap{dc=Right dc} -> undefined
+    _ -> return NoFields
+
+  return top_vi{varFields = sub_vis}
+
+  where
+    -- Make a VarInfo for a term, but don't recurse into the fields and return
+    -- an empty list for 'varFields'.
+    --
+    -- We do this because we don't want to recursively return all sub-fields --
+    -- only the first layer of fields for the top term.
+    go n term = do
+      let varFields = NoFields
+      let isThunk
+            -- to have more information we could match further on @Heap.ClosureType@
+           | Suspension{} <- term = True
+           | otherwise = False
+      varName <- display n
+      varType <- display (GHCI.termType term)
+      varValue <- display =<< GHCD.showTerm term
+
+      -- The VarReference allows user to expand variable structure and inspect its value.
+      -- Here, we do not want to allow expanding a term that is fully evaluated.
+      -- We only want to return @SpecificVariable@ (which allows expansion) for
+      -- values with sub-fields or thunks.
+      varRef <- do
+        if GHCI.isFullyEvaluatedTerm term
+         then
+            return NoVariables
+         else do
+            ir <- freshInt
+            insertVarReference ir n term
+            return (SpecificVariable ir)
+
+      return VarInfo{..}
 
 -- | Convert a GHC's src span into an interface one
 realSrcSpanToSourceSpan :: RealSrcSpan -> SourceSpan
