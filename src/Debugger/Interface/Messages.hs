@@ -6,15 +6,18 @@
              #-}
 
 -- | Types for sending and receiving messages to/from ghc-debugger
-module Debugger.Interface.Messages where
+module Debugger.Interface.Messages
+  ( module Debugger.Interface.Messages
+  ) where
 
 import qualified Data.ByteString.Char8 as BS
-import qualified Data.Binary as B
+import qualified GHC.Utils.Binary as B
 import GHC.Generics
 import Data.Aeson
 import qualified GHC
 import qualified GHC.Utils.Outputable as GHC
-import GHC.Unit.Types () -- Binary
+import GHC.Unit.Types
+import Language.Haskell.Syntax.Module.Name
 
 --------------------------------------------------------------------------------
 -- Commands
@@ -271,13 +274,14 @@ instance FromJSON VarFields
 
 instance Show GHC.BreakpointId where
   show (GHC.BreakpointId m ix) = "BreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix
-instance ToJSON GHC.BreakpointId where
-  toJSON (GHC.BreakpointId m ix) =
-    undefined -- todo: why isn't Binary Module available here? it should exist
-      -- In any case, we DO NOT want to expose GHC outside.
-    -- object [ "module" .= BS.unpack (BS.toStrict (B.encode m))
-    --        , "ix" .= ix
-    --        ]
-instance FromJSON GHC.BreakpointId where
-  parseJSON = undefined -- for now, while developing with `dap` that needs no JSON
 
+instance ToJSON GHC.BreakpointId where
+  toJSON (GHC.BreakpointId (Module unit mn) ix) =
+    object [ "module_name" .= moduleNameString mn
+           , "module_unit" .= unitString unit
+           , "ix" .= ix
+           ]
+instance FromJSON GHC.BreakpointId where
+  parseJSON = withObject "BreakpointId" $ \v -> GHC.BreakpointId
+        <$> (Module <$> (stringToUnit <$> v .: "module_unit") <*> (mkModuleName <$> v .: "module_name"))
+        <*> v .: "ix"
