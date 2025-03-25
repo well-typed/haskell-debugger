@@ -39,6 +39,17 @@ commandEvaluate = do
   DidEval er <- sendSync (DoEval (T.unpack evaluateArgumentsExpression))
   case er of
     EvalStopped{} -> error "impossible, execution is resumed automatically for 'DoEval'"
+    EvalAbortedWith e -> do
+      -- Evaluation failed, we report it but don't terminate.
+      sendEvaluateResponse EvaluateResponse
+        { evaluateResponseResult  = T.pack e
+        , evaluateResponseType    = T.pack ""
+        , evaluateResponsePresentationHint    = Nothing
+        , evaluateResponseVariablesReference  = 0
+        , evaluateResponseNamedVariables      = Nothing
+        , evaluateResponseIndexedVariables    = Nothing
+        , evaluateResponseMemoryReference     = Nothing
+        }
     _ -> do
       sendEvaluateResponse EvaluateResponse
         { evaluateResponseResult  = T.pack $ resultVal er
@@ -57,9 +68,13 @@ commandEvaluate = do
 -- | Handle an EvalResult by sending a stopped or exited event.
 --
 -- In particular, the result of evaluation is ignored by this function.
--- The 'EvaluateRequest' inspects the EvalResult itself and reports on the result.
+-- The 'EvaluateRequest' handler inspects the EvalResult itself and reports on the result.
 handleEvalResult :: Bool {-^ Whether we are "stepping" -} -> EvalResult -> DebugAdaptor ()
 handleEvalResult stepping er = case er of
+  EvalAbortedWith e -> do
+    sendOutputErr (T.pack e)
+    sendTerminatedEvent defaultTerminatedEvent
+    sendExitedEvent (ExitedEvent 43)
   EvalCompleted{} -> do
     sendTerminatedEvent defaultTerminatedEvent
     sendExitedEvent (ExitedEvent 0)

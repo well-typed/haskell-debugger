@@ -63,3 +63,14 @@ sendConsoleEvent txt = do
       { -- outputEventCategory = Just Console
         outputEventOutput = txt <> T.pack "\n"
       }
+
+-- | Send a 'stderr' output event
+--
+-- TODO: outputEventCategory is not yet exposed from DAP.
+sendOutputErr :: T.Text -> DebugAdaptor ()
+sendOutputErr txt = do
+  sendOutputEvent
+    defaultOutputEvent
+      { -- outputEventCategory = Just Console
+        outputEventOutput = txt <> T.pack "\n"
+      }

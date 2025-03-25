@@ -221,6 +221,8 @@ data EvalResult
   = EvalCompleted { resultVal :: String, resultType :: String }
   | EvalException { resultVal :: String, resultType :: String }
   | EvalStopped   { breakId :: Maybe GHC.BreakpointId {-^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)? -} }
+  -- | Evaluation failed for some reason other than completed/completed-with-exception/stopped.
+  | EvalAbortedWith String
   deriving (Show, Generic)
 
 data StackFrame

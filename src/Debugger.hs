@@ -1,11 +1,13 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
-   TypeApplications #-}
+   TypeApplications, ScopedTypeVariables #-}
 module Debugger where
 
 import System.Exit
 import Control.Monad
 import Control.Monad.IO.Class
+import Control.Exception (SomeException, displayException)
+import Control.Monad.Catch
 import Data.Bits (xor)
 
 import GHC
@@ -221,10 +223,11 @@ doLocalStep = do
 -- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
 doEval :: String -> Debugger EvalResult
 doEval exp = do
-  excr <- GHC.execStmt exp GHC.execOptions
+  excr <- (Right <$> GHC.execStmt exp GHC.execOptions) `catch` \(e::SomeException) -> pure (Left (displayException e))
   case excr of
-    ExecBreak{} -> continueToCompletion >>= handleExecResult
-    ExecComplete{} -> handleExecResult excr
+    Left err -> pure $ EvalAbortedWith err
+    Right ExecBreak{} -> continueToCompletion >>= handleExecResult
+    Right r@ExecComplete{} -> handleExecResult r
 
 -- | Turn a GHC's 'ExecResult' into an 'EvalResult' response
 handleExecResult :: GHC.ExecResult -> Debugger EvalResult
@@ -232,7 +235,7 @@ handleExecResult = \case
     ExecComplete {execResult} -> do
       case execResult of
         Left e -> return (EvalException (show e) "SomeException")
-        Right [] -> error $ "Nothing bound for expression"
+        Right [] -> return (EvalCompleted "" "") -- Evaluation completed without binding any result.
         Right (n:ns) -> inspectName n >>= \case
           Just VarInfo{varValue, varType} -> return (EvalCompleted varValue varType)
           Nothing     -> liftIO $ fail "doEval failed"

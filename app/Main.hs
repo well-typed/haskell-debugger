@@ -48,8 +48,6 @@ import Debugger
 import Debugger.Monad
 import Debugger.Interface
 
--- TODO:Handle errors somewhere here and report them as responses (`prettyPrintGhcErrors`)?
-
 data Settings = Settings
       { --   logLevel?
         -- , force inspect?
@@ -109,6 +107,5 @@ debugger requests replies Settings{libdir, units, ghcInvocation} =
   where
     reply = liftIO . writeChan replies
     bad m = liftIO $ do
-      hPutStrLn stderr m
       writeChan replies (Aborted m)
 
