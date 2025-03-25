@@ -308,7 +308,7 @@ seqTerm term = do
     Suspension{val, ty} -> liftIO $ do
       r <- GHCi.seqHValue interp unit_env val
       () <- fromEvalResult r
-      cvObtainTerm hsc_env 100 False ty val
+      cvObtainTerm hsc_env 5 False ty val
     _ -> return term
 
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.

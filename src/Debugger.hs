@@ -394,7 +394,7 @@ tyThingToVarInfo = \case
   t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   AnId i -> do
-    term <- GHC.obtainTermFromId 100{-depth-} False{-don't force-} i
+    term <- GHC.obtainTermFromId 5{-depth-} False{-don't force-} i
     termToVarInfo (GHC.idName i) term
 
 -- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
