@@ -51,3 +51,15 @@ fileToSource file = do
      else return (root </> file)
   return defaultSource{sourcePath = Just (T.pack fullPath)}
 
+-- | Send a 'console' output event: output from the debugger running (as opposed to output from the debuggee)
+--
+-- TODO:
+--  [ ] How to distinguish GHC output from debuggee stdout and even debuggee stderr?
+--  [ ] We resort to Console Events only for now.
+sendConsoleEvent :: T.Text -> DebugAdaptor ()
+sendConsoleEvent txt = do
+  sendOutputEvent
+    defaultOutputEvent
+      { -- outputEventCategory = Just Console
+        outputEventOutput = txt <> T.pack "\n"
+      }

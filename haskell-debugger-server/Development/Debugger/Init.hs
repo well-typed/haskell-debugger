@@ -4,9 +4,11 @@
 module Development.Debugger.Init where
 
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import Control.Monad.IO.Class
 import Data.Functor
 import System.IO
+import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Catch
@@ -68,7 +70,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
       breakpointMap = mempty
 
   registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-    [ \_withAdaptor -> debuggerThread projectRoot flags syncRequests syncResponses
+    [ debuggerThread projectRoot flags syncRequests syncResponses
 
     -- , if we make the debugger emit events (rather than always replying synchronously),
     -- we will listen for them here to forward them to the client.
@@ -98,30 +100,46 @@ debuggerThread :: FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
                -> MVar D.Command  -- ^ Read commands
                -> MVar D.Response -- ^ Write reponses
+               -> (DebugAdaptor () -> IO ())
+               -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread workDir HieBiosFlags{..} requests replies = do
+debuggerThread workDir HieBiosFlags{..} requests replies withAdaptor = do
 
   (readFromServer, writeToDebugger) <- P.createPipe
   (readFromDebugger, writeToServer) <- P.createPipe
   (readDebuggerOutput, writeDebuggerOutput) <- P.createPipe
-  mapM (`hSetBuffering` LineBuffering) [ readFromServer, writeToDebugger
-                                       , readFromDebugger, writeToServer
-                                       , readDebuggerOutput, writeDebuggerOutput
-                                       ]
+  forM_ [ readFromServer, writeToDebugger
+        , readFromDebugger, writeToServer
+        , readDebuggerOutput, writeDebuggerOutput
+        ] $ \h -> do
+    h `hSetBuffering` LineBuffering
+    h `hSetEncoding` utf8
 
+  let cmd = "ghc-debugger" -- FIXME: read path to executable from somewhere.
   let args = ["-B" ++ libdir]
               ++ concatMap (\u -> ["-unit", u]) units
               ++ ghcInvocation
 
-  -- TODO: Log args
-  print args
+  -- Log ghc-debugger invocation
+  withAdaptor $
+    sendConsoleEvent $ T.pack $
+      cmd <> " " <> unwords args
 
   ghcDebuggerProc <-
-    P.runProcess "ghc-debugger" args
+    P.runProcess cmd args
                  (Just workDir) Nothing
                  (Just readFromServer)      -- stdin
                  (Just writeToServer)       -- stdout
-                 (Just stderr) -- stderr
+                 (Just writeDebuggerOutput) -- stderr
+
+  -- Read the debugger output from stderr (stdout is also redirected to stderr),
+  -- And emit Output Events,
+  -- Forever.
+  forkIO $ do
+    forever $ do
+      line <- T.hGetLine readDebuggerOutput
+      withAdaptor $ sendConsoleEvent line
+
 
   forever $ do
     req <- takeMVar requests

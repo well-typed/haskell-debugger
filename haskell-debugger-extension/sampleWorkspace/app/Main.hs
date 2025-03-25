@@ -20,8 +20,7 @@ main = do
   putStrLn str'
   fail "hello" `catch` \(x :: SomeException) ->
     putStrLn $ "All is OK\n" ++ unlines args ++ show x
-  putStrLn
-    "Goodbye!"
+  putStrLn "Goodbye!"
 
 data MyFields = MyFls { abcdef :: String, abcdefg :: String }
 
