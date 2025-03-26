@@ -18,9 +18,7 @@ data HieBiosFlags = HieBiosFlags
 
 -- | Make 'HieBiosFlags' from the given target file
 hieBiosFlags :: FilePath {-^ Project root -} -> FilePath {-^ Entry file relative to root -} -> IO HieBiosFlags
--- To determine the flags we MUST set the current directory to the root
--- because hie.yaml may invoke programs relative to the root (e.g. GHC's hie.yaml does)
-hieBiosFlags root relTarget = withCurrentDirectory root $ do
+hieBiosFlags root relTarget = do
 
   let target = root </> relTarget
 
@@ -30,9 +28,10 @@ hieBiosFlags root relTarget = withCurrentDirectory root $ do
 
   libdir <- (HIE.getRuntimeGhcLibDir cradle) >>= unwrapCradleResult "Failed to get runtime GHC libdir"
 
-  -- getCompilerOptions depends on CWD being the proper root dir.
-  -- TODO: What is the correct CWD for this process launched by the client?
-  let compilerOpts = -- D.withCurrentDirectory cwd $
+  -- To determine the flags we MUST set the current directory to the root
+  -- because hie.yaml may invoke programs relative to the root (e.g. GHC's hie.yaml does)
+  -- (HIE.getCompilerOptions depends on CWD being the proper root dir)
+  let compilerOpts = withCurrentDirectory root $
 #if MIN_VERSION_hie_bios(0,14,0)
                           HIE.getCompilerOptions target HIE.LoadFile cradle
 #else
