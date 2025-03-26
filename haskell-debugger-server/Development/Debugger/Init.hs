@@ -64,7 +64,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
 
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
-  flags <- liftIO $ hieBiosFlags (projectRoot </> entryFile)
+  flags <- liftIO $ hieBiosFlags projectRoot entryFile
 
   let nextFreshBreakpointId = 0
       breakpointMap = mempty

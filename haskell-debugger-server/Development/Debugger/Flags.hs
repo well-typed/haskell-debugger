@@ -2,6 +2,8 @@
 module Development.Debugger.Flags where
 
 import Data.Maybe
+import System.FilePath
+import System.Directory
 
 import qualified HIE.Bios as HIE
 import qualified HIE.Bios.Types as HIE
@@ -15,8 +17,12 @@ data HieBiosFlags = HieBiosFlags
       }
 
 -- | Make 'HieBiosFlags' from the given target file
-hieBiosFlags :: FilePath -> IO HieBiosFlags
-hieBiosFlags target = do
+hieBiosFlags :: FilePath {-^ Project root -} -> FilePath {-^ Entry file relative to root -} -> IO HieBiosFlags
+-- To determine the flags we MUST set the current directory to the root
+-- because hie.yaml may invoke programs relative to the root (e.g. GHC's hie.yaml does)
+hieBiosFlags root relTarget = withCurrentDirectory root $ do
+
+  let target = root </> relTarget
 
   explicitCradle <- HIE.findCradle target
   cradle <- maybe (HIE.loadImplicitCradle mempty target)
