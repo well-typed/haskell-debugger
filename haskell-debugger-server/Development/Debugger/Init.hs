@@ -107,7 +107,7 @@ debuggerThread :: MVar ()
                -> MVar D.Command  -- ^ Read commands
                -> MVar D.Response -- ^ Write reponses
                -> Handle          -- ^ The handle to which the debugger will write the output
-               -> (DebugAdaptor () -> IO ())
+               -> (DebugAdaptorCont () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
 debuggerThread finished_mvar workDir HieBiosFlags{..} requests replies writeDebuggerOutput withAdaptor = do
@@ -160,7 +160,7 @@ debuggerThread finished_mvar workDir HieBiosFlags{..} requests replies writeDebu
 -- This thread is responsible for this.
 outputEventsThread :: Handle
                    -- ^ The handle from which we can read the debugger output
-                   -> (DebugAdaptor () -> IO ())
+                   -> (DebugAdaptorCont () -> IO ())
                    -- ^ Unlift DebugAdaptor action to send output events.
                    -> IO ()
 outputEventsThread readDebuggerOutput withAdaptor = do

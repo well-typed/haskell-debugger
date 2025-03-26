@@ -10,7 +10,9 @@ import qualified GHC
 import DAP
 import qualified Debugger.Interface.Messages as D (Command, Response)
 
-type DebugAdaptor = Adaptor DebugAdaptorState
+type DebugAdaptor = Adaptor DebugAdaptorState Request
+type DebugAdaptorCont = Adaptor DebugAdaptorState ()
+type DebugAdaptorX r = Adaptor DebugAdaptorState r ()
 
 -- | Debugger state:
 --
@@ -56,7 +58,7 @@ fileToSource file = do
 -- TODO:
 --  [ ] How to distinguish GHC output from debuggee stdout and even debuggee stderr?
 --  [ ] We resort to Console Events only for now.
-sendConsoleEvent :: T.Text -> DebugAdaptor ()
+sendConsoleEvent :: T.Text -> DebugAdaptorX r
 sendConsoleEvent txt = do
   sendOutputEvent
     defaultOutputEvent

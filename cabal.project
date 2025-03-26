@@ -1,10 +1,7 @@
-packages: .
+packages: . dap
 
 allow-newer: base,template-haskell,ghc,ghc-bignum, dap:*
 
 executable-dynamic: True
 
-source-repository-package
-  type: git
-  location: https://github.com/haskell-debugger/dap
 
