@@ -29,5 +29,6 @@ handleAbort :: Response -> DebugAdaptor Response
 handleAbort (Aborted e) = do
   sendOutputErr (T.pack e)
   sendTerminatedEvent defaultTerminatedEvent
-  return (Aborted e)
+  return (Aborted e) -- will TerminatedEvent terminate this session before this happens?
 handleAbort r = return r
+

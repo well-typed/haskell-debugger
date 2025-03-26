@@ -19,7 +19,6 @@ import Development.Debugger.Stopped
 import Development.Debugger.Evaluation
 import Development.Debugger.Interface
 import Development.Debugger.Adaptor
-import Development.Debugger.Exit
 
 main :: IO ()
 main = do
@@ -125,8 +124,13 @@ talk CommandStepOut = do
 ----------------------------------------------------------------------------
 talk CommandEvaluate = commandEvaluate
 ----------------------------------------------------------------------------
-talk CommandTerminate = commandTerminate
-talk CommandDisconnect = commandDisconnect
+talk CommandTerminate = do
+  destroyDebugSession
+  sendTerminatedEvent defaultTerminatedEvent
+talk CommandDisconnect = do
+  destroyDebugSession
+  sendExitedEvent (ExitedEvent 0)
+  sendDisconnectResponse
 ----------------------------------------------------------------------------
 talk CommandBreakpointLocations       = undefined
 talk CommandModules = sendModulesResponse (ModulesResponse [] Nothing)
