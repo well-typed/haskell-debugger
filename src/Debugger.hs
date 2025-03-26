@@ -205,15 +205,22 @@ debugExecution entry args = do
 
 -- | Resume execution of the stopped debuggee program
 doContinue :: Debugger EvalResult
-doContinue = GHC.resumeExec RunToCompletion Nothing >>= handleExecResult
+doContinue = do
+  leaveSuspendedState
+  GHC.resumeExec RunToCompletion Nothing
+    >>= handleExecResult
 
 -- | Resume execution but only take a single step.
 doSingleStep :: Debugger EvalResult
-doSingleStep = GHC.resumeExec SingleStep Nothing >>= handleExecResult
+doSingleStep = do
+  leaveSuspendedState
+  GHC.resumeExec SingleStep Nothing
+    >>= handleExecResult
 
 -- | Resume execution but stop at the next tick within the same function.
 doLocalStep :: Debugger EvalResult
 doLocalStep = do
+  leaveSuspendedState
   GHC.getResumeContext >>= \case
     [] -> error "doing local step but not stopped at a breakpoint?!" 
     r:_ -> do
