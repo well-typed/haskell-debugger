@@ -65,6 +65,7 @@ executable haskell-debugger-server
                       Development.Debugger.Init,
                       Development.Debugger.Adaptor,
                       Development.Debugger.Interface,
+                      Development.Debugger.Exit,
     build-depends:
         base >=4.21,
         ghc >= 9.13,

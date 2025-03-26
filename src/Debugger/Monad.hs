@@ -65,6 +65,8 @@ data DebuggerState = DebuggerState
       -- ^ Generates unique ints
       }
 
+-- TODO: The varReferences map should probably live in DebugAdaptorState and be stored by them?
+
 -- | Enabling/Disabling a breakpoint
 data BreakpointStatus
       -- | Breakpoint is disabled

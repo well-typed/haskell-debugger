@@ -11,7 +11,7 @@ abc = 456 ^ 345
 
 data MyData = DataCon String
 
-main :: IO ()
+mai : IO ()
 main = do
   args <- getArgs
   let str = f "Hello, Haskell!" "test"
