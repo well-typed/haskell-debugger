@@ -415,7 +415,7 @@ termToVarInfo top_name top_term = do
 
   sub_vis <- case top_term of
     -- Make 'VarInfo's for the first layer of subTerms only.
-    Term{dc=Right dc, subTerms} -> do
+    Term{dc=Right dc, subTerms, ty} -> do
       case dataConFieldLabels dc of
         -- Not a record type,
         -- Use indexed fields

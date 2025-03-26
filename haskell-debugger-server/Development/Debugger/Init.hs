@@ -62,8 +62,16 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
   let nextFreshBreakpointId = 0
       breakpointMap = mempty
 
+  -- Pipe for debugger output. One end goes to 'debuggerThread' to initiate the
+  -- process, the other goes to 'outputEventsThread' to read the output out.
+  (readDebuggerOutput, writeDebuggerOutput) <- liftIO P.createPipe
+  forM_ [ readDebuggerOutput, writeDebuggerOutput ] $ \h -> liftIO $ do
+    h `hSetBuffering` LineBuffering
+    h `hSetEncoding` utf8
+
   registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-    [ debuggerThread projectRoot flags syncRequests syncResponses
+    [ debuggerThread projectRoot flags syncRequests syncResponses writeDebuggerOutput
+    , outputEventsThread readDebuggerOutput
 
     -- , if we make the debugger emit events (rather than always replying synchronously),
     -- we will listen for them here to forward them to the client.
@@ -93,17 +101,16 @@ debuggerThread :: FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
                -> MVar D.Command  -- ^ Read commands
                -> MVar D.Response -- ^ Write reponses
+               -> Handle          -- ^ The handle to which the debugger will write the output
                -> (DebugAdaptor () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread workDir HieBiosFlags{..} requests replies withAdaptor = do
+debuggerThread workDir HieBiosFlags{..} requests replies writeDebuggerOutput withAdaptor = do
 
   (readFromServer, writeToDebugger) <- P.createPipe
   (readFromDebugger, writeToServer) <- P.createPipe
-  (readDebuggerOutput, writeDebuggerOutput) <- P.createPipe
   forM_ [ readFromServer, writeToDebugger
         , readFromDebugger, writeToServer
-        , readDebuggerOutput, writeDebuggerOutput
         ] $ \h -> do
     h `hSetBuffering` LineBuffering
     h `hSetEncoding` utf8
@@ -125,15 +132,6 @@ debuggerThread workDir HieBiosFlags{..} requests replies withAdaptor = do
                  (Just writeToServer)       -- stdout
                  (Just writeDebuggerOutput) -- stderr
 
-  -- Read the debugger output from stderr (stdout is also redirected to stderr),
-  -- And emit Output Events,
-  -- Forever.
-  _ <- forkIO $ do
-    forever $ do
-      line <- T.hGetLine readDebuggerOutput
-      withAdaptor $ sendConsoleEvent line
-
-
   forever $ do
     req <- takeMVar requests
     -- TODO: Read/Write without newline buffering?
@@ -147,3 +145,18 @@ debuggerThread workDir HieBiosFlags{..} requests replies withAdaptor = do
       hPutStrLn stderr m
       putMVar replies (Aborted m)
 
+-- | The process's output is continuously read from its stderr and written to the DAP Client as OutputEvents.
+-- This thread is responsible for this.
+outputEventsThread :: Handle
+                   -- ^ The handle from which we can read the debugger output
+                   -> (DebugAdaptor () -> IO ())
+                   -- ^ Unlift DebugAdaptor action to send output events.
+                   -> IO ()
+outputEventsThread readDebuggerOutput withAdaptor = do
+  -- Read the debugger output from stderr (stdout is also redirected to stderr),
+  -- And emit Output Events,
+  -- Forever.
+  forever $ do
+    -- TODO: This should work without hGetLine
+    line <- T.hGetLine readDebuggerOutput
+    withAdaptor $ sendConsoleEvent line
