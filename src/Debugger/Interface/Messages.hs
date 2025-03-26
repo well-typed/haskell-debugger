@@ -4,14 +4,13 @@
              DuplicateRecordFields,
              TypeApplications
              #-}
+{-# OPTIONS_GHC -Wno-orphans #-} -- JSON GHC.BreakpointId
 
 -- | Types for sending and receiving messages to/from ghc-debugger
 module Debugger.Interface.Messages
   ( module Debugger.Interface.Messages
   ) where
 
-import qualified Data.ByteString.Char8 as BS
-import qualified GHC.Utils.Binary as B
 import GHC.Generics
 import Data.Aeson
 import qualified GHC

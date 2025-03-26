@@ -6,24 +6,17 @@ module Development.Debugger.Init where
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Control.Monad.IO.Class
-import Data.Functor
 import System.IO
 import Control.Concurrent
-import Control.Concurrent.MVar
 import Control.Monad
-import Control.Monad.Catch
 import Data.Aeson as Aeson
 import GHC.Generics
 
 import Development.Debugger.Flags
 import Development.Debugger.Adaptor
 
-import qualified Debugger
-import qualified Debugger.Monad as Debugger
 import Debugger.Interface.Messages hiding (Command, Response)
 import qualified Debugger.Interface.Messages as D (Command, Response)
-import System.Directory
-import System.FilePath
 import qualified System.Process as P
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy.Char8 as BSL8
@@ -135,7 +128,7 @@ debuggerThread workDir HieBiosFlags{..} requests replies withAdaptor = do
   -- Read the debugger output from stderr (stdout is also redirected to stderr),
   -- And emit Output Events,
   -- Forever.
-  forkIO $ do
+  _ <- forkIO $ do
     forever $ do
       line <- T.hGetLine readDebuggerOutput
       withAdaptor $ sendConsoleEvent line

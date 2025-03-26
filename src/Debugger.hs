@@ -3,10 +3,10 @@
    TypeApplications, ScopedTypeVariables #-}
 module Debugger where
 
+import Prelude hiding (exp, span)
 import System.Exit
 import Control.Monad
 import Control.Monad.IO.Class
-import Control.Exception (SomeException, displayException)
 import Control.Monad.Catch
 import Data.Bits (xor)
 
@@ -14,7 +14,6 @@ import GHC
 import GHC.Types.FieldLabel
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS, mkUnboundName)
 import GHC.Data.FastString
-import GHC.Data.Maybe (expectJust)
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env as GHC
 import GHC.Driver.Monad
@@ -25,7 +24,7 @@ import GHC.Runtime.Eval
 import GHC.Core.DataCon
 import GHC.Types.Breakpoint
 import GHC.Types.Id as GHC
-import GHC.Types.Name.Occurrence
+import GHC.Types.Name.Occurrence (mkVarOcc, mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig, globalRdrEnvElts, greName)
 import GHC.Types.SrcLoc
 import GHC.Unit.Module.Env as GHC
@@ -91,9 +90,9 @@ clearBreakpoints mfile = do
 -- | Set a breakpoint in this session
 setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger BreakFound
 setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
-  mod <- getModuleByPath path
+  modl <- getModuleByPath path
 
-  mticks <- makeModuleLineMap (ms_mod mod)
+  mticks <- makeModuleLineMap (ms_mod modl)
   let mbid = do
         ticks <- mticks
         case columnNum of
@@ -105,7 +104,7 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
       liftIO $ putStrLn "todo: Reply saying breakpoint was not set because the line doesn't exist."
       return $ BreakFoundNoLoc False
     Just (bix, span) -> do
-      let bid = BreakpointId { bi_tick_mod = ms_mod mod
+      let bid = BreakpointId { bi_tick_mod = ms_mod modl
                              , bi_tick_index = bix }
       changed <- registerBreakpoint bid bp_status ModuleBreakpointKind
       return $ BreakFound
@@ -116,12 +115,12 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
 setBreakpoint FunctionBreak{function} bp_status = do
   resolveFunctionBreakpoint function >>= \case
     Left e -> error (showPprUnsafe e)
-    Right (mod, mod_info, fun_str) -> do
+    Right (modl, mod_info, fun_str) -> do
       let modBreaks = GHC.modInfoModBreaks mod_info
       case findBreakForBind fun_str modBreaks of
         [] -> error ("No breakpoint found by name " ++ function)
         [(bix, span)] -> do
-          let bid = BreakpointId { bi_tick_mod = mod
+          let bid = BreakpointId { bi_tick_mod = modl
                                  , bi_tick_index = bix }
           changed <- registerBreakpoint bid bp_status FunctionBreakpointKind
           return $ BreakFound
@@ -236,14 +235,14 @@ handleExecResult = \case
       case execResult of
         Left e -> return (EvalException (show e) "SomeException")
         Right [] -> return (EvalCompleted "" "") -- Evaluation completed without binding any result.
-        Right (n:ns) -> inspectName n >>= \case
+        Right (n:_ns) -> inspectName n >>= \case
           Just VarInfo{varValue, varType} -> return (EvalCompleted varValue varType)
           Nothing     -> liftIO $ fail "doEval failed"
-    ExecBreak {breakNames, breakPointId=Nothing} ->
+    ExecBreak {breakNames = _, breakPointId = Nothing} ->
       -- Stopped at an exception
       -- TODO: force the exception to display string with Backtrace?
       return EvalStopped{breakId = Nothing}
-    ExecBreak {breakNames, breakPointId} ->
+    ExecBreak {breakNames = _, breakPointId} ->
       return EvalStopped{breakId = toBreakpointId <$> breakPointId}
 
 --------------------------------------------------------------------------------
@@ -314,9 +313,9 @@ getVariables vk = do
   GHC.getResumeContext >>= \case
     [] -> error "not stopped at a breakpoint?!"
     r:_ -> case vk of
-      SpecificVariable n -> do
+      SpecificVariable i -> do
         -- Only force thing when scrutinizing specific variable
-        lookupVarByReference n >>= \case
+        lookupVarByReference i >>= \case
           Nothing -> error "lookupVarByReference failed"
           Just (n, term) -> do
             term' <- seqTerm term
@@ -414,14 +413,14 @@ termToVarInfo top_name top_term = do
         -- Not a record type,
         -- Use indexed fields
         [] -> do
-          let names = zipWith (\ix _ -> mkUnboundName (mkVarOcc ("_" ++ show ix))) [1..] (dataConOrigArgTys dc)
+          let names = zipWith (\ix _ -> mkUnboundName (mkVarOcc ("_" ++ show @Int ix))) [1..] (dataConOrigArgTys dc)
           IndexedFields <$> mapM (uncurry go) (zipEqual names subTerms)
         -- Is a record type,
         -- Use field labels
         dataConFields -> do
           let names = map flSelector dataConFields
           LabeledFields <$> mapM (uncurry go) (zipEqual names subTerms)
-    NewtypeWrap{dc=Right dc} -> undefined
+    -- NewtypeWrap{dc=Right _dc} -> undefined
     _ -> return NoFields
 
   return top_vi{varFields = sub_vis}
@@ -442,7 +441,7 @@ termToVarInfo top_name top_term = do
            Prim{}                    -> []
            Term{subTerms}            -> subTerms
            NewtypeWrap{wrapped_term} -> getSubterms wrapped_term
-           otherwise                 -> []
+           _                         -> []
       varName <- display n
       varType <- display (GHCI.termType term)
       varValue <- display =<< GHCD.showTerm term
@@ -467,6 +466,21 @@ termToVarInfo top_name top_term = do
             return (SpecificVariable ir)
 
       return VarInfo{..}
+
+-- | Whenever we run a request that continues execution from the current
+-- suspended state, such as Next,Step,Continue, this function should be called
+-- to delete the variable references that become invalid as we leave the
+-- suspended state.
+--
+-- In particular, @'varReferences'@ is reset.
+--
+-- See also section "Lifetime of Objects References" in the DAP specification.
+leaveSuspendedState :: Debugger ()
+leaveSuspendedState = do
+  -- TODO:
+  --  [ ] Preserve bindings introduced by evaluate requests
+  ioref <- asks varReferences
+  liftIO $ writeIORef ioref mempty
 
 -- | Convert a GHC's src span into an interface one
 realSrcSpanToSourceSpan :: RealSrcSpan -> SourceSpan

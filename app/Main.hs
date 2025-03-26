@@ -39,9 +39,7 @@ import Data.Maybe
 import Control.Monad.Catch
 
 import GHC.IO.Handle
-import GHC.IO.Encoding
 import System.IO
-import System.Exit
 import System.Environment (getArgs)
 
 import Debugger

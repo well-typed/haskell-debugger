@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns, CPP, GeneralizedNewtypeDeriving, NamedFieldPuns, TupleSections, LambdaCase #-}
 module Debugger.Monad where
 
+import Prelude hiding (mod)
 import Data.Function
 import System.Exit
 import Control.Monad
