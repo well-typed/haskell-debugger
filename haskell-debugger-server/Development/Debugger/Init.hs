@@ -130,25 +130,25 @@ debuggerThread finished_mvar workDir HieBiosFlags{..} requests replies writeDebu
     sendConsoleEvent $ T.pack $
       cmd <> " " <> unwords args
 
-  ghcDebuggerProc <-
-    P.runProcess cmd args
-                 (Just workDir) Nothing
-                 (Just readFromServer)      -- stdin
-                 (Just writeToServer)       -- stdout
-                 (Just writeDebuggerOutput) -- stderr
+  let debugger_proc = (P.proc cmd args) { P.cwd = Just workDir
+                                    , P.std_in = P.UseHandle readFromServer
+                                    , P.std_out = P.UseHandle writeToServer
+                                    , P.std_err = P.UseHandle writeDebuggerOutput
+                                    }
 
-  resp <- BS8.hGetLine readFromDebugger >>= pure . Aeson.eitherDecodeStrict
-  case resp of
-    Right Initialised -> do
-      putMVar finished_mvar ()
-    _ -> error ("Unexpected response" ++ (show resp))
-
-  forever $ do
-    req <- takeMVar requests
-    -- TODO: Read/Write without newline buffering?
-    BSL8.hPutStrLn writeToDebugger (Aeson.encode req)
+  P.withCreateProcess debugger_proc  (\_ _ _ ph -> do
     resp <- BS8.hGetLine readFromDebugger >>= pure . Aeson.eitherDecodeStrict
-    either bad reply resp
+    case resp of
+      Right Initialised -> do
+        putMVar finished_mvar ()
+      _ -> error ("Unexpected response" ++ (show resp))
+
+    forever $ do
+      req <- takeMVar requests
+      -- TODO: Read/Write without newline buffering?
+      BSL8.hPutStrLn writeToDebugger (Aeson.encode req)
+      resp <- BS8.hGetLine readFromDebugger >>= pure . Aeson.eitherDecodeStrict
+      either bad reply resp)
 
   where
     reply = putMVar replies
