@@ -202,6 +202,7 @@ data Response
   | GotScopes [ScopeInfo]
   | GotVariables [VarInfo]
   | Aborted String
+  | Initialised
 
 data BreakFound
   = BreakFound

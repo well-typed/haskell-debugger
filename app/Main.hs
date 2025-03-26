@@ -96,7 +96,8 @@ mkSettings flags = Settings
 -- the given @'Chan' 'Command'@ and writes 'Response's to the @'Chan' 'Response'@ channel.
 debugger :: Chan Command -> Chan Response -> Settings -> IO ()
 debugger requests replies Settings{libdir, units, ghcInvocation} =
-  runDebugger libdir units ghcInvocation $
+  runDebugger libdir units ghcInvocation $ do
+    reply Initialised
     forever $ do
       req <- liftIO $ readChan requests
       resp <- (execute req <&> Right)

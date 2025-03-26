@@ -69,13 +69,17 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
     h `hSetBuffering` LineBuffering
     h `hSetEncoding` utf8
 
+  finished_mvar <- liftIO $ newEmptyMVar
+
   registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-    [ debuggerThread projectRoot flags syncRequests syncResponses writeDebuggerOutput
+    [ debuggerThread finished_mvar projectRoot flags syncRequests syncResponses writeDebuggerOutput
     , outputEventsThread readDebuggerOutput
 
     -- , if we make the debugger emit events (rather than always replying synchronously),
     -- we will listen for them here to forward them to the client.
     ]
+  -- Do not return until the
+  liftIO $ takeMVar finished_mvar
 
 -- | The main debugger thread launches a `ghc-debugger` process.
 --
@@ -97,7 +101,8 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
 --  * It's necessary for the GHC session to be run in the project root.
 --    Launching a separate process allows a concurrent DAP sessions with
 --    appropriate current working directories for simultaneous GHC sessions.
-debuggerThread :: FilePath        -- ^ Working directory for GHC session
+debuggerThread :: MVar ()
+               -> FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
                -> MVar D.Command  -- ^ Read commands
                -> MVar D.Response -- ^ Write reponses
@@ -105,7 +110,7 @@ debuggerThread :: FilePath        -- ^ Working directory for GHC session
                -> (DebugAdaptor () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread workDir HieBiosFlags{..} requests replies writeDebuggerOutput withAdaptor = do
+debuggerThread finished_mvar workDir HieBiosFlags{..} requests replies writeDebuggerOutput withAdaptor = do
 
   (readFromServer, writeToDebugger) <- P.createPipe
   (readFromDebugger, writeToServer) <- P.createPipe
@@ -131,6 +136,12 @@ debuggerThread workDir HieBiosFlags{..} requests replies writeDebuggerOutput wit
                  (Just readFromServer)      -- stdin
                  (Just writeToServer)       -- stdout
                  (Just writeDebuggerOutput) -- stderr
+
+  resp <- BS8.hGetLine readFromDebugger >>= pure . Aeson.eitherDecodeStrict
+  case resp of
+    Right Initialised -> do
+      putMVar finished_mvar ()
+    _ -> error ("Unexpected response" ++ (show resp))
 
   forever $ do
     req <- takeMVar requests
