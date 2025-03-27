@@ -9,6 +9,7 @@ import DAP
 
 import Debugger.Interface.Messages as D
 import Development.Debugger.Adaptor
+import qualified Development.Debugger.Output as Output
 
 -- | Synchronously send a command to the debugger and await a response
 sendSync :: D.Command -> DebugAdaptor Response
@@ -27,7 +28,7 @@ sendInterleaved cmd action = do
 
 handleAbort :: Response -> DebugAdaptor Response
 handleAbort (Aborted e) = do
-  sendOutputErr (T.pack e)
+  Output.console (T.pack e)
   sendTerminatedEvent defaultTerminatedEvent
   return (Aborted e) -- will TerminatedEvent terminate this session before this happens?
 handleAbort r = return r

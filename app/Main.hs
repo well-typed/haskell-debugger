@@ -92,11 +92,17 @@ mkSettings flags = Settings
   , units  = mapMaybe (\case ("-unit", u) -> Just u; _ -> Nothing) $ zip flags (drop 1 flags)
   }
 
+defaultRunConf :: RunDebuggerSettings
+defaultRunConf = RunDebuggerSettings
+  { supportsANSIStyling = True
+  , supportsANSIHyperlinks = False
+  }
+
 -- | The main worker. Runs a GHC session which executes 'Command's received from
 -- the given @'Chan' 'Command'@ and writes 'Response's to the @'Chan' 'Response'@ channel.
 debugger :: Chan Command -> Chan Response -> Settings -> IO ()
 debugger requests replies Settings{libdir, units, ghcInvocation} =
-  runDebugger libdir units ghcInvocation $ do
+  runDebugger stdout libdir units ghcInvocation defaultRunConf $ do
     reply Initialised
     forever $ do
       req <- liftIO $ readChan requests

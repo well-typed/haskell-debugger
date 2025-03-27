@@ -10,6 +10,7 @@ import DAP
 import Debugger.Interface.Messages
 import Development.Debugger.Adaptor
 import Development.Debugger.Interface
+import qualified Development.Debugger.Output as Output
 
 --------------------------------------------------------------------------------
 -- * Executing debuggee
@@ -72,7 +73,7 @@ commandEvaluate = do
 handleEvalResult :: Bool {-^ Whether we are "stepping" -} -> EvalResult -> DebugAdaptor ()
 handleEvalResult stepping er = case er of
   EvalAbortedWith e -> do
-    sendOutputErr (T.pack e)
+    Output.console (T.pack e)
     sendTerminatedEvent defaultTerminatedEvent
     sendExitedEvent (ExitedEvent 43)
   EvalCompleted{} -> do

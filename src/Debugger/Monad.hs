@@ -1,18 +1,18 @@
-{-# LANGUAGE BangPatterns, CPP, GeneralizedNewtypeDeriving, NamedFieldPuns, TupleSections, LambdaCase #-}
+{-# LANGUAGE BangPatterns, CPP, GeneralizedNewtypeDeriving, NamedFieldPuns, TupleSections, LambdaCase, OverloadedRecordDot #-}
 module Debugger.Monad where
 
 import Prelude hiding (mod)
 import Data.Function
 import System.Exit
+import System.IO
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Exception (assert)
 
 import Control.Monad.Catch
 
-import qualified GHC
+import GHC
 import qualified GHCi.BreakArray as BA
-import GHC (Name)
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Phases as GHC
 import GHC.Driver.Pipeline as GHC
@@ -82,13 +82,21 @@ data BreakpointStatus
 -- Operations
 --------------------------------------------------------------------------------
 
+-- | Additional settings configuring the debugger
+data RunDebuggerSettings = RunDebuggerSettings
+      { supportsANSIStyling :: Bool
+      , supportsANSIHyperlinks :: Bool
+      }
+
 -- | Run a 'Debugger' action on a session constructed from a given GHC invocation.
-runDebugger :: FilePath -- ^ The libdir (given with -B as an arg)
-            -> [String]       -- ^ The list of units included in the invocation
-            -> [String]       -- ^ The full ghc invocation (as constructed by hie-bios flags)
-            -> Debugger a     -- ^ 'Debugger' action to run on the session constructed from this invocation
+runDebugger :: Handle     -- ^ The handle to which GHC's output is logged. The debuggee output is not affected by this parameter.
+            -> FilePath   -- ^ The libdir (given with -B as an arg)
+            -> [String]   -- ^ The list of units included in the invocation
+            -> [String]   -- ^ The full ghc invocation (as constructed by hie-bios flags)
+            -> RunDebuggerSettings -- ^ Other debugger run settings
+            -> Debugger a -- ^ 'Debugger' action to run on the session constructed from this invocation
             -> IO a
-runDebugger libdir units ghcInvocation' (Debugger action) = do
+runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
 
   GHC.runGhc (Just libdir) $ do
@@ -100,6 +108,8 @@ runDebugger libdir units ghcInvocation' (Debugger action) = do
           , GHC.backend = GHC.interpreterBackend
           , GHC.ghcLink = GHC.LinkInMemory
           , GHC.verbosity = 1
+          , GHC.canUseColor = conf.supportsANSIStyling
+          , GHC.canUseErrorLinks = conf.supportsANSIHyperlinks
           }
           -- Default GHCi settings
           `GHC.gopt_set` GHC.Opt_ImplicitImportQualified
@@ -107,6 +117,10 @@ runDebugger libdir units ghcInvocation' (Debugger action) = do
           `GHC.gopt_set` GHC.Opt_IgnoreHpcChanges
           `GHC.gopt_set` GHC.Opt_UseBytecodeRatherThanObjects
           `GHC.gopt_set` GHC.Opt_InsertBreakpoints
+
+    GHC.modifyLogger $
+      -- Override the logger to output to the given handle
+      GHC.pushLogHook (const $ debuggerLoggerAction dbg_out)
 
     logger1 <- GHC.getLogger
     let logger2 = GHC.setLogFlags logger1 (GHC.initLogFlags dflags1)
@@ -130,7 +144,6 @@ runDebugger libdir units ghcInvocation' (Debugger action) = do
     -- subsequent call to `getLogger` to be affected by a plugin.
     GHC.initializeSessionPlugins
     hsc_env <- GHC.getSession
-    _logger <- GHC.getLogger
 
     ---------------- Final sanity checking -----------
     liftIO $ GHC.checkOptions GHC.DoInteractive dflags6 srcs objs units
@@ -172,6 +185,12 @@ runDebugger libdir units ghcInvocation' (Debugger action) = do
     GHC.setContext $ preludeImp : map (GHC.IIDecl . GHC.simpleImportDecl . GHC.ms_mod_name) mss
 
     runReaderT action =<< initialDebuggerState
+
+-- | The logger action used to log GHC output
+debuggerLoggerAction :: Handle -> LogAction
+debuggerLoggerAction h a b c d = do
+  hSetEncoding h utf8 -- GHC output uses utf8
+  defaultLogActionWithHandles h h a b c d
 
 -- | Registers or deletes a breakpoint in the GHC session and from the list of
 -- active breakpoints that is kept in 'DebuggerState', depending on the

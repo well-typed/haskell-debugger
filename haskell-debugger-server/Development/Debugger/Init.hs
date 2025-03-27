@@ -5,10 +5,12 @@ module Development.Debugger.Init where
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import qualified System.Process as P
 import Data.Function
 import Data.Functor
 import Control.Monad.IO.Class
 import System.IO
+import GHC.IO.Encoding
 import Control.Monad.Catch
 import Control.Exception (someExceptionContext)
 import Control.Exception.Context
@@ -20,6 +22,7 @@ import System.Directory
 
 import Development.Debugger.Flags
 import Development.Debugger.Adaptor
+import qualified Development.Debugger.Output as Output
 
 import qualified Debugger
 import qualified Debugger.Monad as Debugger
@@ -67,11 +70,25 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
   let nextFreshBreakpointId = 0
       breakpointMap = mempty
 
+  -- Create pipes to read/write the debugger (not debuggee's) output.
+  -- The write end is given to `runDebugger` and the read end is continuously
+  -- read from until we read an EOF.
+  (readDebuggerOutput, writeDebuggerOutput) <- liftIO P.createPipe
+  liftIO $ do
+    hSetBuffering readDebuggerOutput NoBuffering
+    hSetBuffering writeDebuggerOutput NoBuffering
+    -- GHC output uses utf8
+    hSetEncoding readDebuggerOutput utf8
+    hSetEncoding writeDebuggerOutput utf8
+    setLocaleEncoding utf8
+
+
   finished_init <- liftIO $ newEmptyMVar
 
   registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-    [ debuggerThread finished_init projectRoot flags syncRequests syncResponses
-    , outputEventsThread
+    [ debuggerThread finished_init writeDebuggerOutput projectRoot flags syncRequests syncResponses
+    , handleDebuggerOutput readDebuggerOutput
+    -- , outputEventsThread
     ]
 
   -- Do not return until the initialization is finished
@@ -95,6 +112,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
 --    at the same, but that's OK because we currently only support
 --    single-session mode. Each new session gets a new debugger process.
 debuggerThread :: MVar ()         -- ^ To signal when initialization is complete.
+               -> Handle          -- ^ The write end of a handle for debug compiler output
                -> FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
                -> MVar D.Command  -- ^ Read commands
@@ -102,19 +120,25 @@ debuggerThread :: MVar ()         -- ^ To signal when initialization is complete
                -> (DebugAdaptorCont () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread finished_init workDir HieBiosFlags{..} requests replies withAdaptor = do
+debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} requests replies withAdaptor = do
 
   -- See Notes (CWD) above
   setCurrentDirectory workDir
 
   -- Log ghc-debugger invocation
   withAdaptor $
-    sendConsoleEvent $ T.pack $
+    Output.console $ T.pack $
       "libdir: " <> libdir <> "\n" <>
       "units: " <> unwords units <> "\n" <>
       "args: " <> unwords ghcInvocation
 
-  Debugger.runDebugger libdir units ghcInvocation $ do
+  let
+    defaultRunConf = Debugger.RunDebuggerSettings
+      { supportsANSIStyling = True     -- TODO: Initialize Request sends supportsANSIStyling
+      , supportsANSIHyperlinks = False -- VSCode does not support this
+      }
+
+  Debugger.runDebugger writeDebuggerOutput libdir units ghcInvocation defaultRunConf $ do
     putMVar finished_init ()   & liftIO
  
     forever $ do
@@ -129,19 +153,35 @@ debuggerThread finished_init workDir HieBiosFlags{..} requests replies withAdapt
       hPutStrLn stderr m
       putMVar replies (Aborted m)
 
+-- | Reads from the read end of the handle to which the GHC debugger writes compiler messages.
+-- Writes the compiler messages to the client console
+handleDebuggerOutput :: Handle
+                     -> (DebugAdaptorCont () -> IO ())
+                     -> IO ()
+handleDebuggerOutput readDebuggerOutput withAdaptor = do
+
+  (forever $ do
+    line <- T.hGetLine readDebuggerOutput
+    withAdaptor $ Output.console line
+    ) `catch` -- handles read EOF
+        \(e::SomeException) ->
+          error (displayExceptionWithContext e)
+          -- return ()
+
 -- | The process's output is continuously read from its stderr and written to the DAP Client as OutputEvents.
 -- This thread is responsible for this.
 outputEventsThread :: (DebugAdaptorCont () -> IO ())
                    -- ^ Unlift DebugAdaptor action to send output events.
                    -> IO ()
-outputEventsThread withAdaptor = do
+outputEventsThread withAdaptor = return ()
   -- Read the debugger output from stderr (stdout is also redirected to stderr),
   -- And emit Output Events,
   -- Forever.
-  forever $ do
-    -- TODO: This should work without hGetLine
-    line <- T.hGetLine stdout
-    withAdaptor $ sendConsoleEvent line
+  -- forever $ do
+  --   -- TODO: This should work without hGetLine
+  --   -- TODO: Capture output from program to STDOUT
+  --   line <- T.hGetLine stdout
+  --   withAdaptor $ Output.console line
 
 --- Utils ----------------------------------------------------------------------
 
