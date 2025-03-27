@@ -10,6 +10,7 @@ import Data.Function
 import Data.Functor
 import Control.Monad.IO.Class
 import System.IO
+import System.Exit
 import GHC.IO.Encoding
 import Control.Monad.Catch
 import Control.Exception (someExceptionContext)
@@ -23,6 +24,7 @@ import System.Directory
 import Development.Debugger.Flags
 import Development.Debugger.Adaptor
 import qualified Development.Debugger.Output as Output
+import Development.Debugger.Exit
 
 import qualified Debugger
 import qualified Debugger.Monad as Debugger
@@ -138,16 +140,31 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} reques
       , supportsANSIHyperlinks = False -- VSCode does not support this
       }
 
-  Debugger.runDebugger writeDebuggerOutput libdir units ghcInvocation defaultRunConf $ do
-    putMVar finished_init ()   & liftIO
- 
-    forever $ do
-      req <- takeMVar requests & liftIO
-      resp <- (Debugger.execute req <&> Right)
-                `catch` \(e :: SomeException) -> pure (Left (displayExceptionWithContext e))
-      either bad reply resp
+  catches
+    (do
+      Debugger.runDebugger writeDebuggerOutput libdir units ghcInvocation defaultRunConf $ do
+        signalInitialized
+     
+        forever $ do
+          req <- takeMVar requests & liftIO
+          resp <- (Debugger.execute req <&> Right)
+                    `catch` \(e :: SomeException) ->
+                        pure (Left (displayExceptionWithContext e))
+          either bad reply resp
+    )
+    [ Handler $ \(e::ExitCode) -> withAdaptor $ do
+        -- The process terminates cleanly with an error code (probably exit failure = 1)
+        -- This can happen if compilation fails and the compiler exits cleanly.
+        --
+        -- Instead of signalInitialized, respond with error and exit.
+        exitCleanlyWithErrorResponse "GHC debugger session exited with failure code"
+    , Handler $ \(e::SomeException) -> withAdaptor $ do
+        exitCleanlyWithErrorResponse (displayException e)
+    ]
 
   where
+    signalInitialized
+          = liftIO $ putMVar finished_init ()
     reply = liftIO . putMVar replies
     bad m = liftIO $ do
       hPutStrLn stderr m
@@ -162,11 +179,11 @@ handleDebuggerOutput readDebuggerOutput withAdaptor = do
 
   (forever $ do
     line <- T.hGetLine readDebuggerOutput
-    withAdaptor $ Output.console line
+    withAdaptor $ Output.neutral line
     ) `catch` -- handles read EOF
         \(e::SomeException) ->
-          error (displayExceptionWithContext e)
-          -- return ()
+          -- Cleanly exit when readDebuggerOutput is closed.
+          return ()
 
 -- | The process's output is continuously read from its stderr and written to the DAP Client as OutputEvents.
 -- This thread is responsible for this.
@@ -183,11 +200,3 @@ outputEventsThread withAdaptor = return ()
   --   line <- T.hGetLine stdout
   --   withAdaptor $ Output.console line
 
---- Utils ----------------------------------------------------------------------
-
--- | Display an exception with its context
-displayExceptionWithContext :: SomeException -> String
-displayExceptionWithContext ex = do
-  case displayExceptionContext (someExceptionContext ex) of
-    "" -> displayException ex
-    cx -> displayException ex ++ "\n\n" ++ cx
