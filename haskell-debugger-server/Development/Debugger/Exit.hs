@@ -79,15 +79,13 @@ commandDisconnect = do
 
 --- Exit Cleanly ---------------------------------------------------------------
 
--- | Replies with a "canceled" 'ErrorResponse', outputs a message notification
--- ('Output.important'), sends a terminated event, destroys the debug
--- session, and dies.
-exitCleanlyWithErrorResponse :: String -- ^ Error response message, logged with notification
-                             -> DebugAdaptorX r
-exitCleanlyWithErrorResponse msg = do
-  sendError ErrorMessageCancelled Nothing
+-- | Outputs a message notification ('Output.important'), sends a terminated
+-- event, destroys the debug session, and dies.
+exitCleanlyWithMsg :: String -- ^ Error message, logged with notification
+                             -> DebugAdaptor ()
+exitCleanlyWithMsg msg = do
   Output.important (T.pack msg)
-  -- sendTerminatedEvent (TerminatedEvent False) TODO: CANNOT SEND WITHOUT 'REQUEST' DebugAdaptor
+  sendTerminatedEvent (TerminatedEvent False)
   destroyDebugSession -- kill all session threads
   -- exitWith (ExitFailure 1)
 

@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, RecordWildCards, DerivingStrategies, DeriveGeneric, DeriveAnyClass #-}
+{-# LANGUAGE LambdaCase, OverloadedStrings, RecordWildCards, DerivingStrategies, DeriveGeneric, DeriveAnyClass #-}
 
 -- | TODO: This module should be called Launch.
 module Development.Debugger.Init where
@@ -94,7 +94,15 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
     ]
 
   -- Do not return until the initialization is finished
-  liftIO $ takeMVar finished_init
+  liftIO (takeMVar finished_init) >>= \case
+    Right () -> return ()
+    Left e   -> do
+      -- The process terminates cleanly with an error code (probably exit failure = 1)
+      -- This can happen if compilation fails and the compiler exits cleanly.
+      --
+      -- Instead of signalInitialized, respond with error and exit.
+      exitCleanlyWithMsg e
+
 
 -- | The main debugger thread launches a GHC.Debugger session.
 --
@@ -113,7 +121,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
 --    This sets the global CWD for this process, disallowing multiple sessions
 --    at the same, but that's OK because we currently only support
 --    single-session mode. Each new session gets a new debugger process.
-debuggerThread :: MVar ()         -- ^ To signal when initialization is complete.
+debuggerThread :: MVar (Either String ()) -- ^ To signal when initialization is complete.
                -> Handle          -- ^ The write end of a handle for debug compiler output
                -> FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
@@ -143,7 +151,7 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} reques
   catches
     (do
       Debugger.runDebugger writeDebuggerOutput libdir units ghcInvocation defaultRunConf $ do
-        signalInitialized
+        liftIO $ signalInitialized (Right ())
      
         forever $ do
           req <- takeMVar requests & liftIO
@@ -152,19 +160,15 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} reques
                         pure (Left (displayExceptionWithContext e))
           either bad reply resp
     )
-    [ Handler $ \(e::ExitCode) -> withAdaptor $ do
-        -- The process terminates cleanly with an error code (probably exit failure = 1)
-        -- This can happen if compilation fails and the compiler exits cleanly.
-        --
-        -- Instead of signalInitialized, respond with error and exit.
-        exitCleanlyWithErrorResponse "GHC debugger session exited with failure code"
-    , Handler $ \(e::SomeException) -> withAdaptor $ do
-        exitCleanlyWithErrorResponse (displayException e)
+    [ Handler $ \(e::ExitCode) -> do
+        signalInitialized (Left "GHC debugger session exited with failure code")
+    , Handler $ \(e::SomeException) -> do
+        signalInitialized (Left (displayException e))
     ]
 
   where
     signalInitialized
-          = liftIO $ putMVar finished_init ()
+          = putMVar finished_init
     reply = liftIO . putMVar replies
     bad m = liftIO $ do
       hPutStrLn stderr m
