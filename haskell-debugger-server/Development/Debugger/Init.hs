@@ -5,21 +5,26 @@ module Development.Debugger.Init where
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import Data.Function
+import Data.Functor
 import Control.Monad.IO.Class
 import System.IO
+import Control.Monad.Catch
+import Control.Exception (someExceptionContext)
+import Control.Exception.Context
 import Control.Concurrent
 import Control.Monad
 import Data.Aeson as Aeson
 import GHC.Generics
+import System.Directory
 
 import Development.Debugger.Flags
 import Development.Debugger.Adaptor
 
+import qualified Debugger
+import qualified Debugger.Monad as Debugger
 import Debugger.Interface.Messages hiding (Command, Response)
 import qualified Debugger.Interface.Messages as D (Command, Response)
-import qualified System.Process as P
-import qualified Data.ByteString.Char8 as BS8
-import qualified Data.ByteString.Lazy.Char8 as BSL8
 
 import DAP
 
@@ -62,112 +67,87 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
   let nextFreshBreakpointId = 0
       breakpointMap = mempty
 
-  -- Pipe for debugger output. One end goes to 'debuggerThread' to initiate the
-  -- process, the other goes to 'outputEventsThread' to read the output out.
-  (readDebuggerOutput, writeDebuggerOutput) <- liftIO P.createPipe
-  forM_ [ readDebuggerOutput, writeDebuggerOutput ] $ \h -> liftIO $ do
-    h `hSetBuffering` LineBuffering
-    h `hSetEncoding` utf8
-
-  finished_mvar <- liftIO $ newEmptyMVar
+  finished_init <- liftIO $ newEmptyMVar
 
   registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-    [ debuggerThread finished_mvar projectRoot flags syncRequests syncResponses writeDebuggerOutput
-    , outputEventsThread readDebuggerOutput
-
-    -- , if we make the debugger emit events (rather than always replying synchronously),
-    -- we will listen for them here to forward them to the client.
+    [ debuggerThread finished_init projectRoot flags syncRequests syncResponses
+    , outputEventsThread
     ]
-  -- Do not return until the
-  liftIO $ takeMVar finished_mvar
 
--- | The main debugger thread launches a `ghc-debugger` process.
+  -- Do not return until the initialization is finished
+  liftIO $ takeMVar finished_init
+
+-- | The main debugger thread launches a GHC.Debugger session.
 --
 -- Then, forever:
 --  1. Reads commands from the given 'D.Command' 'MVar'
---  2. Sends them to the process's stdin
---  3. Reads responses from stdout
---  4. Writes responses to the given 'D.Response' 'MVar'
+--  2. Executes the command with `execute`
+--  3. Writes responses to the given 'D.Response' 'MVar'
 --
 -- Concurrently, it reads from the process's stderr forever and outputs it through OutputEvents.
 --
---  TODO:
---    [ ] Detect the process crashes?
---    [ ] Intercept "Abort" commands and kill the process
---    [ ] Make sure "Abort" commands are sent here when session should terminate.
---    [ ] Receive the ghc-debugger executable path as an argument or at least env variable.
---
 -- Notes:
---  * It's necessary for the GHC session to be run in the project root.
---    Launching a separate process allows a concurrent DAP sessions with
---    appropriate current working directories for simultaneous GHC sessions.
-debuggerThread :: MVar ()
+--
+-- (CWD):
+--    It's necessary for the GHC session to be run in the project root.
+--    We do this by setting the current directory on initialize.
+--    This sets the global CWD for this process, disallowing multiple sessions
+--    at the same, but that's OK because we currently only support
+--    single-session mode. Each new session gets a new debugger process.
+debuggerThread :: MVar ()         -- ^ To signal when initialization is complete.
                -> FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
                -> MVar D.Command  -- ^ Read commands
                -> MVar D.Response -- ^ Write reponses
-               -> Handle          -- ^ The handle to which the debugger will write the output
                -> (DebugAdaptorCont () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread finished_mvar workDir HieBiosFlags{..} requests replies writeDebuggerOutput withAdaptor = do
+debuggerThread finished_init workDir HieBiosFlags{..} requests replies withAdaptor = do
 
-  (readFromServer, writeToDebugger) <- P.createPipe
-  (readFromDebugger, writeToServer) <- P.createPipe
-  forM_ [ readFromServer, writeToDebugger
-        , readFromDebugger, writeToServer
-        ] $ \h -> do
-    h `hSetBuffering` LineBuffering
-    h `hSetEncoding` utf8
-
-  let cmd = "ghc-debugger" -- FIXME: read path to executable from somewhere.
-  let args = ["-B" ++ libdir]
-              ++ concatMap (\u -> ["-unit", u]) units
-              ++ ghcInvocation
+  -- See Notes (CWD) above
+  setCurrentDirectory workDir
 
   -- Log ghc-debugger invocation
   withAdaptor $
     sendConsoleEvent $ T.pack $
-      cmd <> " " <> unwords args
+      "libdir: " <> libdir <> "\n" <>
+      "units: " <> unwords units <> "\n" <>
+      "args: " <> unwords ghcInvocation
 
-  let debugger_proc = (P.proc cmd args) { P.cwd = Just workDir
-                                    , P.std_in = P.UseHandle readFromServer
-                                    , P.std_out = P.UseHandle writeToServer
-                                    , P.std_err = P.UseHandle writeDebuggerOutput
-                                    }
-
-  P.withCreateProcess debugger_proc  (\_ _ _ ph -> do
-    resp <- BS8.hGetLine readFromDebugger >>= pure . Aeson.eitherDecodeStrict
-    case resp of
-      Right Initialised -> do
-        putMVar finished_mvar ()
-      _ -> error ("Unexpected response" ++ (show resp))
-
+  Debugger.runDebugger libdir units ghcInvocation $ do
+    putMVar finished_init ()   & liftIO
+ 
     forever $ do
-      req <- takeMVar requests
-      -- TODO: Read/Write without newline buffering?
-      BSL8.hPutStrLn writeToDebugger (Aeson.encode req)
-      resp <- BS8.hGetLine readFromDebugger >>= pure . Aeson.eitherDecodeStrict
-      either bad reply resp)
+      req <- takeMVar requests & liftIO
+      resp <- (Debugger.execute req <&> Right)
+                `catch` \(e :: SomeException) -> pure (Left (displayExceptionWithContext e))
+      either bad reply resp
 
   where
-    reply = putMVar replies
-    bad m = do
+    reply = liftIO . putMVar replies
+    bad m = liftIO $ do
       hPutStrLn stderr m
       putMVar replies (Aborted m)
 
 -- | The process's output is continuously read from its stderr and written to the DAP Client as OutputEvents.
 -- This thread is responsible for this.
-outputEventsThread :: Handle
-                   -- ^ The handle from which we can read the debugger output
-                   -> (DebugAdaptorCont () -> IO ())
+outputEventsThread :: (DebugAdaptorCont () -> IO ())
                    -- ^ Unlift DebugAdaptor action to send output events.
                    -> IO ()
-outputEventsThread readDebuggerOutput withAdaptor = do
+outputEventsThread withAdaptor = do
   -- Read the debugger output from stderr (stdout is also redirected to stderr),
   -- And emit Output Events,
   -- Forever.
   forever $ do
     -- TODO: This should work without hGetLine
-    line <- T.hGetLine readDebuggerOutput
+    line <- T.hGetLine stdout
     withAdaptor $ sendConsoleEvent line
+
+--- Utils ----------------------------------------------------------------------
+
+-- | Display an exception with its context
+displayExceptionWithContext :: SomeException -> String
+displayExceptionWithContext ex = do
+  case displayExceptionContext (someExceptionContext ex) of
+    "" -> displayException ex
+    cx -> displayException ex ++ "\n\n" ++ cx
