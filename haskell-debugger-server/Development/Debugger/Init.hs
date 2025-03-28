@@ -70,7 +70,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
   Output.console $ T.pack "Discovering session flags with hie-bios..."
   mflags <- liftIO (hieBiosFlags projectRoot entryFile)
   case mflags of
-    Left e -> do exitCleanlyWithMsg Nothing e
+    Left e -> do exitWithMsg e
                  return False
     Right flags -> do
 
@@ -106,7 +106,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
           -- This can happen if compilation fails and the compiler exits cleanly.
           --
           -- Instead of signalInitialized, respond with error and exit.
-          exitCleanlyWithMsg (Just readDebuggerOutput) e
+          exitCleanupWithMsg readDebuggerOutput e
           return False
 
 -- | The main debugger thread launches a GHC.Debugger session.
