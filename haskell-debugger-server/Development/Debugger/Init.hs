@@ -60,53 +60,48 @@ data LaunchArgs
 
 -- | Initialize debugger
 --
--- Returns @True@ if successful.
-initDebugger :: LaunchArgs -> DebugAdaptor Bool
+-- Todo:
+-- [ ] Consider exception handling leading to termination
+initDebugger :: LaunchArgs -> DebugAdaptor ()
 initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs} = do
 
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
+  flags <- liftIO $ hieBiosFlags projectRoot entryFile
 
-  mflags <- liftIO (hieBiosFlags projectRoot entryFile)
-  case mflags of
-    Left e -> do exitCleanlyWithMsg Nothing e
-                 return False
-    Right flags -> do
+  let nextFreshBreakpointId = 0
+      breakpointMap = mempty
 
-      let nextFreshBreakpointId = 0
-          breakpointMap = mempty
-
-      -- Create pipes to read/write the debugger (not debuggee's) output.
-      -- The write end is given to `runDebugger` and the read end is continuously
-      -- read from until we read an EOF.
-      (readDebuggerOutput, writeDebuggerOutput) <- liftIO P.createPipe
-      liftIO $ do
-        hSetBuffering readDebuggerOutput NoBuffering
-        hSetBuffering writeDebuggerOutput NoBuffering
-        -- GHC output uses utf8
-        hSetEncoding readDebuggerOutput utf8
-        hSetEncoding writeDebuggerOutput utf8
-        setLocaleEncoding utf8
+  -- Create pipes to read/write the debugger (not debuggee's) output.
+  -- The write end is given to `runDebugger` and the read end is continuously
+  -- read from until we read an EOF.
+  (readDebuggerOutput, writeDebuggerOutput) <- liftIO P.createPipe
+  liftIO $ do
+    hSetBuffering readDebuggerOutput NoBuffering
+    hSetBuffering writeDebuggerOutput NoBuffering
+    -- GHC output uses utf8
+    hSetEncoding readDebuggerOutput utf8
+    hSetEncoding writeDebuggerOutput utf8
+    setLocaleEncoding utf8
 
 
-      finished_init <- liftIO $ newEmptyMVar
+  finished_init <- liftIO $ newEmptyMVar
 
-      registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-        [ debuggerThread finished_init writeDebuggerOutput projectRoot flags syncRequests syncResponses
-        , handleDebuggerOutput readDebuggerOutput
-        -- , outputEventsThread
-        ]
+  registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
+    [ debuggerThread finished_init writeDebuggerOutput projectRoot flags syncRequests syncResponses
+    , handleDebuggerOutput readDebuggerOutput
+    -- , outputEventsThread
+    ]
 
-      -- Do not return until the initialization is finished
-      liftIO (takeMVar finished_init) >>= \case
-        Right () -> return True
-        Left e   -> do
-          -- The process terminates cleanly with an error code (probably exit failure = 1)
-          -- This can happen if compilation fails and the compiler exits cleanly.
-          --
-          -- Instead of signalInitialized, respond with error and exit.
-          exitCleanlyWithMsg (Just readDebuggerOutput) e
-          return False
+  -- Do not return until the initialization is finished
+  liftIO (takeMVar finished_init) >>= \case
+    Right () -> return ()
+    Left e   -> do
+      -- The process terminates cleanly with an error code (probably exit failure = 1)
+      -- This can happen if compilation fails and the compiler exits cleanly.
+      --
+      -- Instead of signalInitialized, respond with error and exit.
+      exitCleanlyWithMsg readDebuggerOutput e
 
 -- | The main debugger thread launches a GHC.Debugger session.
 --

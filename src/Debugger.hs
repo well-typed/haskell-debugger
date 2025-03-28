@@ -102,7 +102,7 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
 
   case mbid of
     Nothing -> do
-      liftIO $ putStrLn "todo: Reply saying breakpoint was not set because the line doesn't exist?"
+      liftIO $ putStrLn "todo: Reply saying breakpoint was not set because the line doesn't exist."
       return $ BreakFoundNoLoc False
     Just (bix, span) -> do
       let bid = BreakpointId { bi_tick_mod = ms_mod modl

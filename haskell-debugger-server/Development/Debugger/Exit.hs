@@ -84,15 +84,15 @@ commandDisconnect = do
 -- | Outputs a message notification ('Output.important'), sends a terminated
 -- event, destroys the debug session, and dies.
 exitCleanlyWithMsg
-  :: Maybe Handle
+  :: Handle
   -- ^ Handle to finalize reading as OutputEvents before exiting (but after
   -- killing the output thread with @destroyDebugSession@)
   -> String
   -- ^ Error message, logged with notification
   -> DebugAdaptor ()
-exitCleanlyWithMsg mhandle msg = do
-  destroyDebugSession          -- kill all session threads (including the output thread)
-  for_ mhandle $ \handle -> do -- flush buffer and get all pending output from GHC
+exitCleanlyWithMsg handle msg = do
+  destroyDebugSession     -- kill all session threads (including the output thread)
+  do                      -- flush buffer and get all pending output from GHC
     c <- T.hGetContents handle & liftIO
     Output.neutral c
     -- TODO: hClose handle?

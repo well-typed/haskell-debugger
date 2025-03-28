@@ -2,11 +2,8 @@
 module Development.Debugger.Flags where
 
 import Data.Maybe
-import Data.Function
 import System.FilePath
 import System.Directory
-import Control.Monad.Except
-import Control.Monad.IO.Class
 
 import qualified HIE.Bios as HIE
 import qualified HIE.Bios.Types as HIE
@@ -20,21 +17,21 @@ data HieBiosFlags = HieBiosFlags
       }
 
 -- | Make 'HieBiosFlags' from the given target file
-hieBiosFlags :: FilePath {-^ Project root -} -> FilePath {-^ Entry file relative to root -} -> IO (Either String HieBiosFlags)
-hieBiosFlags root relTarget = runExceptT $ do
+hieBiosFlags :: FilePath {-^ Project root -} -> FilePath {-^ Entry file relative to root -} -> IO HieBiosFlags
+hieBiosFlags root relTarget = do
 
   let target = root </> relTarget
 
-  explicitCradle <- HIE.findCradle target & liftIO
+  explicitCradle <- HIE.findCradle target
   cradle <- maybe (HIE.loadImplicitCradle mempty target)
-                  (HIE.loadCradle mempty) explicitCradle & liftIO
+                  (HIE.loadCradle mempty) explicitCradle
 
-  libdir <- liftIO (HIE.getRuntimeGhcLibDir cradle) >>= unwrapCradleResult "Failed to get runtime GHC libdir"
+  libdir <- (HIE.getRuntimeGhcLibDir cradle) >>= unwrapCradleResult "Failed to get runtime GHC libdir"
 
   -- To determine the flags we MUST set the current directory to the root
   -- because hie.yaml may invoke programs relative to the root (e.g. GHC's hie.yaml does)
   -- (HIE.getCompilerOptions depends on CWD being the proper root dir)
-  let compilerOpts = liftIO $ withCurrentDirectory root $
+  let compilerOpts = withCurrentDirectory root $
 #if MIN_VERSION_hie_bios(0,14,0)
                           HIE.getCompilerOptions target HIE.LoadFile cradle
 #else
@@ -56,8 +53,8 @@ hieBiosFlags root relTarget = runExceptT $ do
     }
   where
     unwrapCradleResult m = \case
-      HIE.CradleNone     -> throwError $ "HIE.CradleNone\n" ++ m
-      HIE.CradleFail err -> throwError $ unlines (HIE.cradleErrorStderr err) ++ "\n" ++ m
+      HIE.CradleNone     -> error $ "HIE.CradleNone\n" ++ m
+      HIE.CradleFail err -> error $ (unlines $ HIE.cradleErrorStderr err) ++ "\n" ++ m
       HIE.CradleSuccess x -> return x
 
 -- | Flags specific to ghc-debugger to append to all GHC invocations.
