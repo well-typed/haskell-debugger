@@ -98,7 +98,7 @@ data ScopeInfo = ScopeInfo
 data VarFields = LabeledFields [VarInfo]
                | IndexedFields [VarInfo]
                | NoFields
-               deriving (Show, Generic)
+               deriving (Show, Generic, Eq)
 
 -- | Information about a variable
 data VarInfo = VarInfo
@@ -115,7 +115,7 @@ data VarInfo = VarInfo
       -- TODO:
       --  memory reference using ghc-debug.
       }
-      deriving (Show, Generic)
+      deriving (Show, Generic, Eq)
 
 -- | What kind of breakpoint are we referring to, module or function breakpoints?
 -- Used e.g. in the 'ClearBreakpoints' request
@@ -200,7 +200,7 @@ data Response
   | DidExec EvalResult
   | GotStacktrace [StackFrame]
   | GotScopes [ScopeInfo]
-  | GotVariables [VarInfo]
+  | GotVariables (Either VarInfo [VarInfo])
   | Aborted String
   | Initialised
 

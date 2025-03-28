@@ -113,7 +113,23 @@ commandVariables = do
   let vk = toEnum variablesArgumentsVariablesReference
   GotVariables vars <- sendSync (GetVariables vk)
   sendVariablesResponse $ VariablesResponse $
-    map varInfoToVariables vars
+    map varInfoToVariables (either (:[]) id vars)
+  case vars of
+    -- If the reply indicates this was an "inspect lazy variable" request
+    -- (because the requested variable was forced instead of returning an
+    -- expansion), invalidate the parent variables.
+    --
+    -- The client side seems to handle rendering only the bits which changed
+    -- out very well, while preserving the variable tree expansion.
+    -- In any case, we might have to pessimistically redo all variable
+    -- responses because any value may be changed by an updated thunk, not only
+    -- the parent variables.
+    Left _
+      -> sendInvalidatedEvent defaultInvalidatedEvent
+          { invalidatedEventAreas = [InvalidatedAreasVariables]
+          , invalidatedEventStackFrameId = Just 0 -- we only support one stack frame for now (TODO).
+          }
+    _ -> return ()
 
 -- | 'VarInfo' to 'Variable's.
 --

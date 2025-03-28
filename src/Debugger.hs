@@ -330,8 +330,11 @@ getScopes = do
 
 -- | Get variables using a variable/variables reference
 --
+-- If the Variable Request ends up being case (VARR)(b), then we signal the
+-- request forced the variable and return @Left varInfo@. Otherwise, @Right vis@.
+--
 -- See Note [Variables Requests]
-getVariables :: VariableReference -> Debugger [VarInfo]
+getVariables :: VariableReference -> Debugger (Either VarInfo [VarInfo])
 getVariables vk = do
   hsc_env <- getSession
   GHC.getResumeContext >>= \case
@@ -347,14 +350,16 @@ getVariables vk = do
             term' <- seqTerm term
             vi <- termToVarInfo n term'
             case term of
+
               -- (VARR)(b)
               Suspension{} -> do
                 -- Original Term is a suspension:
                 -- It is a "lazy" DAP variable, so our reply can ONLY include
                 -- this single variable. So we erase the @varFields@ after the fact.
-                return [vi{varFields = NoFields}]
+                return (Left vi{varFields = NoFields})
+
               -- (VARR)(c)
-              _ -> do
+              _ -> Right <$> do
                 -- Original Term was already something other than a Suspension;
                 -- Meaning the @SpecificVariable@ request means to inspect the structure.
                 -- Return ONLY the fields
@@ -365,25 +370,25 @@ getVariables vk = do
 
       -- (VARR)(a) from here onwards
 
-      LocalVariables ->
+      LocalVariables -> fmap Right $
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
         mapM tyThingToVarInfo =<< GHC.getBindings
 
-      ModuleVariables -> do
+      ModuleVariables -> Right <$> do
         things <- filter (sameMod r) <$> hugGlobalVars hsc_env r
         mapM (\(n, tt) -> do
           name <- display n
           vi <- tyThingToVarInfo tt
           return vi{varName = name}) things
 
-      GlobalVariables -> do
+      GlobalVariables -> Right <$> do
         things <- filter (not . sameMod r) <$> hugGlobalVars hsc_env r
         mapM (\(n, tt) -> do
           name <- display n
           vi <- tyThingToVarInfo tt
           return vi{varName = name}) things
 
-      NoVariables -> do
+      NoVariables -> Right <$> do
         return []
   where
     sameMod r (nameModule -> modl, _) = (ibi_tick_mod <$> GHC.resumeBreakpointId r) == Just modl
@@ -425,7 +430,12 @@ tyThingToVarInfo = \case
   t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   AnId i -> do
-    term <- GHC.obtainTermFromId 5{-depth-} False{-don't force-} i
+    let depth = 20 -- the depth determines how much of the structure is traversed.
+                   -- using a small value like 5 here is what causes the
+                   -- structure to be improperly rendered inline with many underscores.
+                   -- Note: GHCi uses depth=100
+                   -- TODO: Investigate why this isn't fast enough to use 100.
+    term <- GHC.obtainTermFromId depth False{-don't force-} i
     termToVarInfo (GHC.idName i) term
 
 -- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
