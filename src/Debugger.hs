@@ -442,14 +442,24 @@ termToVarInfo top_name top_term = do
         -- Not a record type,
         -- Use indexed fields
         [] -> do
-          let names = zipWith (\ix _ -> mkUnboundName (mkVarOcc ("_" ++ show @Int ix))) [1..] (dataConOrigArgTys dc)
+          let names = zipWith (\ix _ -> mkIndexVar ix) [1..] (dataConOrigArgTys dc)
           IndexedFields <$> mapM (uncurry go) (zipEqual names subTerms)
         -- Is a record type,
         -- Use field labels
         dataConFields -> do
           let names = map flSelector dataConFields
           LabeledFields <$> mapM (uncurry go) (zipEqual names subTerms)
-    -- NewtypeWrap{dc=Right _dc} -> undefined
+    NewtypeWrap{dc=Right dc, wrapped_term} -> do
+      case dataConFieldLabels dc of
+        [] -> do
+          let name = mkIndexVar 1
+          wvi <- go name wrapped_term
+          return (IndexedFields [wvi])
+        [fld] -> do
+          let name = flSelector fld
+          wvi <- go name wrapped_term
+          return (LabeledFields [wvi])
+        _ -> error "unexpected number of Newtype fields: larger than 1"
     _ -> return NoFields
 
   return top_vi{varFields = sub_vis}
@@ -497,6 +507,8 @@ termToVarInfo top_name top_term = do
 
     isBoringTy t = isDoubleTy t || isFloatTy t || isIntTy t || isWordTy t || isStringTy t
                     || isIntegerTy t || isNaturalTy t || isCharTy t
+
+    mkIndexVar ix = mkUnboundName (mkVarOcc ("_" ++ show @Int ix))
 
 
 -- | Whenever we run a request that continues execution from the current
