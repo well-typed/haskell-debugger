@@ -82,9 +82,12 @@ talk CommandInitialize = do
   sendInitializeResponse
 --------------------------------------------------------------------------------
 talk CommandLaunch = do
-  initDebugger =<< getArguments
-  sendLaunchResponse   -- ack
-  sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
+  success <- initDebugger =<< getArguments
+  if success then do
+    sendLaunchResponse   -- ack
+    sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
+  else
+    sendError ErrorMessageCancelled Nothing
 --------------------------------------------------------------------------------
 talk CommandAttach = undefined
 --------------------------------------------------------------------------------
