@@ -23,8 +23,10 @@
 module Development.Debugger.Exit where
 
 import DAP
+import Data.Function
 import System.IO
 import Control.Monad.IO.Class
+import Data.Foldable (for_)
 import Control.Concurrent
 import Control.Exception
 import Control.Exception.Context
@@ -81,13 +83,20 @@ commandDisconnect = do
 
 -- | Outputs a message notification ('Output.important'), sends a terminated
 -- event, destroys the debug session, and dies.
-exitCleanlyWithMsg :: String -- ^ Error message, logged with notification
-                             -> DebugAdaptor ()
-exitCleanlyWithMsg msg = do
+exitCleanlyWithMsg
+  :: Handle
+  -- ^ Handle to finalize reading as OutputEvents before exiting (but after
+  -- killing the output thread with @destroyDebugSession@)
+  -> String
+  -- ^ Error message, logged with notification
+  -> DebugAdaptor ()
+exitCleanlyWithMsg handle msg = do
+  destroyDebugSession     -- kill all session threads (including the output thread)
+  do                      -- flush buffer and get all pending output from GHC
+    c <- T.hGetContents handle & liftIO
+    Output.neutral c
   Output.important (T.pack msg)
   sendTerminatedEvent (TerminatedEvent False)
-  destroyDebugSession -- kill all session threads
-  -- exitWith (ExitFailure 1)
 
 
 --- Utils ----------------------------------------------------------------------

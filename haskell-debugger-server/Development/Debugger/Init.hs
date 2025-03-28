@@ -101,7 +101,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
       -- This can happen if compilation fails and the compiler exits cleanly.
       --
       -- Instead of signalInitialized, respond with error and exit.
-      exitCleanlyWithMsg e
+      exitCleanlyWithMsg readDebuggerOutput e
 
 
 -- | The main debugger thread launches a GHC.Debugger session.
@@ -161,7 +161,9 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} reques
           either bad reply resp
     )
     [ Handler $ \(e::ExitCode) -> do
-        signalInitialized (Left "GHC debugger session exited with failure code")
+      case e of
+        ExitFailure _ ->
+          signalInitialized (Left "Compilation failed")
     , Handler $ \(e::SomeException) -> do
         signalInitialized (Left (displayException e))
     ]
@@ -181,12 +183,13 @@ handleDebuggerOutput :: Handle
                      -> IO ()
 handleDebuggerOutput readDebuggerOutput withAdaptor = do
 
-  (forever $ do
+  -- Mask exceptions to avoid being killed between reading a line and outputting it.
+  (forever $ mask_ $ do
     line <- T.hGetLine readDebuggerOutput
     withAdaptor $ Output.neutral line
     ) `catch` -- handles read EOF
         \(e::SomeException) ->
-          -- Cleanly exit when readDebuggerOutput is closed.
+          -- Cleanly exit when readDebuggerOutput is closed or thread is killed.
           return ()
 
 -- | The process's output is continuously read from its stderr and written to the DAP Client as OutputEvents.
