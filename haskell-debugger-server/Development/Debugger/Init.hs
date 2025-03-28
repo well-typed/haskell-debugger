@@ -67,6 +67,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
 
+  Output.console $ T.pack "Discovering session flags with hie-bios..."
   mflags <- liftIO (hieBiosFlags projectRoot entryFile)
   case mflags of
     Left e -> do exitCleanlyWithMsg Nothing e
