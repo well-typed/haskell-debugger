@@ -313,14 +313,32 @@ getScopes = do
 --------------------------------------------------------------------------------
 -- * Variables
 --------------------------------------------------------------------------------
+-- Note [Variables Requests]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~
+-- We can receive a Variables request for three different reasons
+--
+-- 1. To get the variables in a certain scope
+-- 2. To inspect the value of a lazy variable
+-- 3. To expand the structure of a variable
+--
+-- The replies are, respectively:
+--
+-- (VARR)
+-- (a) All the variables in the request scope
+-- (b) ONLY the variable requested
+-- (c) The fields of the variable requested but NOT the original variable
 
 -- | Get variables using a variable/variables reference
+--
+-- See Note [Variables Requests]
 getVariables :: VariableReference -> Debugger [VarInfo]
 getVariables vk = do
   hsc_env <- getSession
   GHC.getResumeContext >>= \case
     [] -> error "not stopped at a breakpoint?!"
     r:_ -> case vk of
+
+      -- (VARR)(b,c)
       SpecificVariable i -> do
         -- Only force thing when scrutinizing specific variable
         lookupVarByReference i >>= \case
@@ -329,20 +347,23 @@ getVariables vk = do
             term' <- seqTerm term
             vi <- termToVarInfo n term'
             case term of
+              -- (VARR)(b)
               Suspension{} -> do
                 -- Original Term is a suspension:
                 -- It is a "lazy" DAP variable, so our reply can ONLY include
-                -- this single variable. So we erase the @varFields@ after
-                -- computing them.
+                -- this single variable. So we erase the @varFields@ after the fact.
                 return [vi{varFields = NoFields}]
+              -- (VARR)(c)
               _ -> do
-                -- Original Term was already something else;
+                -- Original Term was already something other than a Suspension;
                 -- Meaning the @SpecificVariable@ request means to inspect the structure.
                 -- Return ONLY the fields
                 case varFields vi of
                   NoFields -> return []
                   LabeledFields xs -> return xs
                   IndexedFields xs -> return xs
+
+      -- (VARR)(a) from here onwards
 
       LocalVariables ->
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
