@@ -9,13 +9,14 @@ import Hi
 abc :: Integer
 abc = 456 ^ 345
 
-data MyData = DataCon String
+data MyData = DataCon MyFields
+newtype Test = Test MyData
 
-main : IO ()
+main :: IO ()
 main = do
   args <- getArgs
   let str = f "Hello, Haskell!" "test"
-  let str' = g $ MyFls (fst str) (snd str)
+  let str' = g $ Test $ DataCon (MyFls (fst str) (snd str))
   hi
   putStrLn str'
   fail "hello" `catch` \(x :: SomeException) ->
@@ -28,5 +29,6 @@ f :: String -> String -> (String, String)
 f x y = (x, y)
 {-# OPAQUE f #-}
 
-g :: MyFields -> String
-g a = abcdef a ++ abcdefg a
+g :: Test -> String
+g a = case a of
+  Test (DataCon x) -> abcdef x ++ abcdefg x

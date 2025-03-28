@@ -29,6 +29,7 @@ import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Heap.Inspect
 import GHC.Unit.Module.Env as GHC
+import GHC.Tc.Utils.TcType
 import GHC.Driver.Env
 
 import Data.IORef
@@ -330,7 +331,15 @@ seqTerm term = do
     Suspension{val, ty} -> liftIO $ do
       r <- GHCi.seqHValue interp unit_env val
       () <- fromEvalResult r
-      cvObtainTerm hsc_env 5 False ty val
+      let
+        deepForce
+          -- fully evaluate strings because displaying them as linked lists is too noisy and not particularly useful
+          = isStringTy ty
+        forceDepth
+          | deepForce = 50
+          | otherwise = 5
+      cvObtainTerm hsc_env forceDepth deepForce ty val
+    -- TODO: Newtype, etc
     _ -> return term
 
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.

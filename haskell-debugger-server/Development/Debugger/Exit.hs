@@ -95,6 +95,7 @@ exitCleanlyWithMsg handle msg = do
   do                      -- flush buffer and get all pending output from GHC
     c <- T.hGetContents handle & liftIO
     Output.neutral c
+    -- TODO: hClose handle?
   Output.important (T.pack msg)
   sendTerminatedEvent (TerminatedEvent False)
 

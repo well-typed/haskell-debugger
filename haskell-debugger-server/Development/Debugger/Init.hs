@@ -103,7 +103,6 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
       -- Instead of signalInitialized, respond with error and exit.
       exitCleanlyWithMsg readDebuggerOutput e
 
-
 -- | The main debugger thread launches a GHC.Debugger session.
 --
 -- Then, forever:

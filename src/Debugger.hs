@@ -27,6 +27,7 @@ import GHC.Types.Id as GHC
 import GHC.Types.Name.Occurrence (mkVarOcc, mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig, globalRdrEnvElts, greName)
 import GHC.Types.SrcLoc
+import GHC.Tc.Utils.TcType
 import GHC.Unit.Module.Env as GHC
 import GHC.Utils.Outputable as GHC
 import GHC.Utils.Misc (zipEqual)
@@ -415,7 +416,7 @@ termToVarInfo top_name top_term = do
 
   sub_vis <- case top_term of
     -- Make 'VarInfo's for the first layer of subTerms only.
-    Term{dc=Right dc, subTerms, ty} -> do
+    Term{dc=Right dc, subTerms} -> do
       case dataConFieldLabels dc of
         -- Not a record type,
         -- Use indexed fields
@@ -460,11 +461,10 @@ termToVarInfo top_name top_term = do
       varRef <- do
         if GHCI.isFullyEvaluatedTerm term
            -- Even if it is already evaluated, we do want to display a
-           -- structure as long as it is more than one field
-           --
-           -- Fully evaluated structures with only one field are better seen inline.
+           -- structure as long if it is not a "boring type" (one that does not
+           -- provide useful information from being expanded)
            -- (e.g. consider how awkward it is to expand Char# 10 and I# 20)
-           && length (getSubterms term) <= 1
+           && isBoringTy (GHCI.termType term)
          then
             return NoVariables
          else do
@@ -473,6 +473,10 @@ termToVarInfo top_name top_term = do
             return (SpecificVariable ir)
 
       return VarInfo{..}
+
+    isBoringTy t = isDoubleTy t || isFloatTy t || isIntTy t || isWordTy t || isStringTy t
+                    || isIntegerTy t || isNaturalTy t || isCharTy t
+
 
 -- | Whenever we run a request that continues execution from the current
 -- suspended state, such as Next,Step,Continue, this function should be called
