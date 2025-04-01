@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "publisher": "romes",
   "description": "The GHC Haskell Debugger",
+  "repository": "https://github.com/well-typed/ghc-debugger",
   "author": {
     "name": "Rodrigo Mesquita",
     "email": "rodrigo@well-typed.com"
