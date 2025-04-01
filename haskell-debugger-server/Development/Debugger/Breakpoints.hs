@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings, OverloadedRecordDot, RecordWildCards, PatternSynonyms #-}
 module Development.Debugger.Breakpoints where
 
-import qualified Data.ByteString.Lazy.Char8 as BL8 ( pack )
 import qualified Data.Text as T
 import qualified Data.Map as Map
 import qualified Data.IntSet as IS
@@ -95,7 +94,7 @@ registerBreakFound b =
   case b of
     BreakFoundNoLoc _ch -> do
 
-      logInfo $ BL8.pack $ "BreakFoundNoLoc " ++ show b
+      logInfo $ T.pack $ "BreakFoundNoLoc " ++ show b
 
       -- exception breakpoint (TODO: wait, not necessarily!?!?, also a failure mode, BAD)
       pure DAP.defaultBreakpoint {

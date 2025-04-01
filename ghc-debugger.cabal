@@ -28,7 +28,7 @@ library
     build-depends:    base >= 4.21,
                       ghc >= 9.13, ghci,
                       array, containers, mtl,
-                      binary, process,
+                      binary, process, unix,
                       exceptions >= 0.10.9,
                       bytestring >= 0.12.1,
 
@@ -37,11 +37,11 @@ library
     hs-source-dirs:   src
     default-language: Haskell2010
 
+executable debugger
 -- todo: rename to something else
-executable ghc-debugger
-    import:           warnings
     main-is:          Main.hs
     other-modules:    Debugger.Interface
+    buildable: False
     -- other-extensions:
     build-depends:
         base >=4.21,
@@ -50,7 +50,7 @@ executable ghc-debugger
         aeson >= 2.2.3,
         bytestring >= 0.12.1,
         text, containers,
-        process, mtl,
+        process, mtl, unix,
         ghc-debugger
     hs-source-dirs:   app
     default-language: Haskell2010
@@ -68,6 +68,7 @@ executable haskell-debugger-server
                       Development.Debugger.Interface,
                       Development.Debugger.Output,
                       Development.Debugger.Exit,
+                      Handles
     build-depends:
         base >=4.21,
         ghc >= 9.13,
@@ -76,10 +77,11 @@ executable haskell-debugger-server
         bytestring >= 0.12.1,
         text, containers,
         directory, filepath,
-        process, mtl,
+        process, mtl, unix,
 
         dap >= 0.1.0.0,
         hie-bios >=0.13,
+        async,
         ghc-debugger
     hs-source-dirs:   haskell-debugger-server
     default-language: GHC2021

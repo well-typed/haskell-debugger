@@ -21,10 +21,26 @@ import Development.Debugger.Interface
 import Development.Debugger.Adaptor
 import Development.Debugger.Exit
 
+import System.IO ()
+import DAP.Log
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
+import GHC.IO.Handle.FD
+import Handles
+
+
+defaultForwardingAction :: T.Text -> IO ()
+defaultForwardingAction line = do
+  T.hPutStrLn stderr ("[INTERCEPTED STDOUT] " <> line)
+
+
 main :: IO ()
 main = do
   config <- getConfig
-  runDAPServer config talk
+  withInterceptedStdoutForwarding defaultForwardingAction (\realStdout -> do
+    l <- handleLogger realStdout
+    runDAPServerWithLogger (cmap renderDAPLog l) config talk
+    )
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: IO ServerConfig

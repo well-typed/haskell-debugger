@@ -41,6 +41,7 @@ import qualified Data.IntMap as IM
 import Control.Monad.Reader
 
 import Debugger.Interface.Messages
+import System.Posix.Signals
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -101,7 +102,8 @@ runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
 
   GHC.runGhc (Just libdir) $ do
-
+    -- Workaround #4162
+    _ <- liftIO $ installHandler sigINT Default Nothing
     dflags0 <- GHC.getSessionDynFlags
 
     let dflags1 = dflags0

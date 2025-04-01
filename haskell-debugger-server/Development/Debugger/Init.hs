@@ -10,11 +10,9 @@ import Data.Function
 import Data.Functor
 import Control.Monad.IO.Class
 import System.IO
-import System.Exit
 import GHC.IO.Encoding
 import Control.Monad.Catch
-import Control.Exception (someExceptionContext)
-import Control.Exception.Context
+import Control.Exception (SomeAsyncException, throwIO)
 import Control.Concurrent
 import Control.Monad
 import Data.Aeson as Aeson
@@ -32,6 +30,7 @@ import Debugger.Interface.Messages hiding (Command, Response)
 import qualified Debugger.Interface.Messages as D (Command, Response)
 
 import DAP
+import Handles
 
 --------------------------------------------------------------------------------
 -- * Client
@@ -61,9 +60,8 @@ data LaunchArgs
 -- | Initialize debugger
 --
 -- Returns @True@ if successful.
-initDebugger :: LaunchArgs -> DebugAdaptor Bool
+initDebugger ::  LaunchArgs -> DebugAdaptor Bool
 initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs} = do
-
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
 
@@ -95,7 +93,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
       registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
         [ debuggerThread finished_init writeDebuggerOutput projectRoot flags syncRequests syncResponses
         , handleDebuggerOutput readDebuggerOutput
-        -- , outputEventsThread
+        , stdoutCaptureThread
         ]
 
       -- Do not return until the initialization is finished
@@ -108,6 +106,17 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
           -- Instead of signalInitialized, respond with error and exit.
           exitCleanupWithMsg readDebuggerOutput e
           return False
+
+-- | This thread captures stdout from the debugger and sends it to the client.
+-- NOTE, redirecting the stdout handle is a process-global operation. So this thread
+-- will capture ANY stdout the debugger emits. Therefore you should never directly
+-- write to stdout, but always write to the appropiate handle.
+stdoutCaptureThread :: (DebugAdaptorCont () -> IO ()) -> IO ()
+stdoutCaptureThread withAdaptor = do
+  withInterceptedStdout $ \_ interceptedStdout -> do
+    forever $ do
+      line <- liftIO $ T.hGetLine interceptedStdout
+      withAdaptor $ Output.stdout line
 
 -- | The main debugger thread launches a GHC.Debugger session.
 --
@@ -165,10 +174,8 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} reques
                         pure (Left (displayExceptionWithContext e))
           either bad reply resp
     )
-    [ Handler $ \(e::ExitCode) -> do
-      case e of
-        ExitFailure _ ->
-          signalInitialized (Left "Compilation failed")
+    [ Handler $ \(e::SomeAsyncException) -> do
+        throwIO e
     , Handler $ \(e::SomeException) -> do
         signalInitialized (Left (displayException e))
     ]
@@ -193,22 +200,6 @@ handleDebuggerOutput readDebuggerOutput withAdaptor = do
     line <- T.hGetLine readDebuggerOutput
     withAdaptor $ Output.neutral line
     ) `catch` -- handles read EOF
-        \(e::SomeException) ->
+        \(_e::SomeException) ->
           -- Cleanly exit when readDebuggerOutput is closed or thread is killed.
           return ()
-
--- | The process's output is continuously read from its stderr and written to the DAP Client as OutputEvents.
--- This thread is responsible for this.
-outputEventsThread :: (DebugAdaptorCont () -> IO ())
-                   -- ^ Unlift DebugAdaptor action to send output events.
-                   -> IO ()
-outputEventsThread withAdaptor = return ()
-  -- Read the debugger output from stderr (stdout is also redirected to stderr),
-  -- And emit Output Events,
-  -- Forever.
-  -- forever $ do
-  --   -- TODO: This should work without hGetLine
-  --   -- TODO: Capture output from program to STDOUT
-  --   line <- T.hGetLine stdout
-  --   withAdaptor $ Output.console line
-

@@ -25,15 +25,11 @@ module Development.Debugger.Exit where
 import DAP
 import Data.Function
 import System.IO
-import Control.Monad.IO.Class
-import Data.Foldable (for_)
-import Control.Concurrent
 import Control.Exception
 import Control.Exception.Context
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
-import Debugger.Interface.Messages
 import Development.Debugger.Adaptor
 import qualified Development.Debugger.Output as Output
 
@@ -96,10 +92,10 @@ exitCleanupWithMsg
   -> String
   -- ^ Error message, logged with notification
   -> DebugAdaptor ()
-exitCleanupWithMsg handle msg = do
+exitCleanupWithMsg final_handle msg = do
   destroyDebugSession -- kill all session threads (including the output thread)
   do                  -- flush buffer and get all pending output from GHC
-    c <- T.hGetContents handle & liftIO
+    c <- T.hGetContents final_handle & liftIO
     Output.neutral c
     -- TODO: hClose handle?
   exitWithMsg msg
