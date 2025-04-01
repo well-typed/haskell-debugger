@@ -74,6 +74,11 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
 
       let nextFreshBreakpointId = 0
           breakpointMap = mempty
+          defaultRunConf = Debugger.RunDebuggerSettings
+            { supportsANSIStyling = True     -- TODO: Initialize Request sends supportsANSIStyling; this is False for nvim-dap
+            , supportsANSIHyperlinks = False -- VSCode does not support this
+            }
+
 
       -- Create pipes to read/write the debugger (not debuggee's) output.
       -- The write end is given to `runDebugger` and the read end is continuously
@@ -87,11 +92,10 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
         hSetEncoding writeDebuggerOutput utf8
         setLocaleEncoding utf8
 
-
       finished_init <- liftIO $ newEmptyMVar
 
       registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-        [ debuggerThread finished_init writeDebuggerOutput projectRoot flags syncRequests syncResponses
+        [ debuggerThread finished_init writeDebuggerOutput projectRoot flags defaultRunConf syncRequests syncResponses
         , handleDebuggerOutput readDebuggerOutput
         , stdoutCaptureThread
         ]
@@ -139,12 +143,13 @@ debuggerThread :: MVar (Either String ()) -- ^ To signal when initialization is 
                -> Handle          -- ^ The write end of a handle for debug compiler output
                -> FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
+               -> Debugger.RunDebuggerSettings -- ^ Settings for running the debugger
                -> MVar D.Command  -- ^ Read commands
                -> MVar D.Response -- ^ Write reponses
                -> (DebugAdaptorCont () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} requests replies withAdaptor = do
+debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} runConf requests replies withAdaptor = do
 
   -- See Notes (CWD) above
   setCurrentDirectory workDir
@@ -156,15 +161,9 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} reques
       "units: " <> unwords units <> "\n" <>
       "args: " <> unwords ghcInvocation
 
-  let
-    defaultRunConf = Debugger.RunDebuggerSettings
-      { supportsANSIStyling = True     -- TODO: Initialize Request sends supportsANSIStyling
-      , supportsANSIHyperlinks = False -- VSCode does not support this
-      }
-
   catches
     (do
-      Debugger.runDebugger writeDebuggerOutput libdir units ghcInvocation defaultRunConf $ do
+      Debugger.runDebugger writeDebuggerOutput libdir units ghcInvocation runConf $ do
         liftIO $ signalInitialized (Right ())
      
         forever $ do

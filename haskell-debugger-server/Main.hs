@@ -97,6 +97,7 @@ getConfig = do
 talk :: Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
 talk CommandInitialize = do
+  -- InitializeRequestArguments{..} <- getArguments
   sendInitializeResponse
 --------------------------------------------------------------------------------
 talk CommandLaunch = do
