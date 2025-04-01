@@ -54,6 +54,12 @@ execute = \case
   ClearModBreakpoints fp -> DidClearBreakpoints <$ clearBreakpoints (Just fp)
   SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp BreakpointEnabled
   DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
+  GetBreakpointsAt ModuleBreak{path, lineNum, columnNum} -> do
+    modl <- getModuleByPath path
+    mbfnd <- getBreakpointsAt modl lineNum columnNum
+    return $
+      DidGetBreakpoints (realSrcSpanToSourceSpan . snd <$> mbfnd)
+  GetBreakpointsAt _ -> error "unexpected getbreakpoints without ModuleBreak"
   GetStacktrace -> GotStacktrace <$> getStacktrace
   GetScopes -> GotScopes <$> getScopes
   GetVariables kind -> GotVariables <$> getVariables kind
@@ -88,22 +94,28 @@ clearBreakpoints mfile = do
   bpsRef <- asks activeBreakpoints
   liftIO $ writeIORef bpsRef emptyModuleEnv
 
--- | Set a breakpoint in this session
-setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger BreakFound
-setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
-  modl <- getModuleByPath path
-
+-- | Find a 'BreakpointId' and its span from a module + line + column.
+--
+-- Used by 'setBreakpoints' and 'GetBreakpointsAt' requests
+getBreakpointsAt :: ModSummary {-^ module -} -> Int {-^ line num -} -> Maybe Int {-^ column num -} -> Debugger (Maybe (BreakIndex, RealSrcSpan))
+getBreakpointsAt modl lineNum columnNum = do
   mticks <- makeModuleLineMap (ms_mod modl)
   let mbid = do
         ticks <- mticks
         case columnNum of
           Nothing -> findBreakByLine lineNum ticks
           Just col -> findBreakByCoord (lineNum, col) ticks
+  return mbid
+
+-- | Set a breakpoint in this session
+setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger BreakFound
+setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
+  modl <- getModuleByPath path
+
+  mbid <- getBreakpointsAt modl lineNum columnNum
 
   case mbid of
-    Nothing -> do
-      liftIO $ putStrLn "todo: Reply saying breakpoint was not set because the line doesn't exist?"
-      return $ BreakFoundNoLoc False
+    Nothing -> return BreakNotFound
     Just (bix, span) -> do
       let bid = BreakpointId { bi_tick_mod = ms_mod modl
                              , bi_tick_index = bix }

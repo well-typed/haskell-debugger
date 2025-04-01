@@ -64,7 +64,9 @@ getConfig = do
 
       , supportsEvaluateForHovers             = False
 
-      , supportsBreakpointLocationsRequest    = False -- display which breakpoints are valid when user intends to set breakpoint on given line. this happens before actually setting the breakpoint if I understand correctly.
+      -- display which breakpoints are valid when user intends to set
+      -- breakpoint on given line.
+      , supportsBreakpointLocationsRequest    = True
       , supportsConfigurationDoneRequest      = True
       , supportsHitConditionalBreakpoints     = False
       , supportsModulesRequest                = False
@@ -107,6 +109,7 @@ talk CommandLaunch = do
 --------------------------------------------------------------------------------
 talk CommandAttach = undefined
 --------------------------------------------------------------------------------
+talk CommandBreakpointLocations       = commandBreakpointLocations
 talk CommandSetBreakpoints            = commandSetBreakpoints
 talk CommandSetFunctionBreakpoints    = commandSetFunctionBreakpoints
 talk CommandSetExceptionBreakpoints   = commandSetExceptionBreakpoints
@@ -147,7 +150,6 @@ talk CommandEvaluate   = commandEvaluate
 talk CommandTerminate  = commandTerminate
 talk CommandDisconnect = commandDisconnect
 ----------------------------------------------------------------------------
-talk CommandBreakpointLocations       = undefined
 talk CommandModules = sendModulesResponse (ModulesResponse [] Nothing)
 talk CommandSource = undefined
 talk CommandPause = undefined

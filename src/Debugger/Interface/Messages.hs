@@ -31,6 +31,9 @@ data Command
   -- | Delete a breakpoint on a given function, or module by line number
   | DelBreakpoint Breakpoint
 
+  -- | Find the valid breakpoints locations for the given module Breakpoint
+  | GetBreakpointsAt Breakpoint
+
   -- | Clear all breakpoints in the specified file.
   -- This is useful because DAP's `setBreakpoints` re-sets all breakpoints from zero for a source rather than incrementally.
   | ClearModBreakpoints { file :: FilePath }
@@ -194,6 +197,7 @@ data Response
   = DidEval EvalResult
   | DidSetBreakpoint BreakFound
   | DidRemoveBreakpoint BreakFound
+  | DidGetBreakpoints (Maybe SourceSpan)
   | DidClearBreakpoints
   | DidContinue EvalResult
   | DidStep EvalResult
@@ -213,8 +217,11 @@ data BreakFound
     , sourceSpan :: SourceSpan
     -- ^ Source span for interface
     }
+  -- | Breakpoint found but without location info.
+  -- This happens when setting breakpoints on exceptions.
   | BreakFoundNoLoc
     { changed :: Bool }
+  | BreakNotFound
   deriving (Show, Generic)
 
 data EvalResult

@@ -16,15 +16,34 @@ import Debugger.Interface.Messages hiding (Command, Response)
 import Development.Debugger.Adaptor
 import Development.Debugger.Interface
 
+-- | BreakpointLocations command
+commandBreakpointLocations :: DebugAdaptor ()
+commandBreakpointLocations = do
+  BreakpointLocationsArguments{..} <- getArguments
+  file <- fileFromSourcePath breakpointLocationsArgumentsSource
+
+  DidGetBreakpoints mspan <-
+    sendSync (GetBreakpointsAt (ModuleBreak file breakpointLocationsArgumentsLine breakpointLocationsArgumentsColumn))
+
+  let locs = case mspan of
+        Nothing -> []
+        Just SourceSpan {..} ->
+          [ BreakpointLocation
+            { breakpointLocationLine = startLine
+            , breakpointLocationColumn = Just startCol
+            , breakpointLocationEndLine = Just endLine
+            , breakpointLocationEndColumn = Just endCol
+            }
+          ]
+
+  sendBreakpointLocationsResponse locs
+
 -- | Execute adaptor command set module breakpoints
 commandSetBreakpoints :: DebugAdaptor ()
 commandSetBreakpoints = do
   SetBreakpointsArguments {..} <- getArguments
-  let
-    file = T.unpack $
-            fromMaybe (error "sourceReference unsupported") $
-              sourcePath setBreakpointsArgumentsSource
-    breaks_wanted = fromMaybe [] setBreakpointsArgumentsBreakpoints
+  file <- fileFromSourcePath setBreakpointsArgumentsSource
+  let breaks_wanted = fromMaybe [] setBreakpointsArgumentsBreakpoints
 
   -- Clear existing module breakpoints
   DidClearBreakpoints <- sendSync (ClearModBreakpoints file)
@@ -92,11 +111,11 @@ pattern BREAK_ON_ERROR = "break-on-error"
 registerBreakFound :: BreakFound -> DebugAdaptor DAP.Breakpoint
 registerBreakFound b =
   case b of
+    BreakNotFound -> do
+      pure DAP.defaultBreakpoint
+        { DAP.breakpointVerified = False
+        }
     BreakFoundNoLoc _ch -> do
-
-      logInfo $ T.pack $ "BreakFoundNoLoc " ++ show b
-
-      -- exception breakpoint (TODO: wait, not necessarily!?!?, also a failure mode, BAD)
       pure DAP.defaultBreakpoint {
         DAP.breakpointVerified = True
       }
@@ -126,3 +145,14 @@ getFreshBreakpointId = do
   bkpId <- nextFreshBreakpointId <$> getDebugSession
   updateDebugSession $ \s -> s { nextFreshBreakpointId = nextFreshBreakpointId s + 1 }
   pure bkpId
+
+-- | Get the file from a DAP Source
+--
+-- TODO: Handles sourceReferences too
+fileFromSourcePath :: Source -> DebugAdaptor FilePath
+fileFromSourcePath source = do
+  let
+    file = T.unpack $
+            fromMaybe (error "sourceReference unsupported") $
+              sourcePath source
+  return file
