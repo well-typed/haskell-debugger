@@ -306,12 +306,12 @@ getScopes = do
                       , sourceSpan
                       }
           , ScopeInfo { kind = ModuleVariablesScope
-                      , expensive = False
+                      , expensive = True
                       , numVars = Nothing
                       , sourceSpan
                       }
           , ScopeInfo { kind = GlobalVariablesScope
-                      , expensive = False
+                      , expensive = True
                       , numVars = Nothing
                       , sourceSpan
                       }
