@@ -517,7 +517,7 @@ termToVarInfo top_name top_term = do
            -- structure as long if it is not a "boring type" (one that does not
            -- provide useful information from being expanded)
            -- (e.g. consider how awkward it is to expand Char# 10 and I# 20)
-           && isBoringTy (GHCI.termType term)
+           && (isBoringTy (GHCI.termType term) || not (hasDirectSubTerms term))
          then
             return NoVariables
          else do
@@ -529,6 +529,12 @@ termToVarInfo top_name top_term = do
 
     isBoringTy t = isDoubleTy t || isFloatTy t || isIntTy t || isWordTy t || isStringTy t
                     || isIntegerTy t || isNaturalTy t || isCharTy t
+    hasDirectSubTerms = \case
+      Suspension{}   -> False
+      Prim{}         -> False
+      NewtypeWrap{}  -> True
+      RefWrap{}      -> True
+      Term{subTerms} -> not $ null subTerms
 
     mkIndexVar ix = mkUnboundName (mkVarOcc ("_" ++ show @Int ix))
 
