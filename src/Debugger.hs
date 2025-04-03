@@ -99,6 +99,7 @@ clearBreakpoints mfile = do
 -- Used by 'setBreakpoints' and 'GetBreakpointsAt' requests
 getBreakpointsAt :: ModSummary {-^ module -} -> Int {-^ line num -} -> Maybe Int {-^ column num -} -> Debugger (Maybe (BreakIndex, RealSrcSpan))
 getBreakpointsAt modl lineNum columnNum = do
+  -- TODO: Cache moduleLineMap.
   mticks <- makeModuleLineMap (ms_mod modl)
   let mbid = do
         ticks <- mticks
@@ -231,13 +232,26 @@ doSingleStep = do
     >>= handleExecResult
 
 -- | Resume execution but stop at the next tick within the same function.
+--
+-- To do a local step, we get the SrcSpan of the current suspension state and
+-- get its 'enclosingTickSpan' to use as a filter for breakpoints in the call
+-- to 'resumeExec'. Execution will only stop at breakpoints whose span matches
+-- this enclosing span.
 doLocalStep :: Debugger EvalResult
 doLocalStep = do
   leaveSuspendedState
-  GHC.getResumeContext >>= \case
-    [] -> error "doing local step but not stopped at a breakpoint?!" 
-    r:_ -> do
-      GHC.resumeExec (LocalStep (resumeSpan r)) Nothing >>= handleExecResult
+  mb_span <- getCurrentBreakSpan
+  case mb_span of
+    Nothing -> error "not stopped at a breakpoint?!"
+    Just (UnhelpfulSpan _) -> do
+      liftIO $ putStrLn "Stopped at an exception. Forcing step into..."
+      GHC.resumeExec SingleStep Nothing >>= handleExecResult
+    Just loc -> do
+      md <- fromMaybe (error "doLocalStep") <$> getCurrentBreakModule
+      -- TODO: Cache moduleLineMap.
+      ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
+      let current_toplevel_decl = enclosingTickSpan ticks loc
+      GHC.resumeExec (LocalStep (RealSrcSpan current_toplevel_decl mempty)) Nothing >>= handleExecResult
 
 -- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
 doEval :: String -> Debugger EvalResult

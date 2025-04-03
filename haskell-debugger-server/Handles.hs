@@ -79,8 +79,8 @@ withInterceptedStdout k = do
       k realStdout readHandle
 
 
--- | Intercept stdout, and spawn a thread which forwards the input onwards using the
--- supplied IO action.
+-- | Intercept stdout and stderr, and spawn a thread which forwards the input
+-- onwards using the supplied IO action.
 withInterceptedStdoutForwarding :: (T.Text -> IO ()) -> (Handle -> IO ()) -> IO ()
 withInterceptedStdoutForwarding write_stdout k = do
   withInterceptedStdout $ \realStdout interceptedStdout -> do
