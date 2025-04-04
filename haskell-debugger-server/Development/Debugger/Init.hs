@@ -50,6 +50,8 @@ data LaunchArgs
   , entryArgs :: [String]
     -- ^ The arguments to either set as environment arguments when @entryPoint = "main"@
     -- or function arguments otherwise.
+  , extraGhcArgs :: [String]
+    -- ^ Additional arguments to pass to the GHC invocation inferred by hie-bios for this project
   } deriving stock (Show, Eq, Generic)
     deriving anyclass FromJSON
 
@@ -61,7 +63,7 @@ data LaunchArgs
 --
 -- Returns @True@ if successful.
 initDebugger ::  LaunchArgs -> DebugAdaptor Bool
-initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs} = do
+initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs, extraGhcArgs} = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
 
@@ -95,7 +97,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
       finished_init <- liftIO $ newEmptyMVar
 
       registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-        [ debuggerThread finished_init writeDebuggerOutput projectRoot flags defaultRunConf syncRequests syncResponses
+        [ debuggerThread finished_init writeDebuggerOutput projectRoot flags extraGhcArgs defaultRunConf syncRequests syncResponses
         , handleDebuggerOutput readDebuggerOutput
         , stdoutCaptureThread
         ]
@@ -143,13 +145,16 @@ debuggerThread :: MVar (Either String ()) -- ^ To signal when initialization is 
                -> Handle          -- ^ The write end of a handle for debug compiler output
                -> FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
+               -> [String]        -- ^ Extra ghc args
                -> Debugger.RunDebuggerSettings -- ^ Settings for running the debugger
                -> MVar D.Command  -- ^ Read commands
                -> MVar D.Response -- ^ Write reponses
                -> (DebugAdaptorCont () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} runConf requests replies withAdaptor = do
+debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraGhcArgs runConf requests replies withAdaptor = do
+
+  let finalGhcInvocation = ghcInvocation ++ extraGhcArgs
 
   -- See Notes (CWD) above
   setCurrentDirectory workDir
@@ -159,11 +164,11 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} runCon
     Output.console $ T.pack $
       "libdir: " <> libdir <> "\n" <>
       "units: " <> unwords units <> "\n" <>
-      "args: " <> unwords ghcInvocation
+      "args: " <> unwords finalGhcInvocation
 
   catches
     (do
-      Debugger.runDebugger writeDebuggerOutput libdir units ghcInvocation runConf $ do
+      Debugger.runDebugger writeDebuggerOutput libdir units finalGhcInvocation runConf $ do
         liftIO $ signalInitialized (Right ())
      
         forever $ do

@@ -147,6 +147,11 @@
                 "type": "array",
                 "description": "The arguments passed to the entry point (directly or via the environment if 'main')",
                 "default": []
+              },
+              "extraGhcArgs": {
+                "type": "array",
+                "description": "Additional arguments to pass to the GHC invocation inferred by hie-bios for this project",
+                "default": []
               }
             }
           }
@@ -159,7 +164,8 @@
             "projectRoot": "${workspaceFolder}",
             "entryFile": "app/Main.hs",
             "entryPoint": "main",
-            "entryArgs": []
+            "entryArgs": [],
+            "extraGhcArgs": []
           }
         ],
         "configurationSnippets": [
@@ -173,7 +179,8 @@
               "projectRoot": "^\"\\${workspaceFolder}\"",
               "entryFile": "app/Main.hs",
               "entryPoint": "main",
-              "entryArgs": []
+              "entryArgs": [],
+              "extraGhcArgs": []
             }
           }
         ]

@@ -11,7 +11,8 @@
             "projectRoot": "${workspaceFolder}",
             "entryFile": "app/Main.hs",
             "entryPoint": "main",
-            "entryArgs": ["some", "args"]
+            "entryArgs": ["some", "args"],
+            "extraGhcArgs": []
             // "entryPoint": "f",
             // "entryArgs": ["\"some\"", "\"args\""]
         }

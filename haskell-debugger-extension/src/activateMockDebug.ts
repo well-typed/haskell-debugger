@@ -24,7 +24,8 @@ export function activateMockDebug(context: vscode.ExtensionContext, factory: vsc
 					request: 'launch',
 					entryFile: targetResource.fsPath,
                     entryPoint: 'main',
-                    entryArgs: []
+                    entryArgs: [],
+                    extraGhcArgs: []
 				},
 					{ noDebug: true }
 				);
@@ -42,7 +43,8 @@ export function activateMockDebug(context: vscode.ExtensionContext, factory: vsc
 					request: 'launch',
 					entryFile: targetResource.fsPath,
                     entryPoint: 'main',
-                    entryArgs: []
+                    entryArgs: [],
+                    extraGhcArgs: []
 				});
 			}
 		}),
@@ -134,6 +136,7 @@ class MockConfigurationProvider implements vscode.DebugConfigurationProvider {
 				config.entryFile = '${file}';
 				config.entryPoint = 'main';
 				config.entryArgs = [];
+				config.extraGhcArgs = [];
 			}
 		}
 
