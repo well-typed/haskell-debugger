@@ -18,7 +18,7 @@ import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env as GHC
 import GHC.Driver.Monad
 import GHC.Driver.Ppr as GHC
-import GHC.Runtime.Debugger.Breakpoints
+import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Runtime.Eval.Types as GHC
 import GHC.Runtime.Eval
 import GHC.Core.DataCon
@@ -279,27 +279,48 @@ handleExecResult = \case
     ExecBreak {breakNames = _, breakPointId} ->
       return EvalStopped{breakId = toBreakpointId <$> breakPointId}
 
+{-
+Note [Don't crash if not stopped]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Requests such as `stacktrace`, `scopes`, or `variables` may end up
+coming after the execution of a program has terminated. For instance,
+consider this interleaving:
+
+1. SENT Stopped event         <-- we're stopped
+2. RECEIVED StackTrace req    <-- client issues after stopped event
+3. RECEIVED Next req          <-- user clicks step-next
+4. <program execution resumes and fails>
+5. SENT Terminate event       <-- execution failed and we report it to exit cleanly
+6. RECEIVED Scopes req        <-- happens as a sequence of 2 that wasn't canceled
+7. <used to crash! because we're no longer at a breakpoint>
+
+Now, we simply returned empty responses when these requests come in
+while we're no longer at a breakpoint. The client will soon come to a halt
+because of the termination event we sent.
+-}
+
 --------------------------------------------------------------------------------
 -- * Stack trace
 --------------------------------------------------------------------------------
 
 -- | Get the stack frames at the point we're stopped at
 getStacktrace :: Debugger [StackFrame]
-getStacktrace = do
-  topStackFrame <- GHC.getResumeContext >>= \case
-    [] -> error "not stopped at a breakpoint?!"
-    r:_ -> do
-      case (srcSpanToRealSrcSpan $ GHC.resumeSpan r) of
-        Just ss -> do
-          return $ Just StackFrame {
-            name = GHC.resumeDecl r
+getStacktrace = GHC.getResumeContext >>= \case
+  [] ->
+    -- See Note [Don't crash if not stopped]
+    return []
+  r:_
+    | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
+    -> return
+        [ StackFrame
+          { name = GHC.resumeDecl r
           , sourceSpan = realSrcSpanToSourceSpan ss
           }
-        Nothing ->
-          -- No resume span; which should mean we're stopped on an exception
-          return Nothing
-
-  return $ catMaybes [topStackFrame]
+        ]
+    | otherwise ->
+        -- No resume span; which should mean we're stopped on an exception.
+        -- No info for now.
+        return []
 
 --------------------------------------------------------------------------------
 -- * Scopes
@@ -307,34 +328,35 @@ getStacktrace = do
 
 -- | Get the stack frames at the point we're stopped at
 getScopes :: Debugger [ScopeInfo]
-getScopes = do
-  GHC.getResumeContext >>= \case
-    [] -> error "not stopped at a breakpoint?!"
-    r:_ -> case (srcSpanToRealSrcSpan $ GHC.resumeSpan r) of
-      Just rss -> do
-        let sourceSpan = realSrcSpanToSourceSpan rss
-        return
-          [ ScopeInfo { kind = LocalVariablesScope
-                      , expensive = False
-                      , numVars = Nothing
-                      , sourceSpan
-                      }
-          , ScopeInfo { kind = ModuleVariablesScope
-                      , expensive = True
-                      , numVars = Nothing
-                      , sourceSpan
-                      }
-          , ScopeInfo { kind = GlobalVariablesScope
-                      , expensive = True
-                      , numVars = Nothing
-                      , sourceSpan
-                      }
-          ]
-      Nothing ->
-        -- No resume span; which should mean we're stopped on an exception
-        -- TODO: Use exception context to create source span, or at least
-        -- return the source span null to have Scopes at least.
-        return []
+getScopes = GHC.getCurrentBreakSpan >>= \case
+  Nothing ->
+    -- See Note [Don't crash if not stopped]
+    return []
+  Just span
+    | Just rss <- srcSpanToRealSrcSpan span
+    , let sourceSpan = realSrcSpanToSourceSpan rss
+    -> return
+      [ ScopeInfo { kind = LocalVariablesScope
+                  , expensive = False
+                  , numVars = Nothing
+                  , sourceSpan
+                  }
+      , ScopeInfo { kind = ModuleVariablesScope
+                  , expensive = True
+                  , numVars = Nothing
+                  , sourceSpan
+                  }
+      , ScopeInfo { kind = GlobalVariablesScope
+                  , expensive = True
+                  , numVars = Nothing
+                  , sourceSpan
+                  }
+      ]
+    | otherwise ->
+      -- No resume span; which should mean we're stopped on an exception
+      -- TODO: Use exception context to create source span, or at least
+      -- return the source span null to have Scopes at least.
+      return []
 
 --------------------------------------------------------------------------------
 -- * Variables
@@ -364,7 +386,9 @@ getVariables :: VariableReference -> Debugger (Either VarInfo [VarInfo])
 getVariables vk = do
   hsc_env <- getSession
   GHC.getResumeContext >>= \case
-    [] -> error "not stopped at a breakpoint?!"
+    [] ->
+      -- See Note [Don't crash if not stopped]
+      return (Right [])
     r:_ -> case vk of
 
       -- (VARR)(b,c)
