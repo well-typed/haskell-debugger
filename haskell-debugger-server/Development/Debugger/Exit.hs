@@ -39,13 +39,7 @@ import qualified Development.Debugger.Output as Output
 commandTerminate :: DebugAdaptor ()
 commandTerminate = do
   -- Terminate debuggee and sends acknowledgment.
-  --
-  -- TODO:
-  -- Is the session terminated, or does it keep going (and can be re-used with a new DebugExecution request)?
-  -- I suspect we from here on use a new `sessionId` so we should instead kill
-  -- the session after it says DidTerminate too because nothing is re-used.
-  --
-  -- TODO: Terminate event instead of destroy session
+  -- TODO: Terminate event instead of destroy session?
   -- DidTerminate <- sendInterleaved TerminateProcess sendTerminateResponse
   destroyDebugSession
   sendTerminateResponse
@@ -56,24 +50,9 @@ commandTerminate = do
 -- Terminate the debuggee (and any child processes) forcefully.
 commandDisconnect :: DebugAdaptor ()
 commandDisconnect = do
-  destroyDebugSession -- does not send terminated event because thread catches ThreadKilled exception.
+  destroyDebugSession
   sendDisconnectResponse
   sendTerminatedEvent (TerminatedEvent False)
-
--- | Handle a crash of a debugger session thread (1d)
---
--- This will also handle a session thread being killed by
--- @'destroyDebugSession'@ and do nothing in that case.
---
--- TODO: Revise. Currently unused.
--- handleDebuggerException :: Handle {-^ The handle from which we read the debugger output -}
---                         -> SomeException
---                         -> DebugAdaptor ()
--- handleDebuggerException readOut e | Just ThreadKilled <- fromException e = do
---   return () -- terminated event is sent by killer
--- handleDebuggerException readOut e = do
---   Output.console $ T.pack ("Caught: " <> displayExceptionWithContext e)
---   sendTerminatedEvent (TerminatedEvent False)
 
 --- Exit Cleanly ---------------------------------------------------------------
 
