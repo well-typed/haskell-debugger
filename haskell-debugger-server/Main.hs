@@ -33,18 +33,12 @@ defaultStdoutForwardingAction :: T.Text -> IO ()
 defaultStdoutForwardingAction line = do
   T.hPutStrLn stderr ("[INTERCEPTED STDOUT] " <> line)
 
-defaultStderrForwardingAction :: T.Text -> IO ()
-defaultStderrForwardingAction line = do
-  T.hPutStrLn stderr ("[INTERCEPTED STDERR] " <> line)
-
-
 main :: IO ()
 main = do
   config <- getConfig
-  withInterceptedStdoutForwarding defaultStdoutForwardingAction defaultStderrForwardingAction (\(realStdout, realStderr) -> do
+  withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
     l <- handleLogger realStdout
     runDAPServerWithLogger (cmap renderDAPLog l) config talk
-    )
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: IO ServerConfig

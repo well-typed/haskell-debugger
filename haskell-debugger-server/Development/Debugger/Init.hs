@@ -100,6 +100,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
         [ debuggerThread finished_init writeDebuggerOutput projectRoot flags extraGhcArgs defaultRunConf syncRequests syncResponses
         , handleDebuggerOutput readDebuggerOutput
         , stdoutCaptureThread
+        , stderrCaptureThread
         ]
 
       -- Do not return until the initialization is finished
@@ -119,12 +120,15 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
 -- write to stdout, but always write to the appropiate handle.
 stdoutCaptureThread :: (DebugAdaptorCont () -> IO ()) -> IO ()
 stdoutCaptureThread withAdaptor = do
-  withInterceptedStdout $ \_ (interceptedStdout, interceptedStderr) -> do
-    forkIO $
-      forever $ do
-        line <- liftIO $ T.hGetLine interceptedStdout
-        withAdaptor $ Output.stdout line
+  withInterceptedStdout $ \_ interceptedStdout -> do
+    forever $ do
+      line <- liftIO $ T.hGetLine interceptedStdout
+      withAdaptor $ Output.stdout line
 
+-- | Like 'stdoutCaptureThread' but for stderr
+stderrCaptureThread :: (DebugAdaptorCont () -> IO ()) -> IO ()
+stderrCaptureThread withAdaptor = do
+  withInterceptedStderr $ \_ interceptedStderr -> do
     forever $ do
       line <- liftIO $ T.hGetLine interceptedStderr
       withAdaptor $ Output.stderr line
