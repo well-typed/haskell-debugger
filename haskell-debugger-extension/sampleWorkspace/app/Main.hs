@@ -26,7 +26,7 @@ got :: IO String
 got = return "io"
 
 ok :: IO ()
-ok = putStrLn "ok"
+ok = hPutStrLn stderr "ok"
 
 
 main :: IO ()

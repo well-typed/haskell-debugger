@@ -119,10 +119,15 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
 -- write to stdout, but always write to the appropiate handle.
 stdoutCaptureThread :: (DebugAdaptorCont () -> IO ()) -> IO ()
 stdoutCaptureThread withAdaptor = do
-  withInterceptedStdout $ \_ interceptedStdout -> do
+  withInterceptedStdout $ \_ (interceptedStdout, interceptedStderr) -> do
+    forkIO $
+      forever $ do
+        line <- liftIO $ T.hGetLine interceptedStdout
+        withAdaptor $ Output.stdout line
+
     forever $ do
-      line <- liftIO $ T.hGetLine interceptedStdout
-      withAdaptor $ Output.stdout line
+      line <- liftIO $ T.hGetLine interceptedStderr
+      withAdaptor $ Output.stderr line
 
 -- | The main debugger thread launches a GHC.Debugger session.
 --

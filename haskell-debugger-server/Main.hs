@@ -29,15 +29,19 @@ import GHC.IO.Handle.FD
 import Handles
 
 
-defaultForwardingAction :: T.Text -> IO ()
-defaultForwardingAction line = do
+defaultStdoutForwardingAction :: T.Text -> IO ()
+defaultStdoutForwardingAction line = do
   T.hPutStrLn stderr ("[INTERCEPTED STDOUT] " <> line)
+
+defaultStderrForwardingAction :: T.Text -> IO ()
+defaultStderrForwardingAction line = do
+  T.hPutStrLn stderr ("[INTERCEPTED STDERR] " <> line)
 
 
 main :: IO ()
 main = do
   config <- getConfig
-  withInterceptedStdoutForwarding defaultForwardingAction (\realStdout -> do
+  withInterceptedStdoutForwarding defaultStdoutForwardingAction defaultStderrForwardingAction (\(realStdout, realStderr) -> do
     l <- handleLogger realStdout
     runDAPServerWithLogger (cmap renderDAPLog l) config talk
     )
