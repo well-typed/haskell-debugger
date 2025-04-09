@@ -54,7 +54,7 @@ commandSetBreakpoints = do
       sendSync (SetBreakpoint (ModuleBreak file (DAP.sourceBreakpointLine bp) (DAP.sourceBreakpointColumn bp)))
     registerBreakFound bf
 
-  sendSetBreakpointsResponse breaks
+  sendSetBreakpointsResponse (concat breaks)
 
 -- | Execute adaptor command set function breakpoints
 commandSetFunctionBreakpoints :: DebugAdaptor ()
@@ -72,7 +72,7 @@ commandSetFunctionBreakpoints = do
       sendSync (SetBreakpoint (FunctionBreak (T.unpack bp)))
     registerBreakFound bf
 
-  sendSetFunctionBreakpointsResponse breaks
+  sendSetFunctionBreakpointsResponse (concat breaks)
 
 -- | Execute adaptor command set exception breakpoints
 commandSetExceptionBreakpoints :: DebugAdaptor ()
@@ -108,21 +108,16 @@ pattern BREAK_ON_ERROR = "break-on-error"
 -- | Turn a ghc-debugger 'BreakFound' into a DAP 'Breakpoint'.
 --
 -- Additionally, gets a fresh Id for the breakpoint and registers it on the breakpoint map
-registerBreakFound :: BreakFound -> DebugAdaptor DAP.Breakpoint
+registerBreakFound :: BreakFound -> DebugAdaptor [DAP.Breakpoint]
 registerBreakFound b =
   case b of
-    BreakNotFound -> do
-      pure DAP.defaultBreakpoint
-        { DAP.breakpointVerified = False
-        }
-    BreakFoundNoLoc _ch -> do
-      pure DAP.defaultBreakpoint {
-        DAP.breakpointVerified = True
-      }
+    ManyBreaksFound bs -> concat <$> mapM registerBreakFound bs
+    BreakNotFound -> pure [ DAP.defaultBreakpoint { DAP.breakpointVerified = False } ]
+    BreakFoundNoLoc _ch -> pure [ DAP.defaultBreakpoint { DAP.breakpointVerified = True } ]
     BreakFound _ch iid ss -> do
       bid <- registerNewBreakpoint iid
       source <- fileToSource ss.file
-      pure DAP.defaultBreakpoint
+      pure [ DAP.defaultBreakpoint
         { DAP.breakpointVerified = True
         , DAP.breakpointSource = Just source
         , DAP.breakpointLine = Just ss.startLine
@@ -130,7 +125,7 @@ registerBreakFound b =
         , DAP.breakpointColumn = Just ss.startCol
         , DAP.breakpointEndColumn = Just ss.endCol
         , DAP.breakpointId = Just bid
-        }
+        } ]
 
 -- | Adds new BreakpointId for a givent StgPoint
 registerNewBreakpoint :: GHC.BreakpointId -> DebugAdaptor BreakpointId

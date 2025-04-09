@@ -14,6 +14,7 @@ import GHC
 import GHC.Types.FieldLabel
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS, mkUnboundName)
 import GHC.Data.FastString
+import GHC.Utils.Error (logOutput)
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env as GHC
 import GHC.Driver.Monad
@@ -127,22 +128,28 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
         , breakId = bid
         }
 setBreakpoint FunctionBreak{function} bp_status = do
+  logger <- getLogger
   resolveFunctionBreakpoint function >>= \case
     Left e -> error (showPprUnsafe e)
     Right (modl, mod_info, fun_str) -> do
       let modBreaks = GHC.modInfoModBreaks mod_info
+          applyBreak (bix, span) = do
+            let bid = BreakpointId { bi_tick_mod = modl
+                                   , bi_tick_index = bix }
+            changed <- registerBreakpoint bid bp_status FunctionBreakpointKind
+            return $ BreakFound
+              { changed = changed
+              , sourceSpan = realSrcSpanToSourceSpan span
+              , breakId = bid
+              }
       case findBreakForBind fun_str modBreaks of
-        [] -> error ("No breakpoint found by name " ++ function)
-        [(bix, span)] -> do
-          let bid = BreakpointId { bi_tick_mod = modl
-                                 , bi_tick_index = bix }
-          changed <- registerBreakpoint bid bp_status FunctionBreakpointKind
-          return $ BreakFound
-            { changed = changed
-            , sourceSpan = realSrcSpanToSourceSpan span
-            , breakId = bid
-            }
-        xs -> error ("Ambiguous breakpoint found by name " ++ function ++ ": " ++ show xs)
+        []  -> do
+          liftIO $ logOutput logger (text $ "No breakpoint found by name " ++ function ++ ". Ignoring...")
+          return BreakNotFound
+        [b] -> applyBreak b
+        bs  -> do
+          liftIO $ logOutput logger (text $ "Ambiguous breakpoint found by name " ++ function ++ ": " ++ show bs ++ ". Setting breakpoints in all...")
+          ManyBreaksFound <$> mapM applyBreak bs
 setBreakpoint exception_bp bp_status = do
   let ch_opt | BreakpointDisabled <- bp_status
              = gopt_unset

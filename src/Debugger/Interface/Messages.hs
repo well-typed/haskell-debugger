@@ -221,7 +221,11 @@ data BreakFound
   -- This happens when setting breakpoints on exceptions.
   | BreakFoundNoLoc
     { changed :: Bool }
+  -- | No breakpoints found
   | BreakNotFound
+  -- | Found many breakpoints.
+  -- Caused by setting breakpoint on a name with multiple matches or many equations.
+  | ManyBreaksFound [BreakFound]
   deriving (Show, Generic)
 
 data EvalResult
