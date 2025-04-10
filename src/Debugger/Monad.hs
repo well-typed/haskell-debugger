@@ -19,8 +19,6 @@ import GHC.Driver.Pipeline as GHC
 import GHC.Driver.Config.Logger as GHC
 import GHC.Driver.Session.Units as GHC
 import GHC.Unit.Module.ModSummary as GHC
-import GHC.Driver.Session.Mode as GHC
-import GHC.Driver.Session.Lint as GHC
 import GHC.Utils.Outputable as GHC
 import GHC.Utils.Monad as GHC
 import GHC.Utils.Logger as GHC
@@ -147,13 +145,10 @@ runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
     -- subsequent call to `getLogger` to be affected by a plugin.
     GHC.initializeSessionPlugins
     hsc_env <- GHC.getSession
-
-    ---------------- Final sanity checking -----------
-    liftIO $ GHC.checkOptions GHC.DoInteractive dflags6 srcs objs units
     
     hs_srcs <- case NE.nonEmpty units of
       Just ne_units -> do
-        GHC.initMulti ne_units
+        GHC.initMulti ne_units (\_ _ _ _ -> {-no options extra check-} pure ())
       Nothing -> do
         case srcs of
           [] -> return []
