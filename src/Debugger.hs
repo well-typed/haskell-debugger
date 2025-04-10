@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
-   TypeApplications, ScopedTypeVariables #-}
+   TypeApplications, ScopedTypeVariables, BangPatterns #-}
 module Debugger where
 
 import Prelude hiding (exp, span)
@@ -12,6 +12,7 @@ import Data.Bits (xor)
 
 import GHC
 import GHC.Types.FieldLabel
+import GHC.Data.Maybe (expectJust)
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS, mkUnboundName)
 import GHC.Data.FastString
 import GHC.Utils.Error (logOutput)
@@ -342,23 +343,39 @@ getScopes = GHC.getCurrentBreakSpan >>= \case
   Just span
     | Just rss <- srcSpanToRealSrcSpan span
     , let sourceSpan = realSrcSpanToSourceSpan rss
-    -> return
-      [ ScopeInfo { kind = LocalVariablesScope
-                  , expensive = False
-                  , numVars = Nothing
-                  , sourceSpan
-                  }
-      , ScopeInfo { kind = ModuleVariablesScope
-                  , expensive = True
-                  , numVars = Nothing
-                  , sourceSpan
-                  }
-      , ScopeInfo { kind = GlobalVariablesScope
-                  , expensive = True
-                  , numVars = Nothing
-                  , sourceSpan
-                  }
-      ]
+    -> do
+      -- It is /very important/ to report a number of variables (numVars) for
+      -- larger scopes. If we just say "Nothing", then all variables of all
+      -- scopes will be fetched at every stopped event.
+      curr_modl <- expectJust <$> getCurrentBreakModule
+      hsc_env <- getSession
+      elts <- globalRdrEnvElts <$> getGRE
+      (in_mod, not_in_mod) <-
+        foldM (\(!a, !b) (nameModule . greName -> modl) -> liftIO $ do
+            hmi <- HUG.lookupHugByModule modl (hsc_HUG hsc_env)
+            return $ case hmi of
+              Nothing -> (a, b)
+              Just _
+                | curr_modl == modl -> (a+1, b)
+                | otherwise -> (a, b+1)
+          ) (0, 0) elts
+      return
+        [ ScopeInfo { kind = LocalVariablesScope
+                    , expensive = False
+                    , numVars = Nothing
+                    , sourceSpan
+                    }
+        , ScopeInfo { kind = ModuleVariablesScope
+                    , expensive = True
+                    , numVars = Just in_mod
+                    , sourceSpan
+                    }
+        , ScopeInfo { kind = GlobalVariablesScope
+                    , expensive = True
+                    , numVars = Just not_in_mod
+                    , sourceSpan
+                    }
+        ]
     | otherwise ->
       -- No resume span; which should mean we're stopped on an exception
       -- TODO: Use exception context to create source span, or at least
