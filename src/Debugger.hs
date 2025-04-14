@@ -372,6 +372,8 @@ getScopes = GHC.getCurrentBreakSpan >>= \case
                     }
         , ScopeInfo { kind = GlobalVariablesScope
                     , expensive = True
+                    -- this is an overestimation since when returning them we
+                    -- prune to only things imported by this module?
                     , numVars = Just not_in_mod
                     , sourceSpan
                     }
