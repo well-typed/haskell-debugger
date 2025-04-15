@@ -6,6 +6,7 @@
 module Main where
 
 import System.Environment
+import System.Exit
 import Data.Maybe
 import Text.Read
 

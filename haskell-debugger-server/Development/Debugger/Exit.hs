@@ -25,6 +25,7 @@ module Development.Debugger.Exit where
 import DAP
 import Data.Function
 import System.IO
+import System.Exit
 import Control.Exception
 import Control.Exception.Context
 import qualified Data.Text as T
@@ -43,7 +44,7 @@ commandTerminate = do
   -- DidTerminate <- sendInterleaved TerminateProcess sendTerminateResponse
   destroyDebugSession
   sendTerminateResponse
-  sendTerminatedEvent (TerminatedEvent True{-can restart this session?!-})
+  exitWithMsg "Terminated!"
 
 -- | Command disconnect (1b)
 --
@@ -52,7 +53,7 @@ commandDisconnect :: DebugAdaptor ()
 commandDisconnect = do
   destroyDebugSession
   sendDisconnectResponse
-  sendTerminatedEvent (TerminatedEvent False)
+  exitWithMsg "Disconnected!"
 
 --- Exit Cleanly ---------------------------------------------------------------
 
@@ -76,14 +77,19 @@ exitCleanupWithMsg final_handle msg = do
   do                  -- flush buffer and get all pending output from GHC
     c <- T.hGetContents final_handle & liftIO
     Output.neutral c
-    -- TODO: hClose handle?
   exitWithMsg msg
 
 -- | Logs the error to the debug console and sends a terminate event
 exitWithMsg :: String -> DebugAdaptor ()
 exitWithMsg msg = do
+
   Output.important (T.pack msg)
   sendTerminatedEvent (TerminatedEvent False)
+
+  -- We exit here to guarantee the process is killed when
+  -- terminated. Important! We want a new server process per
+  -- session, which means at the end we must kill the server.
+  liftIO $ throwIO TerminateServer
 
 --- Utils ----------------------------------------------------------------------
 
