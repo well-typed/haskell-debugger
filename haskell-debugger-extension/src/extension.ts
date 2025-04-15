@@ -48,12 +48,21 @@ export function deactivate() {
 
 class MockDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
 
-    private processes: cp.ChildProcess[] = [];
+    private processes = new Map<string, cp.ChildProcess>();
 	private logger: vscode.OutputChannel;
 
 	constructor() {
 		this.logger = vscode.window.createOutputChannel("Haskell Debugger");
 		this.logger.appendLine("[Factory] Initialized");
+
+        vscode.debug.onDidTerminateDebugSession((session) => {
+			const proc = this.sessionProcesses.get(session.id);
+			if (proc && !proc.killed) {
+				this.logger.appendLine(`[Factory] Killing process for session ${session.id}`);
+				proc.kill();
+			}
+			this.sessionProcesses.delete(session.id);
+		});
 	}
 
 	async createDebugAdapterDescriptor(
@@ -86,7 +95,7 @@ class MockDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDesc
 			this.logger.appendLine(`[error] Failed to start ghc-debugger: ${err.message}`);
 		});
 
-		this.processes.push(debuggerProcess);
+		this.processes.set(session.id, debuggerProcess);
 
         const ready = new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(() => {
@@ -98,7 +107,14 @@ class MockDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDesc
                 const text = data.toString();
                 if (text.includes('Running')) {
                     clearTimeout(timeout);
-                    resolve();
+
+                    // Just a little delay, 50ms
+                    // Otherwise it may not yet be up as we only set up the
+                    // server directly after the message.
+                    // Alternatively, we could try-catch connect and retry a few times.
+                    setTimeout(() => {
+                        resolve();
+                    }, 50)
                 }
             });
 
@@ -112,12 +128,12 @@ class MockDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDesc
 
 	dispose() {
 		this.logger.appendLine("[Factory] Disposing and cleaning up processes...");
-		for (const proc of this.processes) {
+		for (const proc of this.processes.values()) {
 			if (!proc.killed) {
 				proc.kill();
 			}
 		}
-		this.processes = [];
+		this.processes.clear();
 		this.logger.dispose();
 	}
 
