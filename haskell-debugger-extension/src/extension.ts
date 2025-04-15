@@ -12,8 +12,28 @@
 
 'use strict';
 
-import * as vscode from 'vscode';
 import { activateMockDebug } from './activateMockDebug';
+import * as vscode from 'vscode';
+import * as cp from 'child_process';
+import * as net from 'net';
+
+function getFreePort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const server = net.createServer();
+		server.listen(0, () => {
+			const address = server.address();
+			if (typeof address === 'object' && address?.port) {
+				const port = address.port;
+				server.close(() => resolve(port));
+			} else {
+				reject(new Error('Could not get free port'));
+			}
+		});
+		server.on('error', reject);
+	});
+}
+
+let logger : vscode.OutputChannel = vscode.window.createOutputChannel("haskell-debug-adapter");
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -28,12 +48,78 @@ export function deactivate() {
 
 class MockDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
 
-	createDebugAdapterDescriptor(session: vscode.DebugSession, executable: vscode.DebugAdapterExecutable | undefined): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
+    private processes: cp.ChildProcess[] = [];
+	private logger: vscode.OutputChannel;
 
-		return new vscode.DebugAdapterServer(4711, 'localhost'); // Hardcoded port for now
+	constructor() {
+		this.logger = vscode.window.createOutputChannel("Haskell Debugger");
+		this.logger.appendLine("[Factory] Initialized");
+	}
+
+	async createDebugAdapterDescriptor(
+		session: vscode.DebugSession,
+		executable: vscode.DebugAdapterExecutable | undefined
+	): Promise<vscode.DebugAdapterDescriptor> {
+
+		const port = await getFreePort();
+		this.logger.appendLine(`[Factory] Launching ghc-debugger on port ${port}`);
+
+		const debuggerProcess = cp.spawn('haskell-debugger-server', ['--port', port.toString()]);
+
+        debuggerProcess.on('spawn', () => {
+            this.logger.appendLine('[Factory] ghc-debugger spawned...');
+        });
+
+		debuggerProcess.stdout.on('data', (data) => {
+			this.logger.appendLine(`[stdout] ${data}`);
+		});
+
+		debuggerProcess.stderr.on('data', (data) => {
+			this.logger.appendLine(`[stderr] ${data}`);
+		});
+
+		debuggerProcess.on('exit', (code, signal) => {
+			this.logger.appendLine(`[exit] ghc-debugger exited with code ${code} and signal ${signal}`);
+		});
+
+		debuggerProcess.on('error', (err) => {
+			this.logger.appendLine(`[error] Failed to start ghc-debugger: ${err.message}`);
+		});
+
+		this.processes.push(debuggerProcess);
+
+        const ready = new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error("ghc-debugger did not signal readiness in time"));
+            }, 15000); // 15 second timeout
+
+		    this.logger.appendLine(`[Factory] Waiting for debugger to be ready...`);
+            debuggerProcess.stdout.on('data', (data: Buffer) => {
+                const text = data.toString();
+                if (text.includes('Running')) {
+                    clearTimeout(timeout);
+                    resolve();
+                }
+            });
+
+            debuggerProcess.on('error', reject);
+        });
+
+        await ready;
+		this.logger.appendLine(`[Factory] Debugger is ready on port ${port}`);
+		return new vscode.DebugAdapterServer(port, 'localhost');
 	}
 
 	dispose() {
+		this.logger.appendLine("[Factory] Disposing and cleaning up processes...");
+		for (const proc of this.processes) {
+			if (!proc.killed) {
+				proc.kill();
+			}
+		}
+		this.processes = [];
+		this.logger.dispose();
 	}
+
 }
 

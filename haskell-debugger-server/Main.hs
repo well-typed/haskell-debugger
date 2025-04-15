@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass, DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards #-}
+{-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass, DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards, ViewPatterns #-}
 
 -- TODO list:
 --
@@ -21,7 +21,7 @@ import Development.Debugger.Interface
 import Development.Debugger.Adaptor
 import Development.Debugger.Exit
 
-import System.IO ()
+import System.IO (hSetBuffering, BufferMode(LineBuffering))
 import DAP.Log
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -35,17 +35,21 @@ defaultStdoutForwardingAction line = do
 
 main :: IO ()
 main = do
-  config <- getConfig
+  port <- getArgs >>= \case
+            ["--port", readMaybe -> Just p] -> return p
+            _ -> fail "usage: --port <port>"
+  config <- getConfig port
   withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
+    hSetBuffering realStdout LineBuffering
     l <- handleLogger realStdout
     runDAPServerWithLogger (cmap renderDAPLog l) config talk
 
 -- | Fetch config from environment, fallback to sane defaults
-getConfig :: IO ServerConfig
-getConfig = do
+getConfig :: Int -> IO ServerConfig
+getConfig port = do
   let
     hostDefault = "0.0.0.0"
-    portDefault = 4711
+    portDefault = port
     capabilities = defaultCapabilities
       { -- Exception breakpoints!
         exceptionBreakpointFilters            = [ defaultExceptionBreakpointsFilter
