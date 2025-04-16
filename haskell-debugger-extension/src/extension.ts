@@ -38,7 +38,7 @@ let logger : vscode.OutputChannel = vscode.window.createOutputChannel("haskell-d
 export function activate(context: vscode.ExtensionContext) {
 
     // run the debug adapter as a server inside the extension and communicate via a socket
-    activateMockDebug(context, new MockDebugAdapterServerDescriptorFactory());
+    activateMockDebug(context, new MockDebugAdapterServerDescriptorFactory(context));
 
 }
 
@@ -51,24 +51,28 @@ class MockDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDesc
     private processes = new Map<string, cp.ChildProcess>();
 	private logger: vscode.OutputChannel;
 
-	constructor() {
+	constructor(context: vscode.ExtensionContext) {
 		this.logger = vscode.window.createOutputChannel("Haskell Debugger");
 		this.logger.appendLine("[Factory] Initialized");
 
-        vscode.debug.onDidTerminateDebugSession((session) => {
-			const proc = this.sessionProcesses.get(session.id);
-			if (proc && !proc.killed) {
-				this.logger.appendLine(`[Factory] Killing process for session ${session.id}`);
-				proc.kill();
-			}
-			this.sessionProcesses.delete(session.id);
-		});
+        context.subscriptions.push(
+            vscode.debug.onDidTerminateDebugSession((session) => {
+                const proc = this.processes.get(session.id);
+                if (proc && !proc.killed) {
+                    this.logger.appendLine(`[Factory] Killing process for session ${session.id}`);
+                    proc.kill();
+                }
+                this.processes.delete(session.id);
+            })
+        );
 	}
 
 	async createDebugAdapterDescriptor(
 		session: vscode.DebugSession,
 		executable: vscode.DebugAdapterExecutable | undefined
 	): Promise<vscode.DebugAdapterDescriptor> {
+
+		// return new vscode.DebugAdapterServer(4717, 'localhost');
 
 		const port = await getFreePort();
 		this.logger.appendLine(`[Factory] Launching ghc-debugger on port ${port}`);
