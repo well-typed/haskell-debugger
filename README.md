@@ -12,7 +12,7 @@ first release is ready.
 # Usage
 
 ```
-PATH="/path/to/head/ghc:$PATH" cabal run haskell-debugger-server
+PATH="/path/to/head/ghc:$PATH" cabal install haskell-debugger-server
 ```
 
 Then, install the VSCode extension `haskell-debugger-extension` that you can
