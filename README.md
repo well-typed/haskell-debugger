@@ -1,13 +1,27 @@
+# GHC Debugger
+
+Status: **Work In Progress**
+
+We are working on a first class debugger for Haskell.
+It is still not ready for general consumption!
+
+We will properly announce through the common channels the debugger when the
+first release is ready.
+
+
 # Usage
 
 ```
-cabal run haskell-debugger-server
+PATH="/path/to/head/ghc:$PATH" cabal run haskell-debugger-server
 ```
 
-Then, install the VSCode extension `haskell-debugger-extension` with `npm run
-package`, dragging the result into the VSCode extensions tab, and you're set.
+Then, install the VSCode extension `haskell-debugger-extension` that you can
+build with `nix-build` in the extension directory, dragging the result into the
+VSCode extensions tab, and you're set.
 
 # Features
+
+Many not listed! Here are a few things:
 
 ## Stepping
 
