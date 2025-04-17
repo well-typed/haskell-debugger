@@ -163,7 +163,7 @@ debuggerThread :: MVar (Either String ()) -- ^ To signal when initialization is 
                -> IO ()
 debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraGhcArgs runConf requests replies withAdaptor = do
 
-  let finalGhcInvocation = ghcInvocation ++ extraGhcArgs
+  let finalGhcInvocation = ghcInvocation ++ ["-fwrite-if-simplified-core"] ++ extraGhcArgs
 
   -- See Notes (CWD) above
   setCurrentDirectory workDir
