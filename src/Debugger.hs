@@ -11,7 +11,13 @@ import Control.Monad.Catch
 import Data.Bits (xor)
 
 import GHC
+import GHC.Types.Unique.FM
+import GHC.Types.Name.Reader
+import GHC.Types.Name.Occurrence (sizeOccEnv)
+import GHC.Unit.Home.ModInfo
+import GHC.Unit.Module.ModDetails
 import GHC.Types.FieldLabel
+import GHC.Types.TypeEnv
 import GHC.Data.Maybe (expectJust)
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS, mkUnboundName)
 import GHC.Data.FastString
@@ -349,16 +355,8 @@ getScopes = GHC.getCurrentBreakSpan >>= \case
       -- scopes will be fetched at every stopped event.
       curr_modl <- expectJust <$> getCurrentBreakModule
       hsc_env <- getSession
-      elts <- globalRdrEnvElts <$> getGRE
-      (in_mod, not_in_mod) <-
-        foldM (\(!a, !b) (nameModule . greName -> modl) -> liftIO $ do
-            hmi <- HUG.lookupHugByModule modl (hsc_HUG hsc_env)
-            return $ case hmi of
-              Nothing -> (a, b)
-              Just _
-                | curr_modl == modl -> (a+1, b)
-                | otherwise -> (a, b+1)
-          ) (0, 0) elts
+      in_mod <- getTopEnv curr_modl
+      imported <- getTopImported curr_modl
       return
         [ ScopeInfo { kind = LocalVariablesScope
                     , expensive = False
@@ -367,14 +365,12 @@ getScopes = GHC.getCurrentBreakSpan >>= \case
                     }
         , ScopeInfo { kind = ModuleVariablesScope
                     , expensive = True
-                    , numVars = Just in_mod
+                    , numVars = Just (sizeUFM in_mod)
                     , sourceSpan
                     }
         , ScopeInfo { kind = GlobalVariablesScope
                     , expensive = True
-                    -- this is an overestimation since when returning them we
-                    -- prune to only things imported by this module?
-                    , numVars = Just not_in_mod
+                    , numVars = Just (sizeOccEnv imported)
                     , sourceSpan
                     }
         ]
@@ -451,43 +447,63 @@ getVariables vk = do
         mapM tyThingToVarInfo =<< GHC.getBindings
 
       ModuleVariables -> Right <$> do
-        things <- filter (sameMod r) <$> hugGlobalVars hsc_env r
-        mapM (\(n, tt) -> do
-          name <- display n
-          vi <- tyThingToVarInfo tt
-          return vi{varName = name}) things
+        case ibi_tick_mod <$> GHC.resumeBreakpointId r of
+          Nothing -> return []
+          Just curr_modl -> do
+            things <- typeEnvElts <$> getTopEnv curr_modl
+            mapM (\tt -> do
+              nameStr <- display (getName tt)
+              vi <- tyThingToVarInfo tt
+              return vi{varName = nameStr}) things
 
       GlobalVariables -> Right <$> do
-        things <- filter (not . sameMod r) <$> hugGlobalVars hsc_env r
-        mapM (\(n, tt) -> do
-          name <- display n
-          vi <- tyThingToVarInfo tt
-          return vi{varName = name}) things
+        case ibi_tick_mod <$> GHC.resumeBreakpointId r of
+          Nothing -> return []
+          Just curr_modl -> do
+            hsc_env <- getSession
+            names <- map greName . globalRdrEnvElts <$> getTopImported curr_modl
+            mapM (\n-> do
+              nameStr <- display n
+              liftIO (GHC.lookupType hsc_env n) >>= \case
+                Nothing ->
+                  return VarInfo
+                    { varName = nameStr
+                    , varType = ""
+                    , varValue = ""
+                    , isThunk = False
+                    , varRef = NoVariables
+                    , varFields = NoFields
+                    }
+                Just tt -> do
+                  vi <- tyThingToVarInfo tt
+                  return vi{varName = nameStr}) names
 
       NoVariables -> Right <$> do
         return []
-  where
-    sameMod r (nameModule -> modl, _) = (ibi_tick_mod <$> GHC.resumeBreakpointId r) == Just modl
-    hugGlobalVars hsc_env r = catMaybes <$> mapM (select hsc_env) (globalElts r)
-    globalElts = globalRdrEnvElts . igre_env . snd . GHC.resumeBindings
-    select hsc_env (greName -> n) = liftIO $ do
-      let modl = nameModule n
-      hmi <- HUG.lookupHugByModule modl (hsc_HUG hsc_env)
-      case hmi of
-        Nothing ->
-          -- not in home units, don't show.
-          pure Nothing
-        Just _ -> do
-          mty <- GHC.lookupType hsc_env n
-          case mty of
-            Nothing ->
-              pure Nothing
-            Just ty ->
-              pure $ Just (n, ty)
 
 --------------------------------------------------------------------------------
 -- * GHC Utilities
 --------------------------------------------------------------------------------
+
+-- | All top-level things from a module, including unexported ones.
+getTopEnv :: Module -> Debugger TypeEnv
+getTopEnv modl = do
+  hsc_env <- getSession
+  liftIO $ HUG.lookupHugByModule modl (hsc_HUG hsc_env) >>= \case
+    Nothing -> return emptyTypeEnv
+    Just HomeModInfo
+      { hm_details = ModDetails
+        { md_types = things
+        }
+      } -> return things
+
+-- | All bindings imported at a given module
+getTopImported :: Module -> Debugger GlobalRdrEnv
+getTopImported modl = do
+  hsc_env <- getSession
+  liftIO $ HUG.lookupHugByModule modl (hsc_HUG hsc_env) >>= \case
+    Nothing -> return emptyGlobalRdrEnv
+    Just hmi -> mkTopLevImportedEnv hsc_env hmi
 
 -- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
 inspectName :: Name -> Debugger (Maybe VarInfo)
