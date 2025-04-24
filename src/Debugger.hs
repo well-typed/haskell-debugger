@@ -444,7 +444,7 @@ getVariables vk = do
 
       LocalVariables -> fmap Right $
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
-        mapM tyThingToVarInfo =<< GHC.getBindings
+        mapM (tyThingToVarInfo defaultDepth) =<< GHC.getBindings
 
       ModuleVariables -> Right <$> do
         case ibi_tick_mod <$> GHC.resumeBreakpointId r of
@@ -453,7 +453,7 @@ getVariables vk = do
             things <- typeEnvElts <$> getTopEnv curr_modl
             mapM (\tt -> do
               nameStr <- display (getName tt)
-              vi <- tyThingToVarInfo tt
+              vi <- tyThingToVarInfo 1 tt
               return vi{varName = nameStr}) things
 
       GlobalVariables -> Right <$> do
@@ -475,11 +475,17 @@ getVariables vk = do
                     , varFields = NoFields
                     }
                 Just tt -> do
-                  vi <- tyThingToVarInfo tt
+                  vi <- tyThingToVarInfo 1 tt {- don't look deep for global and mod vars -}
                   return vi{varName = nameStr}) names
 
       NoVariables -> Right <$> do
         return []
+
+defaultDepth = 20 -- the depth determines how much of the structure is traversed.
+                  -- using a small value like 5 here is what causes the
+                  -- structure to be improperly rendered inline with many underscores.
+                  -- Note: GHCi uses depth=100
+                  -- TODO: Investigate why this isn't fast enough to use 100.
 
 --------------------------------------------------------------------------------
 -- * GHC Utilities
@@ -512,21 +518,16 @@ inspectName n = do
     Nothing -> do
       liftIO . putStrLn =<< display (text "Failed to lookup name: " <+> ppr n)
       pure Nothing
-    Just tt -> Just <$> tyThingToVarInfo tt
+    Just tt -> Just <$> tyThingToVarInfo defaultDepth tt
 
 -- | 'TyThing' to 'VarInfo'. The 'Bool' argument indicates whether to force the
 -- value of the thing (as in @True = :force@, @False = :print@)
-tyThingToVarInfo :: TyThing -> Debugger VarInfo
-tyThingToVarInfo = \case
+tyThingToVarInfo :: Int {-^ Depth -} -> TyThing -> Debugger VarInfo
+tyThingToVarInfo depth = \case
   t@(AConLike c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   AnId i -> do
-    let depth = 20 -- the depth determines how much of the structure is traversed.
-                   -- using a small value like 5 here is what causes the
-                   -- structure to be improperly rendered inline with many underscores.
-                   -- Note: GHCi uses depth=100
-                   -- TODO: Investigate why this isn't fast enough to use 100.
     term <- GHC.obtainTermFromId depth False{-don't force-} i
     termToVarInfo (GHC.idName i) term
 
