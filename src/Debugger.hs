@@ -476,7 +476,8 @@ getVariables vk = do
                     }
                 Just tt -> do
                   vi <- tyThingToVarInfo 1 tt {- don't look deep for global and mod vars -}
-                  return vi{varName = nameStr}) names
+                  return vi{varName = nameStr}
+              ) names
 
       NoVariables -> Right <$> do
         return []
@@ -584,9 +585,12 @@ termToVarInfo top_name top_term = do
            Term{subTerms}            -> subTerms
            NewtypeWrap{wrapped_term} -> getSubterms wrapped_term
            _                         -> []
+      let ty = GHCI.termType term
       varName <- display n
-      varType <- display (GHCI.termType term)
-      varValue <- display =<< GHCD.showTerm term
+      varType <- display ty
+      varValue <- if null (getSubterms term) || isBoringTy ty
+                     then display =<< GHCD.showTerm term
+                     else return ""
 
       -- The VarReference allows user to expand variable structure and inspect its value.
       -- Here, we do not want to allow expanding a term that is fully evaluated.
