@@ -482,11 +482,16 @@ getVariables vk = do
       NoVariables -> Right <$> do
         return []
 
-defaultDepth = 20 -- the depth determines how much of the structure is traversed.
+defaultDepth =  5 -- the depth determines how much of the structure is traversed.
                   -- using a small value like 5 here is what causes the
                   -- structure to be improperly rendered inline with many underscores.
                   -- Note: GHCi uses depth=100
                   -- TODO: Investigate why this isn't fast enough to use 100.
+                  -- TODO: We need a new metric to determine how much we force.
+                  -- Depth is not good enough because e.g for a very broad
+                  -- recursive type it will be exponentially many nodes to
+                  -- visit
+                  -- For now, try depth=5
 
 --------------------------------------------------------------------------------
 -- * GHC Utilities
