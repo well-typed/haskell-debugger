@@ -42,6 +42,7 @@ executable haskell-debugger-server
     main-is:          Main.hs
     other-modules:    Development.Debugger.Flags,
                       Development.Debugger.Breakpoints,
+                      Development.Debugger.Stepping,
                       Development.Debugger.Stopped,
                       Development.Debugger.Evaluation,
                       Development.Debugger.Init,

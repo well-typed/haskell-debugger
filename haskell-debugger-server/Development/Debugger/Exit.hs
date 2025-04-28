@@ -25,7 +25,6 @@ module Development.Debugger.Exit where
 import DAP
 import Data.Function
 import System.IO
-import System.Exit
 import Control.Exception
 import Control.Exception.Context
 import qualified Data.Text as T

@@ -16,6 +16,7 @@ import Debugger.Interface.Messages hiding (Command, Response)
 
 import Development.Debugger.Init
 import Development.Debugger.Breakpoints
+import Development.Debugger.Stepping
 import Development.Debugger.Stopped
 import Development.Debugger.Evaluation
 import Development.Debugger.Interface
@@ -132,22 +133,12 @@ talk CommandStackTrace = commandStackTrace
 talk CommandScopes     = commandScopes
 talk CommandVariables  = commandVariables
 ----------------------------------------------------------------------------
-talk CommandContinue = do
-  DidContinue er <- sendInterleaved DoContinue $
-    sendContinueResponse (ContinueResponse True)
-  handleEvalResult False er
+talk CommandContinue   = commandContinue
 ----------------------------------------------------------------------------
-talk CommandNext = do
-  DidStep er <- sendInterleaved DoStepLocal sendNextResponse
-  handleEvalResult True er
+talk CommandNext       = commandNext
 ----------------------------------------------------------------------------
-talk CommandStepIn = do
-  DidStep er <- sendInterleaved DoSingleStep sendStepInResponse
-  handleEvalResult True er
-talk CommandStepOut = do
-  -- TODO: How to implement? Perhaps by step-local until the end of the function and then SingleStep?--no, that could still go "inside" the last statement
-  -- Do they say in the paper?
-  undefined
+talk CommandStepIn     = commandStepIn
+talk CommandStepOut    = commandStepOut
 ----------------------------------------------------------------------------
 talk CommandEvaluate   = commandEvaluate
 ----------------------------------------------------------------------------
