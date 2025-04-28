@@ -590,12 +590,15 @@ termToVarInfo top_name top_term = do
            Term{subTerms}            -> subTerms
            NewtypeWrap{wrapped_term} -> getSubterms wrapped_term
            _                         -> []
+      let withoutSubterms t = case t of
+           Prim{}                    -> t
+           Term{}                    -> t{subTerms = []}
+           NewtypeWrap{wrapped_term} -> t{wrapped_term = withoutSubterms wrapped_term}
+           _                         -> t
       let ty = GHCI.termType term
       varName <- display n
       varType <- display ty
-      varValue <- if null (getSubterms term) || isBoringTy ty
-                     then display =<< GHCD.showTerm term
-                     else return ""
+      varValue <- display =<< GHCD.showTerm (withoutSubterms term)
 
       -- The VarReference allows user to expand variable structure and inspect its value.
       -- Here, we do not want to allow expanding a term that is fully evaluated.
