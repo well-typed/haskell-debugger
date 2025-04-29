@@ -1,0 +1,16 @@
+on: [push]
+name: Debugger CI
+jobs:
+  build-ghc-debugger:
+    name: Build ghc-debug-adapter
+    runs-on: ubuntu-latest # or macOS-latest, or windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: latest-nightly
+          cabal-version: latest
+          ghcup-release-channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
+      - run: cabal build exe:haskell-debugger-server
