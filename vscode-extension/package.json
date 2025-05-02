@@ -119,8 +119,6 @@
           "haskell"
         ],
         "label": "Haskell Debugger",
-        "program": "./bin/launchDebugger.js",
-        "runtime": "node",
         "configurationAttributes": {
           "launch": {
             "required": [
