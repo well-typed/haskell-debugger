@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase, RecordWildCards #-}
-module Development.Debugger.Interface where
+module Development.Debug.Adapter.Interface where
 
 import qualified Data.Text as T
 import Control.Concurrent.MVar
@@ -8,8 +8,8 @@ import Control.Monad.IO.Class
 import DAP
 
 import Debugger.Interface.Messages as D
-import Development.Debugger.Adaptor
-import qualified Development.Debugger.Output as Output
+import Development.Debug.Adapter
+import qualified Development.Debug.Adapter.Output as Output
 
 -- | Synchronously send a command to the debugger and await a response
 sendSync :: D.Command -> DebugAdaptor Response

@@ -14,21 +14,21 @@ import DAP
 
 import Debugger.Interface.Messages hiding (Command, Response)
 
-import Development.Debugger.Init
-import Development.Debugger.Breakpoints
-import Development.Debugger.Stepping
-import Development.Debugger.Stopped
-import Development.Debugger.Evaluation
-import Development.Debugger.Interface
-import Development.Debugger.Adaptor
-import Development.Debugger.Exit
+import Development.Debug.Adapter.Init
+import Development.Debug.Adapter.Breakpoints
+import Development.Debug.Adapter.Stepping
+import Development.Debug.Adapter.Stopped
+import Development.Debug.Adapter.Evaluation
+import Development.Debug.Adapter.Interface
+import Development.Debug.Adapter.Exit
+import Development.Debug.Adapter.Handles
+import Development.Debug.Adapter
 
 import System.IO (hSetBuffering, BufferMode(LineBuffering))
 import DAP.Log
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import GHC.IO.Handle.FD
-import Handles
 
 
 defaultStdoutForwardingAction :: T.Text -> IO ()

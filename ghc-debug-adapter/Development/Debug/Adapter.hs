@@ -1,4 +1,4 @@
-module Development.Debugger.Adaptor where
+module Development.Debug.Adapter where
 
 import Control.Concurrent.MVar
 import qualified Data.IntSet as IS

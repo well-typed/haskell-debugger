@@ -20,18 +20,19 @@
 --
 -- Notes:
 -- * @'destroyDebugSession'@ kills all threads started for this session with @'registerNewDebugSession'@.
-module Development.Debugger.Exit where
+module Development.Debug.Adapter.Exit where
 
 import DAP
 import Data.Function
 import System.IO
+import Control.Monad.IO.Class
 import Control.Exception
 import Control.Exception.Context
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
-import Development.Debugger.Adaptor
-import qualified Development.Debugger.Output as Output
+import Development.Debug.Adapter
+import qualified Development.Debug.Adapter.Output as Output
 
 -- | Command terminate (1a)
 --

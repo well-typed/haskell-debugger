@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings, OverloadedRecordDot, RecordWildCards, PatternSynonyms #-}
-module Development.Debugger.Breakpoints where
+module Development.Debug.Adapter.Breakpoints where
 
 import qualified Data.Text as T
 import qualified Data.Map as Map
@@ -13,8 +13,8 @@ import DAP
 
 import Debugger.Interface.Messages hiding (Command, Response)
 
-import Development.Debugger.Adaptor
-import Development.Debugger.Interface
+import Development.Debug.Adapter
+import Development.Debug.Adapter.Interface
 
 -- | BreakpointLocations command
 commandBreakpointLocations :: DebugAdaptor ()

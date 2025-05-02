@@ -12,15 +12,15 @@
 --             ...
 --                Variables
 -- @
-module Development.Debugger.Stopped where
+module Development.Debug.Adapter.Stopped where
 
 import qualified Data.Text as T
 
 import DAP
 
 import Debugger.Interface.Messages
-import Development.Debugger.Adaptor
-import Development.Debugger.Interface
+import Development.Debug.Adapter
+import Development.Debug.Adapter.Interface
 
 --------------------------------------------------------------------------------
 -- * StackTrace

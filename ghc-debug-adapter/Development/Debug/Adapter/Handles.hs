@@ -1,9 +1,5 @@
 {-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass, DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards #-}
-
--- TODO list:
---
--- [ ]
-module Handles
+module Development.Debug.Adapter.Handles
   ( handleLogger
   , withInterceptedStdout
   , withInterceptedStderr

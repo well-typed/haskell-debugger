@@ -33,7 +33,7 @@ function getFreePort(): Promise<number> {
 	});
 }
 
-let logger : vscode.OutputChannel = vscode.window.createOutputChannel("haskell-debug-adapter");
+let logger : vscode.OutputChannel = vscode.window.createOutputChannel("ghc-debug-adapter");
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -183,8 +183,8 @@ class GHCDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDescr
 		const port = await getFreePort();
 		this.logger.appendLine(`[Factory] Launching ghc-debugger on port ${port}`);
 
-		const debuggerProcess = cp.spawn('haskell-debugger-server', ['--port', port.toString(), "+RTS", "-pj"], {cwd: "/var/folders/tv/35hlch6s3y15hfvndc71l6d40000gn/T/tmp.7Vsfzyoozc"});
-		// const debuggerProcess = cp.spawn('haskell-debugger-server', ['--port', port.toString()]);
+		// const debuggerProcess = cp.spawn('ghc-debug-adapter', ['--port', port.toString(), "+RTS", "-pj"], {cwd: "/var/folders/tv/35hlch6s3y15hfvndc71l6d40000gn/T/tmp.7Vsfzyoozc"});
+		const debuggerProcess = cp.spawn('ghc-debug-adapter', ['--port', port.toString()]);
 
         debuggerProcess.on('spawn', () => {
             this.logger.appendLine('[Factory] ghc-debugger spawned...');

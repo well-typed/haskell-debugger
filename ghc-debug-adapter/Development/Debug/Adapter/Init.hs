@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase, OverloadedStrings, RecordWildCards, DerivingStrategies, DeriveGeneric, DeriveAnyClass #-}
 
 -- | TODO: This module should be called Launch.
-module Development.Debugger.Init where
+module Development.Debug.Adapter.Init where
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -19,10 +19,10 @@ import Data.Aeson as Aeson
 import GHC.Generics
 import System.Directory
 
-import Development.Debugger.Flags
-import Development.Debugger.Adaptor
-import qualified Development.Debugger.Output as Output
-import Development.Debugger.Exit
+import Development.Debug.Adapter
+import Development.Debug.Adapter.Exit
+import Development.Debug.Adapter.Flags
+import qualified Development.Debug.Adapter.Output as Output
 
 import qualified Debugger
 import qualified Debugger.Monad as Debugger
@@ -30,7 +30,7 @@ import Debugger.Interface.Messages hiding (Command, Response)
 import qualified Debugger.Interface.Messages as D (Command, Response)
 
 import DAP
-import Handles
+import Development.Debug.Adapter.Handles
 
 --------------------------------------------------------------------------------
 -- * Client

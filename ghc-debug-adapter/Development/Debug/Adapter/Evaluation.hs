@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards, OverloadedRecordDot, DuplicateRecordFields #-}
-module Development.Debugger.Evaluation where
+module Development.Debug.Adapter.Evaluation where
 
 import qualified Data.Text as T
 import qualified Data.Map as M
@@ -8,9 +8,9 @@ import qualified Data.IntSet as IS
 import DAP
 
 import Debugger.Interface.Messages
-import Development.Debugger.Adaptor
-import Development.Debugger.Interface
-import qualified Development.Debugger.Output as Output
+import Development.Debug.Adapter
+import Development.Debug.Adapter.Interface
+import qualified Development.Debug.Adapter.Output as Output
 
 --------------------------------------------------------------------------------
 -- * Executing debuggee

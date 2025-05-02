@@ -1,20 +1,12 @@
-module Development.Debugger.Stepping where
-
-import qualified Data.Text as T
-import qualified Data.Map as Map
-import qualified Data.IntSet as IS
-import Control.Monad
-import Data.Maybe
-
-import qualified GHC
+module Development.Debug.Adapter.Stepping where
 
 import DAP
 
 import Debugger.Interface.Messages hiding (Command, Response)
 
-import Development.Debugger.Adaptor
-import Development.Debugger.Interface
-import Development.Debugger.Evaluation
+import Development.Debug.Adapter
+import Development.Debug.Adapter.Interface
+import Development.Debug.Adapter.Evaluation
 
 commandContinue :: DebugAdaptor ()
 commandContinue = do

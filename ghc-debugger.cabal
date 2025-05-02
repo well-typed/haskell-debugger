@@ -37,20 +37,20 @@ library
     hs-source-dirs:   src
     default-language: Haskell2010
 
-executable haskell-debugger-server
+executable ghc-debug-adapter
     import:           warnings
     main-is:          Main.hs
-    other-modules:    Development.Debugger.Flags,
-                      Development.Debugger.Breakpoints,
-                      Development.Debugger.Stepping,
-                      Development.Debugger.Stopped,
-                      Development.Debugger.Evaluation,
-                      Development.Debugger.Init,
-                      Development.Debugger.Adaptor,
-                      Development.Debugger.Interface,
-                      Development.Debugger.Output,
-                      Development.Debugger.Exit,
-                      Handles
+    other-modules:    Development.Debug.Adapter.Flags,
+                      Development.Debug.Adapter.Breakpoints,
+                      Development.Debug.Adapter.Stepping,
+                      Development.Debug.Adapter.Stopped,
+                      Development.Debug.Adapter.Evaluation,
+                      Development.Debug.Adapter.Init,
+                      Development.Debug.Adapter.Interface,
+                      Development.Debug.Adapter.Output,
+                      Development.Debug.Adapter.Exit,
+                      Development.Debug.Adapter.Handles,
+                      Development.Debug.Adapter
     build-depends:
         base >=4.21,
         ghc >= 9.13,
@@ -65,7 +65,7 @@ executable haskell-debugger-server
         hie-bios >=0.13,
         async,
         ghc-debugger
-    hs-source-dirs:   haskell-debugger-server
+    hs-source-dirs:   ghc-debug-adapter
     default-language: GHC2021
     ghc-options: -threaded
 

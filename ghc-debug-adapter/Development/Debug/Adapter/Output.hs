@@ -12,14 +12,14 @@
 -- TODO:
 --  [ ] ANSI Styling of output console messages?
 --
-module Development.Debugger.Output
+module Development.Debug.Adapter.Output
   ( neutral, console, important, stdout, stderr )
   where
 
 import Data.Text (Text)
 import qualified Data.Text as T
 import DAP (sendOutputEvent, defaultOutputEvent, OutputEvent(..), OutputEventCategory(..))
-import Development.Debugger.Adaptor
+import Development.Debug.Adapter
 
 -- | Default 'OutputEvent' without an explicit category.
 neutral :: Text -> DebugAdaptorX r

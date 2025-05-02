@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP, RecordWildCards, LambdaCase #-}
-module Development.Debugger.Flags where
+module Development.Debug.Adapter.Flags where
 
 import Data.Maybe
 import Data.Function
