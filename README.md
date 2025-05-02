@@ -8,6 +8,7 @@ It is still not ready for general consumption!
 We will properly announce through the common channels the debugger when the
 first release is ready.
 
+![CI badge](https://github.com/well-typed/ghc-debugger/actions/workflows/debugger.yaml/badge.svg)
 
 # Usage
 
