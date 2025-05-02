@@ -7,9 +7,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-} -- JSON GHC.BreakpointId
 
 -- | Types for sending and receiving messages to/from ghc-debugger
-module Debugger.Interface.Messages
-  ( module Debugger.Interface.Messages
-  ) where
+module GHC.Debugger.Interface.Messages where
 
 import GHC.Generics
 import Data.Aeson

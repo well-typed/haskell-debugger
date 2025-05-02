@@ -18,7 +18,7 @@ import qualified Data.Text as T
 
 import DAP
 
-import Debugger.Interface.Messages
+import GHC.Debugger.Interface.Messages
 import Development.Debug.Adapter
 import Development.Debug.Adapter.Interface
 

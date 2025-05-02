@@ -6,9 +6,9 @@ import qualified Data.Map as Map
 import qualified Data.Text as T
 import System.FilePath
 
-import qualified GHC
 import DAP
-import qualified Debugger.Interface.Messages as D (Command, Response)
+import qualified GHC
+import qualified GHC.Debugger.Interface.Messages as D (Command, Response)
 
 type DebugAdaptor = Adaptor DebugAdaptorState Request
 type DebugAdaptorCont = Adaptor DebugAdaptorState ()

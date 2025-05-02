@@ -12,7 +12,7 @@ import Text.Read
 
 import DAP
 
-import Debugger.Interface.Messages hiding (Command, Response)
+import GHC.Debugger.Interface.Messages hiding (Command, Response)
 
 import Development.Debug.Adapter.Init
 import Development.Debug.Adapter.Breakpoints

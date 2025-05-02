@@ -24,10 +24,10 @@ import Development.Debug.Adapter.Exit
 import Development.Debug.Adapter.Flags
 import qualified Development.Debug.Adapter.Output as Output
 
-import qualified Debugger
-import qualified Debugger.Monad as Debugger
-import Debugger.Interface.Messages hiding (Command, Response)
-import qualified Debugger.Interface.Messages as D (Command, Response)
+import qualified GHC.Debugger as Debugger
+import qualified GHC.Debugger.Monad as Debugger
+import qualified GHC.Debugger.Interface.Messages as D (Command, Response)
+import GHC.Debugger.Interface.Messages hiding (Command, Response)
 
 import DAP
 import Development.Debug.Adapter.Handles

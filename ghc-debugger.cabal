@@ -20,9 +20,9 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  Debugger,
-                      Debugger.Monad,
-                      Debugger.Interface.Messages
+    exposed-modules:  GHC.Debugger,
+                      GHC.Debugger.Monad,
+                      GHC.Debugger.Interface.Messages
     -- other-modules:
     -- other-extensions:
     build-depends:    base >= 4.21,

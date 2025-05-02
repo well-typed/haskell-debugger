@@ -7,7 +7,7 @@ import Control.Monad.IO.Class
 
 import DAP
 
-import Debugger.Interface.Messages as D
+import GHC.Debugger.Interface.Messages as D
 import Development.Debug.Adapter
 import qualified Development.Debug.Adapter.Output as Output
 

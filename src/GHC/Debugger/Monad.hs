@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns, CPP, GeneralizedNewtypeDeriving, NamedFieldPuns, TupleSections, LambdaCase, OverloadedRecordDot #-}
-module Debugger.Monad where
+module GHC.Debugger.Monad where
 
 import Prelude hiding (mod)
 import Data.Function
@@ -38,7 +38,7 @@ import qualified Data.IntMap as IM
 
 import Control.Monad.Reader
 
-import Debugger.Interface.Messages
+import GHC.Debugger.Interface.Messages
 import System.Posix.Signals
 
 -- | A debugger action.

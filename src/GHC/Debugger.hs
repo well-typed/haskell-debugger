@@ -1,7 +1,7 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
-module Debugger where
+module GHC.Debugger where
 
 import Prelude hiding (exp, span)
 import System.Exit
@@ -48,8 +48,8 @@ import Data.Maybe
 import Control.Monad.Reader
 import Data.IORef
 
-import Debugger.Monad
-import Debugger.Interface.Messages
+import GHC.Debugger.Monad
+import GHC.Debugger.Interface.Messages
 
 --------------------------------------------------------------------------------
 -- * Executing commands

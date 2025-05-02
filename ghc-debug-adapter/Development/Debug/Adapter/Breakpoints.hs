@@ -11,7 +11,7 @@ import qualified GHC
 
 import DAP
 
-import Debugger.Interface.Messages hiding (Command, Response)
+import GHC.Debugger.Interface.Messages hiding (Command, Response)
 
 import Development.Debug.Adapter
 import Development.Debug.Adapter.Interface
