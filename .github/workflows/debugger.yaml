@@ -24,7 +24,7 @@ jobs:
           path: vscode-extension/result/haskell-debugger-extension-0.1.0.vsix
 
   build-ghc-debugger:
-    name: Build ghc-debug-adapter
+    name: Build and Test ghc-debug-adapter
     runs-on: ubuntu-latest # or macOS-latest, or windows-latest
     steps:
       - uses: actions/checkout@v4
