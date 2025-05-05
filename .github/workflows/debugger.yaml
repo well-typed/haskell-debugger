@@ -44,42 +44,23 @@ jobs:
       - name: Build ghc-debug-adapter
         run: cabal build exe:ghc-debug-adapter
 
-      - name: Upload ghc-debug-adapter binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: ghc-debug-adapter
-          path: dist-newstyle/build/*/*/ghc-debug-adapter/build/ghc-debug-adapter/ghc-debug-adapter
+      # - name: Upload ghc-debug-adapter binary
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: ghc-debug-adapter
+      #     path: dist-newstyle/build/*/*/ghc-debugger*/x/ghc-debug-adapter/build/ghc-debug-adapter/ghc-debug-adapter
 
+      # - name: Download ghc-debug-adapter binary
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: ghc-debug-adapter
+      #     path: ./bin/
 
-  test-ghc-debugger:
-      name: Test ghc-debug-adapter
-      runs-on: ubuntu-latest
-      needs: build-ghc-debugger
-      steps:
-        - uses: actions/checkout@v4
-          with:
-            submodules: recursive
-
-        - uses: haskell-actions/setup@v2
-          with:
-            ghc-version: latest-nightly
-            cabal-version: latest
-            ghcup-release-channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
-
-        - uses: cachix/install-nix-action@v31
-          with:
-            nix_path: nixpkgs=channel:nixos-unstable
-
-        - name: Download ghc-debug-adapter binary
-          uses: actions/download-artifact@v4
-          with:
-            name: ghc-debug-adapter
-            path: ./bin/
-
-        - name: Run integration tests
-          run: |
-            cd test/integration-tests/
-            make clean
-            make build
-            make test DEBUGGER=./bin/ghc-debug-adapter
+      - name: Run integration tests
+        run: |
+          export DEBUGGER=$(cabal list-bin exe:ghc-debug-adapter)
+          cd test/integration-tests/
+          make clean
+          make node_modules
+          make test
 
