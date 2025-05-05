@@ -1,6 +1,9 @@
 import { DebugClient } from '@vscode/debugadapter-testsupport';
 import * as cp from 'child_process';
 import * as net from 'net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { mkdtempSync, cpSync } from 'node:fs';
 
 function getFreePort() {
 	return new Promise((resolve, reject) => {
@@ -72,7 +75,7 @@ describe("Debug Adapter Tests", function () {
             type: "ghc-debugger",
             request: "launch",
             name: "Haskell Debugger",
-            projectRoot: cwd + "/data",
+            projectRoot: "/data/simple",
             entryFile: "Main.hs",
             entryPoint: "main",
             entryArgs: ["some", "args"],
@@ -84,7 +87,7 @@ describe("Debug Adapter Tests", function () {
             type: "ghc-debugger",
             request: "launch",
             name: "Haskell Debugger",
-            projectRoot: cwd + "/data/cabal1",
+            projectRoot: "/data/cabal1",
             entryFile: "app/Main.hs",
             entryPoint: "main",
             entryArgs: ["some", "args"],
@@ -97,59 +100,67 @@ describe("Debug Adapter Tests", function () {
 
     const basicTests = (launchCfg) => {
 
+        // Run tests on the temporary directory. This avoids issues with
+        // hie-bios finding bad project roots because of cabal.projects in the
+        // file system.
+        const tmp = mkdtempSync(join(tmpdir(), "ghc-debugger-")) + launchCfg.config.projectRoot
+        const data = process.cwd() + launchCfg.config.projectRoot;
+        cpSync(data, tmp, { recursive: true }) // Copy data contents to temp directory
+        launchCfg.config.projectRoot = tmp;
+
         // The most basic functionality we test on various different
         // configurations (such as Cabal vs without project vs Stack)
         // The remaining tests are run only on one config since the set up
         // starts being more specific (e.g. multiple home units with Cabal)
         describe("Most basic functionality", function () {
 
-            describe(launchCfg.name, function () {
+          describe(launchCfg.name, function () {
 
-                it('should run program to the end', () => {
-                    return Promise.all([
-                        dc.configurationSequence(),
-                        dc.launch(launchCfg.config),
-                        dc.waitForEvent('exited').then(e => new Promise((resolve, reject) => {
-                            if (e.body.exitCode == 0)
-                                resolve(e)
-                            else
-                                reject(new Error("Expecting ExitCode 1"))
-                        }))
-                    ]);
-                });
+              it('should run program to the end', () => {
+                  return Promise.all([
+                      dc.configurationSequence(),
+                      dc.launch(launchCfg.config),
+                      dc.waitForEvent('exited').then(e => new Promise((resolve, reject) => {
+                          if (e.body.exitCode == 0)
+                              resolve(e)
+                          else
+                              reject(new Error("Expecting ExitCode 1"))
+                      }))
+                  ]);
+              });
 
-                it('should stop on a breakpoint', () => {
-                    const expected = { path: launchCfg.config.projectRoot + "/" + launchCfg.config.entryFile, line: 6 }
-                    return dc.hitBreakpoint(launchCfg.config, { path: launchCfg.config.entryFile, line: 6 }, expected, expected);
-                });
+              it('should stop on a breakpoint', () => {
+                  const expected = { path: launchCfg.config.projectRoot + "/" + launchCfg.config.entryFile, line: 6 }
+                  return dc.hitBreakpoint(launchCfg.config, { path: launchCfg.config.entryFile, line: 6 }, expected, expected);
+              });
 
-                it('should stop on an exception', () => {
+              it('should stop on an exception', () => {
 
-                    // const expected = { path: launchCfg.config.projectRoot + "/" + launchCfg.config.entryFile, line: 10 }
-                    // Currently, no information is provided when stopped at an exception:
-                    const expected = { }
-                    return Promise.all([
+                  // const expected = { path: launchCfg.config.projectRoot + "/" + launchCfg.config.entryFile, line: 10 }
+                  // Currently, no information is provided when stopped at an exception:
+                  const expected = { }
+                  return Promise.all([
 
-                        dc.waitForEvent('initialized').then(event => {
-                            return dc.setExceptionBreakpointsRequest({
-                                filters: [ 'break-on-exception' ]
-                            });
-                        }).then(response => {
-                            return dc.configurationDoneRequest();
-                        }),
+                      dc.waitForEvent('initialized').then(event => {
+                          return dc.setExceptionBreakpointsRequest({
+                              filters: [ 'break-on-exception' ]
+                          });
+                      }).then(response => {
+                          return dc.configurationDoneRequest();
+                      }),
 
-                        dc.launch(launchCfg.config),
+                      dc.launch(launchCfg.config),
 
-                        dc.assertStoppedLocation('exception', expected)
-                    ]);
-                });
+                      dc.assertStoppedLocation('exception', expected)
+                  ]);
+              });
 
-                // TODO: Break on a different module
+              // TODO: Break on a different module
 
-                // TODO: Step in, step next, ...
-                // TODO: Resume and hit next breakpoint
-                // ...
-            })
+              // TODO: Step in, step next, ...
+              // TODO: Resume and hit next breakpoint
+              // ...
+          })
         })
     }
 
