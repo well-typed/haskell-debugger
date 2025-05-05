@@ -1,8 +1,4 @@
 {-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass, DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards, ViewPatterns #-}
-
--- TODO list:
---
--- [ ]
 module Main where
 
 import System.Environment

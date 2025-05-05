@@ -1,8 +1,9 @@
-{-# LANGUAGE LambdaCase, OverloadedStrings, RecordWildCards, DerivingStrategies, DeriveGeneric, DeriveAnyClass #-}
+{-# LANGUAGE CPP, LambdaCase, OverloadedStrings, RecordWildCards, DerivingStrategies, DeriveGeneric, DeriveAnyClass #-}
 
 -- | TODO: This module should be called Launch.
 module Development.Debug.Adapter.Init where
 
+import qualified Data.List as L
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified System.Process as P
@@ -66,6 +67,16 @@ initDebugger ::  LaunchArgs -> DebugAdaptor Bool
 initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs, extraGhcArgs} = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
+
+  Output.console $ T.pack "Checking GHC version against debugger version..."
+  -- GHC is found in PATH (by hie-bios as well).
+  actualVersion <- liftIO $ P.readProcess "ghc" ["--numeric-version"] []
+  -- Compare the GLASGOW_HASKELL version (e.g. 913) with the actualVersion (e.g. 9.13.1):
+  when (not $ show __GLASGOW_HASKELL__ `L.isPrefixOf` (filter (/= '.') actualVersion)) $ do
+    exitWithMsg $ "Aborting...! The GHC version must be the same which " ++
+                    "ghc-debug-adapter was compiled against (" ++
+                      show __GLASGOW_HASKELL__ ++
+                        "). Instead, got " ++ (init{-drops \n-} actualVersion) ++ "."
 
   Output.console $ T.pack "Discovering session flags with hie-bios..."
   mflags <- liftIO (hieBiosFlags projectRoot entryFile)
