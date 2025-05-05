@@ -1,0 +1,9 @@
+{
+  "name": "ghc-debug-adapter-integration-tests",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@vscode/debugadapter-testsupport": "^1.68",
+    "mocha": "^11.2.2"
+  }
+}

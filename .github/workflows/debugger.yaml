@@ -13,4 +13,12 @@ jobs:
           ghc-version: latest-nightly
           cabal-version: latest
           ghcup-release-channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
-      - run: cabal build exe:haskell-debugger-server
+
+      - name: Build ghc-debug-adapter
+        run: cabal build exe:ghc-debug-adapter
+
+      - name: Test ghc-debug-adapter
+        run: |
+          cd test/integration-tests/
+          make clean && make build && make test
+

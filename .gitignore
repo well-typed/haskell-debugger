@@ -1,2 +1,4 @@
-haskell-debugger-extension/dist/
-haskell-debugger-extension/node_modules/
+.vscode/
+node_modules/
+vscode-extension/dist/
+vscode-extension/result

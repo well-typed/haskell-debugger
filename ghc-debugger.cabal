@@ -75,7 +75,7 @@ test-suite ghc-debugger-test
     -- other-modules:
     -- other-extensions:
     type:             exitcode-stdio-1.0
-    hs-source-dirs:   test
+    hs-source-dirs:   test/haskell/
     main-is:          Main.hs
     build-depends:
         base >=4.14,
