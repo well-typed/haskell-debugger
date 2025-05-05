@@ -1,16 +1,23 @@
 { pkgs ? import <nixpkgs> {} }:
 
-pkgs.stdenv.mkDerivation {
+pkgs.buildNpmPackage {
     pname = "haskell-debugger-extension";
     version = "0.1.0";
     src = ./.;
-    nativeBuildInputs = [pkgs.nodejs pkgs.yarn pkgs.vsce pkgs.cacert];
+
+    npmDepsHash = "sha256-ZNrEHzO2/uO9kE2LXBqvqiM8ZMF1AZ1//loCQ6zHzGc=";
+
+    nativeBuildInputs = [
+      pkgs.nodejs pkgs.vsce pkgs.cacert pkgs.nodePackages.rimraf
+      pkgs.esbuild pkgs.pkg-config
+    ];
+
+    buildInputs = [
+      pkgs.libsecret.dev # needed for pkg-config for some npm thing
+    ];
+
     buildPhase = ''
-      export HOME=$TMPDIR
-      touch $HOME/.yarnrc
-      yarn install --frozen-lockfile
-      yarn run build
-      yarn run package
+      npm run package
     '';
 
     installPhase = ''
