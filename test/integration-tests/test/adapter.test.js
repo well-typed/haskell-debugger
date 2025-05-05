@@ -35,7 +35,7 @@ describe("Debug Adapter Tests", function () {
             }, 15000); // 15 second timeout
 
             debuggerProcess.stdout.on('data', data => {
-                console.log(data.toString())
+                // console.log(data.toString())
                 const text = data.toString();
                 if (text.includes('Running')) {
                     clearTimeout(timeout);
@@ -67,12 +67,12 @@ describe("Debug Adapter Tests", function () {
     });
 
     const simpleLaunchConfigs = [
-        { name: "Vanilla config (single file)",
+        { name: "Vanilla config (no package)",
           config: {
             type: "ghc-debugger",
             request: "launch",
             name: "Haskell Debugger",
-            projectRoot: "data",
+            projectRoot: cwd + "/data",
             entryFile: "Main.hs",
             entryPoint: "main",
             entryArgs: ["some", "args"],
@@ -144,6 +144,11 @@ describe("Debug Adapter Tests", function () {
                     ]);
                 });
 
+                // TODO: Break on a different module
+
+                // TODO: Step in, step next, ...
+                // TODO: Resume and hit next breakpoint
+                // ...
             })
         })
     }

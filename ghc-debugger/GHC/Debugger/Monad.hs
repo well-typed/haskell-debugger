@@ -5,6 +5,7 @@ import Prelude hiding (mod)
 import Data.Function
 import System.Exit
 import System.IO
+import System.FilePath (normalise)
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Exception (assert)
@@ -153,7 +154,6 @@ runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
         case srcs of
           [] -> return []
           _  -> do
-            -- ROMES: think about where this initMake should go in GHC or if it should really be copied over.
             let (hs_srcs, non_hs_srcs) = List.partition GHC.isHaskellishTarget srcs
 
             -- if we have no haskell sources from which to do a dependency
@@ -284,10 +284,11 @@ getModuleByPath :: FilePath -> Debugger ModSummary
 getModuleByPath path = do
   -- do this everytime as the loaded modules may have changed
   lms <- getAllLoadedModules
-  let matches ms = msHsFilePath ms `List.isSuffixOf` path
+  let matches ms = normalise (msHsFilePath ms) `List.isSuffixOf` path
   case filter matches lms of
     [x] -> return x
-    [] -> error $ "No Module matched " ++ path
+    [] -> do
+      error $ "No Module matched " ++ path ++ ".\nLoaded modules:\n" ++ show (map msHsFilePath lms)
     xs -> error $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path
 
 --------------------------------------------------------------------------------

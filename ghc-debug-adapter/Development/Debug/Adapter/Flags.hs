@@ -8,6 +8,8 @@ import System.Directory
 import Control.Monad.Except
 import Control.Monad.IO.Class
 
+import qualified Data.List as L
+
 import qualified HIE.Bios as HIE
 import qualified HIE.Bios.Types as HIE
 import qualified HIE.Bios.Environment as HIE
@@ -49,7 +51,7 @@ hieBiosFlags root relTarget = runExceptT $ do
 #endif
 
   return HieBiosFlags
-    { ghcInvocation = -- [ target | not $ any (`L.isSuffixOf` target) flags ] ++ -- TODO is this correct?
+    { ghcInvocation = [ relTarget | not $ any (`L.isSuffixOf` target) flags ] ++ -- TODO is this correct? else, the debugger won't work on single files.
                       flags ++ ghcDebuggerFlags
     , libdir = libdir
     , units  = mapMaybe (\case ("-unit", u) -> Just u; _ -> Nothing) $ zip flags (drop 1 flags)
