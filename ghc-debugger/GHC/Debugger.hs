@@ -13,7 +13,9 @@ import Data.Bits (xor)
 import GHC
 import GHC.Types.Unique.FM
 import GHC.Types.Name.Reader
+#if MIN_VERSION_ghc(9,13,20250417)
 import GHC.Types.Name.Occurrence (sizeOccEnv)
+#endif
 import GHC.Unit.Home.ModInfo
 import GHC.Unit.Module.ModDetails
 import GHC.Types.FieldLabel
@@ -370,7 +372,11 @@ getScopes = GHC.getCurrentBreakSpan >>= \case
                     }
         , ScopeInfo { kind = GlobalVariablesScope
                     , expensive = True
+#if MIN_VERSION_ghc(9,13,20250417)
                     , numVars = Just (sizeOccEnv imported)
+#else
+                    , numVars = Nothing
+#endif
                     , sourceSpan
                     }
         ]
@@ -515,7 +521,11 @@ getTopImported modl = do
   hsc_env <- getSession
   liftIO $ HUG.lookupHugByModule modl (hsc_HUG hsc_env) >>= \case
     Nothing -> return emptyGlobalRdrEnv
+#if MIN_VERSION_ghc(9,13,20250417)
     Just hmi -> mkTopLevImportedEnv hsc_env hmi
+#else
+    Just hmi -> return emptyGlobalRdrEnv
+#endif
 
 -- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
 inspectName :: Name -> Debugger (Maybe VarInfo)
