@@ -1,4 +1,4 @@
-packages: . dap
+packages: .
 
 allow-newer: base,template-haskell,ghc,ghc-bignum, dap:*
 

@@ -62,7 +62,7 @@ executable ghc-debug-adapter
         directory, filepath,
         process, mtl, unix,
 
-        dap >= 0.1.0.0,
+        dap >= 0.2,
         hie-bios >=0.13,
         async,
         ghc-debugger
