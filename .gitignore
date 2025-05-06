@@ -1,3 +1,4 @@
+*.bkp
 .vscode/
 node_modules/
 vscode-extension/dist/
