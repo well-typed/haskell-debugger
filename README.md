@@ -30,7 +30,7 @@ version of GHC in PATH. You can get one using
 ```
 ghcup config add-release-channel https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
 ghcup install ghc latest-nightly 
-PATH=$(dir $(ghcup whereis ghc latest-nightly)):$PATH cabal install exe:ghc-debug-adapter --enable-executable-dynamic --allow-newer=ghc-bignum,ghc,base,template-haskell,ghc-boot-th,ghci,containers,time
+PATH=$(dir $(ghcup whereis ghc latest-nightly)):$PATH cabal install exe:ghc-debug-adapter --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc
 ```
 
 To run the debugger, the same nightly version of GHC needs to be in PATH. Make

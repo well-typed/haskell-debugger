@@ -1,7 +1,6 @@
 packages: .
 
-allow-newer: base,template-haskell,ghc,ghc-bignum, dap:*
+allow-newer: ghc-bignum,containers,time,ghc
 
 executable-dynamic: True
-
 

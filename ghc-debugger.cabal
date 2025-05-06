@@ -4,7 +4,22 @@ version:            0.1.0.0
 synopsis:
     A step-through machine-interface debugger for GHC Haskell
 
--- description:
+description:        The GHC debugger package provides a binary
+                    @ghc-debug-adapter@ that implements the Debug Adapter
+                    Protocol (DAP) for debugging Haskell programs.
+                    .
+                    The Debug Adapter is implemented on top of the
+                    @ghc-debugger@ library which defines the primitive
+                    debugging capabilities. These debugger features are
+                    implemented by managing a GHC session and debugging it
+                    through the GHC API.
+                    .
+                    The @ghc-debug-adapter@ is transparently compatible with
+                    most projects because it uses @hie-bios@ to figure out the
+                    right flags to invoke GHC with.
+                    .
+                    Additional information can be found [in the README](https://github.com/well-typed/ghc-debugger).
+
 license:            BSD-3-Clause
 license-file:       LICENSE
 author:             Rodrigo Mesquita
@@ -13,7 +28,13 @@ maintainer:         rodrigo@well-typed.com
 category:           Development
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
--- extra-source-files:
+                    README.md
+homepage:           https://github.com/well-typed/ghc-debugger
+bug-reports:        https://github.com/well-typed/ghc-debugger/issues
+
+source-repository head
+    type: git
+    location: https://github.com/well-typed/ghc-debugger
 
 common warnings
     ghc-options: -Wall
@@ -25,15 +46,18 @@ library
                       GHC.Debugger.Interface.Messages
     -- other-modules:
     -- other-extensions:
-    build-depends:    base >= 4.21,
-                      ghc >= 9.13, ghci,
-                      array, containers, mtl,
-                      binary, process, unix,
-                      filepath,
-                      exceptions >= 0.10.9,
-                      bytestring >= 0.12.1,
-
-                      aeson >= 2.2.3,
+    build-depends:    base > 4.21 && < 5,
+                      ghc >= 9.13 && < 9.14, ghci >= 9.13 && < 9.14,
+                      array >= 0.5.8 && < 0.6,
+                      containers >= 0.7 && < 0.9,
+                      mtl >= 2.3 && < 3,
+                      binary >= 0.8.9 && < 0.11,
+                      process >= 1.6.25 && < 1.7,
+                      unix >= 2.8.6 && < 2.9,
+                      filepath >= 1.5.4 && < 1.6,
+                      exceptions >= 0.10.9 && < 0.11,
+                      bytestring >= 0.12.1 && < 0.13,
+                      aeson >= 2.2.3 && < 2.3,
 
     hs-source-dirs:   ghc-debugger
     default-language: Haskell2010
@@ -53,19 +77,18 @@ executable ghc-debug-adapter
                       Development.Debug.Adapter.Handles,
                       Development.Debug.Adapter
     build-depends:
-        base >=4.21,
-        ghc >= 9.13,
-        exceptions >= 0.10.9,
-        aeson >= 2.2.3,
-        bytestring >= 0.12.1,
-        text, containers,
-        directory, filepath,
+        base, ghc,
+        exceptions, aeson, bytestring,
+        containers, filepath,
         process, mtl, unix,
 
-        dap >= 0.2,
-        hie-bios >=0.13,
-        async,
-        ghc-debugger
+        ghc-debugger,
+
+        directory >= 1.3.9 && < 1.4,
+        async >= 2.2.5 && < 2.3,
+        text >= 2.1 && < 2.3,
+        dap >= 0.2 && < 1,
+        hie-bios >= 0.15 && < 0.16,
     hs-source-dirs:   ghc-debug-adapter
     default-language: GHC2021
     ghc-options: -threaded
