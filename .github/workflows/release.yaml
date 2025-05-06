@@ -1,0 +1,43 @@
+name: Create Debugger Release
+
+on:
+  workflow_call:
+    inputs:
+      tag_name:
+        description: "Release tag (e.g. v0.1.0.0)"
+        type: string
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Haskell Debugger Extension
+          path: ${{ runner.temp }}/extension/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: GHC Debugger Source Distribution
+          path: ${{ runner.temp }}/packages/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: GHC Debugger Docs
+          path: ${{ runner.temp }}/docs/
+
+      - uses: haskell-actions/hackage-publish@v1
+        with:
+          hackageToken: ${{ secrets.HACKAGE_AUTH_TOKEN }}
+          packagesPath: ${{ runner.temp }}/packages
+          docsPath: ${{ runner.temp }}/docs
+          publish: false # TODO: true
+
+      # TODO Github release

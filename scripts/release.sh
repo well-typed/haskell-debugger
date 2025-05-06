@@ -2,7 +2,7 @@
 
 # The most part of a release is automatically done by GitHub actions.
 # That includes (only if CI is successful):
-#   * Releasing the package on Hackage
+#   * Releasing the package (and docs) on Hackage
 #   * Creating the release on GitHub
 #       * Copying the .vsix extension to the release artifacts
 #
@@ -17,7 +17,7 @@
 #   * before running the release script, to the desired release version
 #   * after the release commit, to the intermediate unreleased version
 #
-# Pushing is manual to be deliberate.
+# Pushing is manual to be deliberate. Pushing will trigger a release!
 
 set -e
 
