@@ -42,10 +42,26 @@ Currently, to install the debugger extension, download the `.vsix` file from the
 GitHub release artifacts and drag and drop it to the extensions side panel. In
 the future we will release it on the marketplace.
 
-Then, select the debugger tab, select Haskell Debugger, and create a
-`launch.json` file by clicking the debugger settings icon (next to the green run
-button). You can change some settings about the debugger session (such as the
-entry file) here.
+# Usage
+
+To use the debugger in VSCode, select the debugger tab, select Haskell Debugger,
+and create a `launch.json` file by clicking the debugger settings icon (next to
+the green run button).
+
+The `launch.json` file contains some settings about the debugger session here.
+Namely:
+
+| Setting | Description |
+| --- | --- |
+| `entryFile`    | the relative path from the project root to the file with the entry point for execution                                                                                                |
+| `entryPoint`   | the name of the function that is called to start execution                                                                                                                            |
+| `entryArgs`    | the arguments passed to the `entryPoint`. If the `entryPoint` is `main`, these arguments are passed as environment arguments (as in `getArgs`) rather than direct function arguments. |
+| `extraGhcArgs` | additional flags to pass to the ghc invocation that loads the program for debugging.                                                                                                  |
+
+Change them accordingly.
+
+To run the debugger, simply hit the green run button.
+See the Features section below for what is currently supported.
 
 Note: Listing global variables is only supported in GHC versions newer than May 6, 2025
 
