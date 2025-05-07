@@ -3,7 +3,7 @@ name: Release pipeline
 on: push
   # push:
   #   tags:
-  #     - "v*"
+  #     - "v*.*.*"
   # workflow_call:
   #   inputs:
   #     tag_name:
@@ -65,12 +65,19 @@ jobs:
           path: ${{ runner.temp }}/docs/
 
       # Publish a new hackage release of the ghc-debugger
-      - uses: haskell-actions/hackage-publish@v1
+      - name: Hackage Release
+        uses: haskell-actions/hackage-publish@v1
         with:
           hackageToken: ${{ secrets.HACKAGE_AUTH_TOKEN }}
           packagesPath: ${{ runner.temp }}/packages
           docsPath: ${{ runner.temp }}/docs
           publish: false # TODO: true
 
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true # TODO: false
+          files: ${{ runner.temp }}/extension/*.vsix
+          fail_on_unmatched_files: true
+          generate_release_notes: true
 
-      # TODO Github release
