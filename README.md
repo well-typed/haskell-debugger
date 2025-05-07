@@ -30,13 +30,13 @@ version of GHC in PATH. You can get one using
 ```
 ghcup config add-release-channel https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
 ghcup install ghc latest-nightly 
-PATH=$(dir $(ghcup whereis ghc latest-nightly)):$PATH cabal install exe:ghc-debug-adapter --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc
+PATH=$(dirname $(ghcup whereis ghc latest-nightly)):$PATH cabal install exe:ghc-debug-adapter --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc
 ```
 
 To run the debugger, the same nightly version of GHC needs to be in PATH. Make
 sure the DAP client knows this. For instance, to launch VSCode use:
 ```
-PATH=$(dir $(ghcup whereis ghc latest-nightly)):$PATH code /path/to/proj
+PATH=$(dirname $(ghcup whereis ghc latest-nightly)):$PATH code /path/to/proj
 ```
 Currently, to install the debugger extension, download the `.vsix` file from the
 GitHub release artifacts and drag and drop it to the extensions side panel. In
@@ -47,7 +47,7 @@ Then, select the debugger tab, select Haskell Debugger, and create a
 button). You can change some settings about the debugger session (such as the
 entry file) here.
 
-Note: Listing global variables is only supported in GHC versions newer than May 7, 2025
+Note: Listing global variables is only supported in GHC versions newer than May 6, 2025
 
 # Related Work
 

@@ -1,16 +1,47 @@
-name: Create Debugger Release
+name: Release pipeline
 
-on:
-  workflow_call:
-    inputs:
-      tag_name:
-        description: "Release tag (e.g. v0.1.0.0)"
-        type: string
-        required: true
+on: push
+  # push:
+  #   tags:
+  #     - "v*"
+  # workflow_call:
+  #   inputs:
+  #     tag_name:
+  #       description: "Release tag (e.g. v0.1.0.0)"
+  #       type: string
+  #       required: true
 
 jobs:
-  release:
+  build-ghc-debugger:
+    uses: ./.github/workflows/debugger.yaml
+
+  docs-ghc-debugger:
+    name: Build Documentation
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: latest-nightly
+          cabal-version: latest
+          ghcup-release-channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
+
+      - name: Build docs for ghc-debugger
+        run: cabal haddock --haddock-for-hackage --enable-documentation
+
+      - name: Upload ghc-debugger docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: GHC Debugger Docs
+          path: dist-newstyle/ghc-debugger*docs.tar.gz
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [build-ghc-debugger, docs-ghc-debugger]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,11 +64,13 @@ jobs:
           name: GHC Debugger Docs
           path: ${{ runner.temp }}/docs/
 
+      # Publish a new hackage release of the ghc-debugger
       - uses: haskell-actions/hackage-publish@v1
         with:
           hackageToken: ${{ secrets.HACKAGE_AUTH_TOKEN }}
           packagesPath: ${{ runner.temp }}/packages
           docsPath: ${{ runner.temp }}/docs
           publish: false # TODO: true
+
 
       # TODO Github release
