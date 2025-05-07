@@ -31,7 +31,7 @@ EXTENSION_NIX_VERSION=$(sed -nE "s/^\s*version = \"(.*)\"\;$/\1/p" vscode-extens
 EXTENSION_PKG_VERSION=$(sed -nE "s/^\s*\"version\":\s*\"(.*)\"\,$/\1/p" vscode-extension/package.json)
 
 # Check versions match
-if [ "$PKG_VERSION" != "$EXTENSION_NIX_VERSION" ] || [ "$PKG_VERSION" != "$EXTENSION_PKG_VERSION" ]; then
+if [ "$PKG_VERSION" != "$EXTENSION_NIX_VERSION.0" ] || [ "$PKG_VERSION" != "$EXTENSION_PKG_VERSION.0" ]; then
   echo "Error: Version mismatch"
   echo "PKG_VERSION           = $PKG_VERSION"
   echo "EXTENSION_NIX_VERSION = $EXTENSION_NIX_VERSION"
