@@ -65,10 +65,15 @@ execute = \case
   SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp BreakpointEnabled
   DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
   GetBreakpointsAt ModuleBreak{path, lineNum, columnNum} -> do
-    modl <- getModuleByPath path
-    mbfnd <- getBreakpointsAt modl lineNum columnNum
-    return $
-      DidGetBreakpoints (realSrcSpanToSourceSpan . snd <$> mbfnd)
+    mmodl <- getModuleByPath path
+    case mmodl of
+      Left e -> do
+        displayWarnings [e]
+        return $ DidGetBreakpoints Nothing
+      Right modl -> do
+        mbfnd <- getBreakpointsAt modl lineNum columnNum
+        return $
+          DidGetBreakpoints (realSrcSpanToSourceSpan . snd <$> mbfnd)
   GetBreakpointsAt _ -> error "unexpected getbreakpoints without ModuleBreak"
   GetStacktrace -> GotStacktrace <$> getStacktrace
   GetScopes -> GotScopes <$> getScopes
@@ -80,7 +85,6 @@ execute = \case
   DebugExecution { entryPoint, runArgs } -> DidExec <$> debugExecution entryPoint runArgs
   TerminateProcess -> liftIO $ do
     -- Terminate!
-    putStrLn "Goodbye..."
     exitWith ExitSuccess
 
 --------------------------------------------------------------------------------
@@ -121,21 +125,25 @@ getBreakpointsAt modl lineNum columnNum = do
 -- | Set a breakpoint in this session
 setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger BreakFound
 setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
-  modl <- getModuleByPath path
+  mmodl <- getModuleByPath path
+  case mmodl of
+    Left e -> do
+      displayWarnings [e]
+      return BreakNotFound
+    Right modl -> do
+      mbid <- getBreakpointsAt modl lineNum columnNum
 
-  mbid <- getBreakpointsAt modl lineNum columnNum
-
-  case mbid of
-    Nothing -> return BreakNotFound
-    Just (bix, span) -> do
-      let bid = BreakpointId { bi_tick_mod = ms_mod modl
-                             , bi_tick_index = bix }
-      changed <- registerBreakpoint bid bp_status ModuleBreakpointKind
-      return $ BreakFound
-        { changed = changed
-        , sourceSpan = realSrcSpanToSourceSpan span
-        , breakId = bid
-        }
+      case mbid of
+        Nothing -> return BreakNotFound
+        Just (bix, span) -> do
+          let bid = BreakpointId { bi_tick_mod = ms_mod modl
+                                 , bi_tick_index = bix }
+          changed <- registerBreakpoint bid bp_status ModuleBreakpointKind
+          return $ BreakFound
+            { changed = changed
+            , sourceSpan = realSrcSpanToSourceSpan span
+            , breakId = bid
+            }
 setBreakpoint FunctionBreak{function} bp_status = do
   logger <- getLogger
   resolveFunctionBreakpoint function >>= \case

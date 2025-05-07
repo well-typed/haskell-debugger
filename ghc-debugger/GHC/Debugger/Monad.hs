@@ -253,14 +253,19 @@ getActiveBreakpoints mfile = do
   m <- asks activeBreakpoints >>= liftIO . readIORef
   case mfile of
     Just file -> do
-      ms <- getModuleByPath file
-      return $
-        [ GHC.BreakpointId mod bix
-        | (mod, im) <- moduleEnvToList m
-        , mod == ms_mod ms
-        , bix <- IM.keys im
-        -- assert: status is always > disabled
-        ]
+      mms <- getModuleByPath file
+      case mms of
+        Right ms ->
+          return $
+            [ GHC.BreakpointId mod bix
+            | (mod, im) <- moduleEnvToList m
+            , mod == ms_mod ms
+            , bix <- IM.keys im
+            -- assert: status is always > disabled
+            ]
+        Left e -> do
+          displayWarnings [e]
+          return []
     Nothing -> do
       return $
         [ GHC.BreakpointId mod bix
@@ -280,16 +285,15 @@ getAllLoadedModules =
     filterM (\ms -> GHC.isLoadedModule (GHC.ms_unitid ms) (GHC.ms_mod_name ms))
 
 -- | Get a 'ModSummary' of a loaded module given its 'FilePath'
-getModuleByPath :: FilePath -> Debugger ModSummary
+getModuleByPath :: FilePath -> Debugger (Either String ModSummary)
 getModuleByPath path = do
   -- do this everytime as the loaded modules may have changed
   lms <- getAllLoadedModules
   let matches ms = normalise (msHsFilePath ms) `List.isSuffixOf` path
-  case filter matches lms of
-    [x] -> return x
-    [] -> do
-      error $ "No Module matched " ++ path ++ ".\nLoaded modules:\n" ++ show (map msHsFilePath lms)
-    xs -> error $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path
+  return $ case filter matches lms of
+    [x] -> Right x
+    [] -> Left $ "No module matched " ++ path ++ ".\nLoaded modules:\n" ++ show (map msHsFilePath lms) ++ "\n. Perhaps you've set a breakpoint on a module that isn't loaded into the session?"
+    xs -> Left $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path ++ ". Please report a bug at https://github.com/well-typed/ghc-debugger."
 
 --------------------------------------------------------------------------------
 -- Variable references
@@ -375,6 +379,13 @@ initialDebuggerState = DebuggerState <$> liftIO (newIORef emptyModuleEnv)
 -- | Lift a 'Ghc' action into a 'Debugger' one.
 liftGhc :: GHC.Ghc a -> Debugger a
 liftGhc = Debugger . ReaderT . const
+
+--------------------------------------------------------------------------------
+
+type Warning = String
+
+displayWarnings :: [Warning] -> Debugger ()
+displayWarnings = liftIO . putStrLn . unlines
 
 --------------------------------------------------------------------------------
 -- Instances
