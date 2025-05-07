@@ -44,7 +44,7 @@ commandTerminate = do
   -- DidTerminate <- sendInterleaved TerminateProcess sendTerminateResponse
   destroyDebugSession
   sendTerminateResponse
-  exitWithMsg "Terminated!"
+  exitCleanly
 
 -- | Command disconnect (1b)
 --
@@ -53,7 +53,7 @@ commandDisconnect :: DebugAdaptor ()
 commandDisconnect = do
   destroyDebugSession
   sendDisconnectResponse
-  exitWithMsg "Disconnected!"
+  exitCleanly
 
 --- Exit Cleanly ---------------------------------------------------------------
 
@@ -82,8 +82,12 @@ exitCleanupWithMsg final_handle msg = do
 -- | Logs the error to the debug console and sends a terminate event
 exitWithMsg :: String -> DebugAdaptor ()
 exitWithMsg msg = do
-
   Output.important (T.pack msg)
+  exitCleanly
+
+exitCleanly :: DebugAdaptor ()
+exitCleanly = do
+
   sendTerminatedEvent (TerminatedEvent False)
 
   -- We exit here to guarantee the process is killed when
