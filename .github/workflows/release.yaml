@@ -1,15 +1,16 @@
 name: Release pipeline
 
-on: push
-  # push:
-  #   tags:
-  #     - "v*.*.*"
-  # workflow_call:
-  #   inputs:
-  #     tag_name:
-  #       description: "Release tag (e.g. v0.1.0.0)"
-  #       type: string
-  #       required: true
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Create a draft release (unchecked: no release)"
+        required: true
+        default: true
+        type: boolean
 
 jobs:
   build-ghc-debugger:
@@ -42,6 +43,8 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     needs: [build-ghc-debugger, docs-ghc-debugger]
+    # Do nothing if inputs.draft == false
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.draft == true)
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,12 +74,12 @@ jobs:
           hackageToken: ${{ secrets.HACKAGE_AUTH_TOKEN }}
           packagesPath: ${{ runner.temp }}/packages
           docsPath: ${{ runner.temp }}/docs
-          publish: false # TODO: true
+          publish: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true && 'false' || 'true' }}
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true # TODO: false
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}
           files: ${{ runner.temp }}/extension/*.vsix
           fail_on_unmatched_files: true
           generate_release_notes: true
