@@ -41,7 +41,7 @@ fi
 
 # Nothing should be staged.
 # Git diff --quiet returns 0 if diff is empty
-if ! git diff --staged --quiet then
+if ! git diff --staged --quiet; then
   echo "Error: You have staged changes. Please commit or unstage them before proceeding."
   exit 1
 fi
