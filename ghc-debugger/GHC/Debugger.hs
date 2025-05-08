@@ -427,19 +427,23 @@ getVariables vk = do
       return (Right [])
     r:_ -> case vk of
 
+      -- Only `seq` the variable when inspecting a specific one (`SpecificVariable`)
       -- (VARR)(b,c)
       SpecificVariable i -> do
-        -- Only force thing when scrutinizing specific variable
         lookupVarByReference i >>= \case
           Nothing -> error "lookupVarByReference failed"
           Just (n, term) -> do
-            term' <- seqTerm term
+            let ty = GHCI.termType term
+            term' <- if isBoringTy ty
+                        then deepseqTerm term -- deepseq boring types like String, because it is more helpful to print them whole than their structure.
+                        else seqTerm term
+            -- insertVarReference i n term' -- update with evaluated term?
             vi <- termToVarInfo n term'
-            case term of
+            case term {- original term -} of
 
               -- (VARR)(b)
               Suspension{} -> do
-                -- Original Term is a suspension:
+                -- Original Term was a suspension:
                 -- It is a "lazy" DAP variable, so our reply can ONLY include
                 -- this single variable. So we erase the @varFields@ after the fact.
                 return (Left vi{varFields = NoFields})
@@ -547,12 +551,17 @@ inspectName n = do
 -- | 'TyThing' to 'VarInfo'. The 'Bool' argument indicates whether to force the
 -- value of the thing (as in @True = :force@, @False = :print@)
 tyThingToVarInfo :: Int {-^ Depth -} -> TyThing -> Debugger VarInfo
-tyThingToVarInfo depth = \case
+tyThingToVarInfo depth0 = \case
   t@(AConLike c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables <*> pure NoFields
   AnId i -> do
-    term <- GHC.obtainTermFromId depth False{-don't force-} i
+    -- For boring types we want to get the value as it is (by traversing it to
+    -- the end), rather than stopping short and returning a suspension (e.g.
+    -- for the string tail), because boring types are printed whole rather than
+    -- being represented by an expandable structure.
+    let depth1 = if isBoringTy (GHC.idType i) then maxBound else depth0
+    term <- GHC.obtainTermFromId depth1 False{-don't force-} i
     termToVarInfo (GHC.idName i) term
 
 -- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
@@ -563,31 +572,35 @@ termToVarInfo top_name top_term = do
   top_vi <- go top_name top_term
 
   sub_vis <- case top_term of
-    -- Make 'VarInfo's for the first layer of subTerms only.
-    Term{dc=Right dc, subTerms} -> do
-      case dataConFieldLabels dc of
-        -- Not a record type,
-        -- Use indexed fields
-        [] -> do
-          let names = zipWith (\ix _ -> mkIndexVar ix) [1..] (dataConOrigArgTys dc)
-          IndexedFields <$> mapM (uncurry go) (zipEqual names subTerms)
-        -- Is a record type,
-        -- Use field labels
-        dataConFields -> do
-          let names = map flSelector dataConFields
-          LabeledFields <$> mapM (uncurry go) (zipEqual names subTerms)
-    NewtypeWrap{dc=Right dc, wrapped_term} -> do
-      case dataConFieldLabels dc of
-        [] -> do
-          let name = mkIndexVar 1
-          wvi <- go name wrapped_term
-          return (IndexedFields [wvi])
-        [fld] -> do
-          let name = flSelector fld
-          wvi <- go name wrapped_term
-          return (LabeledFields [wvi])
-        _ -> error "unexpected number of Newtype fields: larger than 1"
-    _ -> return NoFields
+      -- Boring types don't get subfields
+      _ | isBoringTy (GHCI.termType top_term) ->
+        return NoFields
+
+      -- Make 'VarInfo's for the first layer of subTerms only.
+      Term{dc=Right dc, subTerms} -> do
+        case dataConFieldLabels dc of
+          -- Not a record type,
+          -- Use indexed fields
+          [] -> do
+            let names = zipWith (\ix _ -> mkIndexVar ix) [1..] (dataConOrigArgTys dc)
+            IndexedFields <$> mapM (uncurry go) (zipEqual names subTerms)
+          -- Is a record type,
+          -- Use field labels
+          dataConFields -> do
+            let names = map flSelector dataConFields
+            LabeledFields <$> mapM (uncurry go) (zipEqual names subTerms)
+      NewtypeWrap{dc=Right dc, wrapped_term} -> do
+        case dataConFieldLabels dc of
+          [] -> do
+            let name = mkIndexVar 1
+            wvi <- go name wrapped_term
+            return (IndexedFields [wvi])
+          [fld] -> do
+            let name = flSelector fld
+            wvi <- go name wrapped_term
+            return (LabeledFields [wvi])
+          _ -> error "unexpected number of Newtype fields: larger than 1"
+      _ -> return NoFields
 
   return top_vi{varFields = sub_vis}
 
@@ -606,11 +619,6 @@ termToVarInfo top_name top_term = do
          | otherwise = False
         ty = GHCI.termType term
 
-        getSubterms t = case t of
-         Term{subTerms}            -> subTerms
-         NewtypeWrap{wrapped_term} -> getSubterms wrapped_term
-         _                         -> [t]
-
         -- We scrape the subterms to display as the var's value. The structure is
         -- displayed in the editor itself by expanding the variable sub-fields
         -- (`varFields`). 
@@ -624,6 +632,7 @@ termToVarInfo top_name top_term = do
       varName <- display n
       varType <- display ty
       varValue <- display =<< GHCD.showTerm (termHead term)
+      -- liftIO $ print (varName, varType, varValue, GHCI.isFullyEvaluatedTerm term)
 
       -- The VarReference allows user to expand variable structure and inspect its value.
       -- Here, we do not want to allow expanding a term that is fully evaluated.
@@ -645,8 +654,6 @@ termToVarInfo top_name top_term = do
 
       return VarInfo{..}
 
-    isBoringTy t = isDoubleTy t || isFloatTy t || isIntTy t || isWordTy t || isStringTy t
-                    || isIntegerTy t || isNaturalTy t || isCharTy t
     hasDirectSubTerms = \case
       Suspension{}   -> False
       Prim{}         -> False
@@ -656,6 +663,13 @@ termToVarInfo top_name top_term = do
 
     mkIndexVar ix = mkUnboundName (mkVarOcc ("_" ++ show @Int ix))
 
+-- | A boring type is one for which we don't care about the structure and would
+-- rather see "whole" when being inspected. Strings and literals are a good
+-- example, because it's more useful to see the string value than it is to see
+-- a linked list of characters where each has to be forced individually.
+isBoringTy :: Type -> Bool
+isBoringTy t = isDoubleTy t || isFloatTy t || isIntTy t || isWordTy t || isStringTy t
+                || isIntegerTy t || isNaturalTy t || isCharTy t
 
 -- | Whenever we run a request that continues execution from the current
 -- suspended state, such as Next,Step,Continue, this function should be called

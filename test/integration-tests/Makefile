@@ -9,5 +9,5 @@ node_modules:
 	nix-shell -p 'nodejs' --run 'npm install'
 
 test: node_modules
-	# PATH=$(dir $(GHC)):$(dir $(DEBUGGER)):$$PATH ./node_modules/.bin/mocha -f 'should run program to the end'
+	# PATH=$(dir $(GHC)):$(dir $(DEBUGGER)):$$PATH ./node_modules/.bin/mocha -f 'Variable'
 	PATH=$(dir $(GHC)):$(dir $(DEBUGGER)):$$PATH ./node_modules/.bin/mocha --parallel

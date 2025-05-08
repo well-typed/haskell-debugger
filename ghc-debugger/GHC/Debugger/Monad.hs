@@ -28,7 +28,6 @@ import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Heap.Inspect
 import GHC.Unit.Module.Env as GHC
-import GHC.Tc.Utils.TcType
 import GHC.Driver.Env
 
 import Data.IORef
@@ -334,15 +333,24 @@ seqTerm term = do
       r <- GHCi.seqHValue interp unit_env val
       () <- fromEvalResult r
       let
-        deepForce
-          -- fully evaluate strings because displaying them as linked lists is too noisy and not particularly useful
-          = isStringTy ty
-        forceDepth
-          | deepForce = 50
-          | otherwise = 5
-      cvObtainTerm hsc_env forceDepth deepForce ty val
-    -- TODO: Newtype, etc
+        forceThunks = False {- whether to force the thunk subterms -}
+        forceDepth  = 5
+      cvObtainTerm hsc_env forceDepth forceThunks ty val
+    NewtypeWrap{wrapped_term} -> seqTerm wrapped_term
     _ -> return term
+
+-- | Evaluate a Term to NF
+deepseqTerm :: Term -> Debugger Term
+deepseqTerm t = case t of
+  Suspension{}   -> do t' <- seqTerm t
+                       deepseqTerm t'
+  Term{subTerms} -> do subTerms' <- mapM deepseqTerm subTerms
+                       return t{subTerms = subTerms'}
+  NewtypeWrap{wrapped_term}
+                 -> do wrapped_term' <- deepseqTerm wrapped_term
+                       return t{wrapped_term = wrapped_term'}
+  _              -> do seqTerm t
+
 
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
 --
