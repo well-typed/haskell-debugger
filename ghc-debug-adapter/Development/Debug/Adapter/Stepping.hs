@@ -25,5 +25,6 @@ commandStepIn = do
   handleEvalResult True er
 
 commandStepOut :: DebugAdaptor ()
-commandStepOut = undefined -- #6
+commandStepOut = -- undefined -- #6
+  commandStepIn -- TODO this is just a stub
 
