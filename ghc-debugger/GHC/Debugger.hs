@@ -598,25 +598,32 @@ termToVarInfo top_name top_term = do
     -- We do this because we don't want to recursively return all sub-fields --
     -- only the first layer of fields for the top term.
     go n term = do
-      let varFields = NoFields
-      let isThunk
-            -- to have more information we could match further on @Heap.ClosureType@
-           | Suspension{} <- term = True
-           | otherwise = False
-      let getSubterms t = case t of
-           Prim{}                    -> []
-           Term{subTerms}            -> subTerms
-           NewtypeWrap{wrapped_term} -> getSubterms wrapped_term
-           _                         -> []
-      let withoutSubterms t = case t of
-           Prim{}                    -> t
-           Term{}                    -> t{subTerms = []}
-           NewtypeWrap{wrapped_term} -> t{wrapped_term = withoutSubterms wrapped_term}
-           _                         -> t
-      let ty = GHCI.termType term
+      let
+        varFields = NoFields
+        isThunk
+          -- to have more information we could match further on @Heap.ClosureType@
+         | Suspension{} <- term = True
+         | otherwise = False
+        ty = GHCI.termType term
+
+        getSubterms t = case t of
+         Term{subTerms}            -> subTerms
+         NewtypeWrap{wrapped_term} -> getSubterms wrapped_term
+         _                         -> [t]
+
+        -- We scrape the subterms to display as the var's value. The structure is
+        -- displayed in the editor itself by expanding the variable sub-fields
+        -- (`varFields`). 
+        termHead t
+          -- But show strings and lits in full
+          | isBoringTy ty = t
+          | otherwise     = case t of
+             Term{}                    -> t{subTerms = []}
+             NewtypeWrap{wrapped_term} -> t{wrapped_term = termHead wrapped_term}
+             _                         -> t
       varName <- display n
       varType <- display ty
-      varValue <- display =<< GHCD.showTerm (withoutSubterms term)
+      varValue <- display =<< GHCD.showTerm (termHead term)
 
       -- The VarReference allows user to expand variable structure and inspect its value.
       -- Here, we do not want to allow expanding a term that is fully evaluated.
@@ -628,7 +635,7 @@ termToVarInfo top_name top_term = do
            -- structure as long if it is not a "boring type" (one that does not
            -- provide useful information from being expanded)
            -- (e.g. consider how awkward it is to expand Char# 10 and I# 20)
-           && (isBoringTy (GHCI.termType term) || not (hasDirectSubTerms term))
+           && (isBoringTy ty || not (hasDirectSubTerms term))
          then
             return NoVariables
          else do

@@ -4,6 +4,7 @@ import * as net from 'net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync, cpSync } from 'node:fs';
+import assert from 'assert';
 
 function getFreePort() {
 	return new Promise((resolve, reject) => {
@@ -72,9 +73,6 @@ describe("Debug Adapter Tests", function () {
     const simpleLaunchConfigs = [
         { name: "Vanilla config (no package)",
           config: {
-            type: "ghc-debugger",
-            request: "launch",
-            name: "Haskell Debugger",
             projectRoot: "/data/simple",
             entryFile: "Main.hs",
             entryPoint: "main",
@@ -84,9 +82,6 @@ describe("Debug Adapter Tests", function () {
         },
         { name: "Cabal config",
           config : {
-            type: "ghc-debugger",
-            request: "launch",
-            name: "Haskell Debugger",
             projectRoot: "/data/cabal1",
             entryFile: "app/Main.hs",
             entryPoint: "main",
@@ -98,14 +93,19 @@ describe("Debug Adapter Tests", function () {
         // todo: hie.yaml config?
     ]
 
+    const mkHermetic = (path) => {
+        const tmp = mkdtempSync(join(tmpdir(), "ghc-debugger-")) + path
+        const data = process.cwd() + path;
+        cpSync(data, tmp, { recursive: true }) // Copy data contents to temp directory
+        return tmp
+    }
+
     const basicTests = (launchCfg) => {
 
         // Run tests on the temporary directory. This avoids issues with
         // hie-bios finding bad project roots because of cabal.projects in the
         // file system.
-        const tmp = mkdtempSync(join(tmpdir(), "ghc-debugger-")) + launchCfg.config.projectRoot
-        const data = process.cwd() + launchCfg.config.projectRoot;
-        cpSync(data, tmp, { recursive: true }) // Copy data contents to temp directory
+        const tmp = mkHermetic(launchCfg.config.projectRoot)
         launchCfg.config.projectRoot = tmp;
 
         // The most basic functionality we test on various different
@@ -165,5 +165,47 @@ describe("Debug Adapter Tests", function () {
     }
 
     simpleLaunchConfigs.forEach(basicTests);
+
+    describe("Variable inspection tests", function () {
+
+        it('ints should be displayed as values', () => {
+
+            let config = {
+                  projectRoot: "/data/cabal1",
+                  entryFile: "app/Main.hs",
+                  entryPoint: "main",
+                  entryArgs: ["some", "args"],
+                  extraGhcArgs: []
+                }
+
+            const tmp = mkHermetic(config.projectRoot)
+            config.projectRoot = tmp;
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 15 }
+
+            return Promise.all([
+                dc.configurationSequence(),
+                dc.launch(config),
+                dc.hitBreakpoint(config, { path: config.entryFile, line: 15 }, expected, expected).then(() => {
+                    return dc.stackTraceRequest({ threadId: 0 })
+                }).then(stResp => {
+                    let sf0 = stResp.body.stackFrames[0]
+                    return dc.scopesRequest({ frameId: sf0.id })
+                }).then(scResp => {
+                    let localsScope = scResp.body.scopes.find(scope => scope.name == "Locals");
+                    return dc.variablesRequest({ variablesReference: localsScope.variablesReference });
+                }).then(variablesResp => {
+                    let variables = variablesResp.body.variables;
+
+                    // Int variables are displayed as ints
+                    const aVar = variables.find(v => v.name == 'a');
+                    const bVar = variables.find(v => v.name == 'b');
+
+                    assert(aVar.value == '2', `Expected a to be 2, got ${aVar.value}`);
+                    assert(bVar.value == '4', `Expected b to be 4, got ${bVar.value}`);
+                })
+              ])
+        })
+    })
 })
 

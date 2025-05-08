@@ -9,4 +9,7 @@ main = do
   print args
   fail "CATCH ME" `catch` (\(_::SomeException) -> putStrLn "caught it")
   putStrLn "goodbye"
-  return ()
+  putStrLn (f 2 4 "call_f")
+
+f :: Int -> Int -> String -> String
+f a b c = show (a + b) <> " " <> c
