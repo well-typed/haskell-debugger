@@ -431,7 +431,12 @@ getVariables vk = do
       -- (VARR)(b,c)
       SpecificVariable i -> do
         lookupVarByReference i >>= \case
-          Nothing -> error "lookupVarByReference failed"
+          Nothing -> do
+            -- lookupVarByReference failed.
+            -- This may happen if, in a race, we change scope while asking for
+            -- variables of the previous scope.
+            -- Somewhat similar to the race in Note [Don't crash if not stopped]
+            return (Right [])
           Just (n, term) -> do
             let ty = GHCI.termType term
             term' <- if isBoringTy ty
