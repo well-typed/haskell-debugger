@@ -160,30 +160,34 @@ getVariables vk = do
             -- variables of the previous scope.
             -- Somewhat similar to the race in Note [Don't crash if not stopped]
             return (Right [])
-          Just (n, term) -> do
-            let ty = GHCI.termType term
-            term' <- if isBoringTy ty
-                        then deepseqTerm term -- deepseq boring types like String, because it is more helpful to print them whole than their structure.
-                        else seqTerm term
-            vi <- termToVarInfo n term'
-            case term {- original term -} of
+          Just (n, term)
 
-              -- (VARR)(b)
-              Suspension{} -> do
-                -- Original Term was a suspension:
-                -- It is a "lazy" DAP variable, so our reply can ONLY include
-                -- this single variable. So we erase the @varFields@ after the fact.
-                return (Left vi{varFields = NoFields})
+            -- (VARR)(b)
+            | Suspension{} <- term -> do
 
-              -- (VARR)(c)
-              _ -> Right <$> do
-                -- Original Term was already something other than a Suspension;
-                -- Meaning the @SpecificVariable@ request means to inspect the structure.
-                -- Return ONLY the fields
-                case varFields vi of
-                  NoFields -> return []
-                  LabeledFields xs -> return xs
-                  IndexedFields xs -> return xs
+              -- Original Term was a suspension:
+              -- It is a "lazy" DAP variable: our reply can ONLY include
+              -- this single variable.
+
+              let ty = GHCI.termType term
+              term' <- if isBoringTy ty
+                          then deepseqTerm term -- deepseq boring types like String, because it is more helpful to print them whole than their structure.
+                          else seqTerm term
+              vi <- termToVarInfo n term'
+
+              return (Left vi)
+
+            -- (VARR)(c)
+            | otherwise -> Right <$> do
+
+              -- Original Term was already something other than a Suspension;
+              -- Meaning the @SpecificVariable@ request means to inspect the structure.
+              -- Return ONLY the fields
+
+              termVarFields n term >>= \case
+                NoFields -> return []
+                LabeledFields xs -> return xs
+                IndexedFields xs -> return xs
 
       -- (VARR)(a) from here onwards
 
@@ -216,7 +220,6 @@ getVariables vk = do
                     , varValue = ""
                     , isThunk = False
                     , varRef = NoVariables
-                    , varFields = NoFields
                     }
                 Just tt -> do
                   vi <- tyThingToVarInfo 1 tt {- don't look deep for global and mod vars -}

@@ -110,9 +110,6 @@ data VarInfo = VarInfo
       , varRef   :: VariableReference
       -- ^ A reference back to this variable
 
-      , varFields :: VarFields
-      -- ^ A 'VarInfo' for each field. These may be named (@Left@) or indexed fields (@Right@).
-
       -- TODO:
       --  memory reference using ghc-debug.
       }

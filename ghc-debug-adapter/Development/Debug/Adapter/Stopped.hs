@@ -146,12 +146,8 @@ varInfoToVariables VarInfo{..} =
     , variableType = Just $ T.pack varType
     , variableEvaluateName = Just $ T.pack varName
     , variableVariablesReference = fromEnum varRef
-    , variableNamedVariables = case varFields of
-        LabeledFields xs -> Just $ length xs
-        _                -> Nothing
-    , variableIndexedVariables = case varFields of
-        IndexedFields xs -> Just $ length xs
-        _                -> Nothing
+    , variableNamedVariables = Nothing
+    , variableIndexedVariables = Nothing
     , variablePresentationHint = Just defaultVariablePresentationHint
         { variablePresentationHintLazy = Just isThunk
         }
