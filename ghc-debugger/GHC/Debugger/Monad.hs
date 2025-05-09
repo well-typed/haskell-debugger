@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns, CPP, GeneralizedNewtypeDeriving, NamedFieldPuns, TupleSections, LambdaCase, OverloadedRecordDot #-}
+{-# LANGUAGE BangPatterns, CPP, GeneralizedNewtypeDeriving, NamedFieldPuns, TupleSections, LambdaCase, OverloadedRecordDot, TypeApplications #-}
 module GHC.Debugger.Monad where
 
 import Prelude hiding (mod)
@@ -13,6 +13,8 @@ import Control.Exception (assert)
 import Control.Monad.Catch
 
 import GHC
+import GHC.Types.Name (mkDerivedInternalName)
+import GHC.Types.Name.Occurrence (mkVarOcc)
 import qualified GHCi.BreakArray as BA
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Phases as GHC
@@ -28,6 +30,7 @@ import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Heap.Inspect
 import GHC.Unit.Module.Env as GHC
+import GHC.Types.Name.Env
 import GHC.Driver.Env
 
 import Data.IORef
@@ -54,13 +57,20 @@ data DebuggerState = DebuggerState
       { activeBreakpoints :: IORef (ModuleEnv (IM.IntMap (BreakpointStatus, BreakpointKind)))
         -- ^ Maps a 'BreakpointId' in Trie representation to the
         -- 'BreakpointStatus' it was activated with.
-      , varReferences     :: IORef (IM.IntMap (Name, Term))
+      , varReferences     :: IORef (IM.IntMap (Name, Term), NameEnv Int)
       -- ^ When we're stopped at a breakpoint, this maps variable reference to
       -- Terms to allow further inspection and forcing by reference.
       --
       -- This map is only valid while stopped in this context. After stepping
       -- or resuming evaluation in any available way, this map becomes invalid
       -- and should therefore be cleaned.
+      --
+      -- The NameEnv map is a reverse lookup map to find which references already exist for given names
+      , varFieldsMap      :: IORef (NameEnv (IM.IntMap Name))
+      -- ^ A mapping from Name to an IntMap mapping indices to their unique Names
+      -- e.g. `x :-> { 1 :-> _1, 2 :-> _2 }
+      -- This map allows us to re-use Names for sub-fields rather than creating
+      -- them new every time. See 'mkIndexVarName'
       , genUniq           :: IORef Int
       -- ^ Generates unique ints
       }
@@ -302,18 +312,50 @@ getModuleByPath path = do
 lookupVarByReference :: Int -> Debugger (Maybe (Name, Term))
 lookupVarByReference i = do
   ioref <- asks varReferences
-  rm <- readIORef ioref & liftIO
+  (rm, _) <- readIORef ioref & liftIO
   return $ IM.lookup i rm
 
 -- | Inserts a mapping from the given variable reference to the variable's
 -- associated Term and the Name it is bound to for display
-insertVarReference :: Int -> Name -> Term -> Debugger ()
-insertVarReference i name term = do
+--
+-- Returns: the variable reference (either a fresh one, or the existing one for this name)
+insertVarReference :: Name -> Term -> Debugger Int
+insertVarReference name term = do
   ioref <- asks varReferences
-  rm <- readIORef ioref & liftIO
+  (rm, nm) <- readIORef ioref & liftIO
+  (i, nm') <- case lookupNameEnv nm name of
+    Nothing       -> do
+      new_i <- freshInt
+      return (new_i, extendNameEnv nm name new_i)
+    Just existing ->
+      return (existing, nm)
   let
     rm' = IM.insert i (name, term) rm
-  writeIORef ioref rm' & liftIO
+  writeIORef ioref (rm', nm') & liftIO
+  return i
+
+-- | Create or find the 'Name' for a parent Name by positional index
+--
+-- The name is cached the first time it is created and re-used for subsequent
+-- accesses in the same context.
+mkPositionalVarFieldName :: Name {-^ Parent Name -} -> Int {-^ Index -} -> Debugger Name
+mkPositionalVarFieldName parent ix = do
+  vfm_ref <- asks varFieldsMap
+  vfm <- liftIO $ readIORef vfm_ref
+  let ixmap = case lookupNameEnv vfm parent of
+        Nothing  -> mempty
+        Just ixm -> ixm
+  case IM.lookup ix ixmap of
+    Just fieldName -> return fieldName
+    Nothing -> do
+      u <- liftIO $ uniqFromTag 'F'
+      let
+        fieldName
+          = mkDerivedInternalName (\nocc -> mkVarOcc ("_" ++ show @Int ix))
+                                  u parent
+      liftIO $ writeIORef vfm_ref $
+        extendNameEnv vfm parent (IM.insert ix fieldName ixmap)
+      return fieldName
 
 -- | Whenever we run a request that continues execution from the current
 -- suspended state, such as Next,Step,Continue, this function should be called
@@ -326,9 +368,11 @@ insertVarReference i name term = do
 leaveSuspendedState :: Debugger ()
 leaveSuspendedState = do
   -- TODO:
-  --  [ ] Preserve bindings introduced by evaluate requests
+  --  [ ] Preserve bindings introduced by evaluate requests?
   ioref <- asks varReferences
+  vfRef <- asks varFieldsMap
   liftIO $ writeIORef ioref mempty
+  liftIO $ writeIORef vfRef mempty
 
 --------------------------------------------------------------------------------
 -- Utilities
@@ -396,7 +440,8 @@ freshInt = do
 -- | Initialize a 'DebuggerState'
 initialDebuggerState :: GHC.Ghc DebuggerState
 initialDebuggerState = DebuggerState <$> liftIO (newIORef emptyModuleEnv)
-                                     <*> liftIO (newIORef IM.empty)
+                                     <*> liftIO (newIORef mempty)
+                                     <*> liftIO (newIORef mempty)
                                      <*> liftIO (newIORef 0)
 
 -- | Lift a 'Ghc' action into a 'Debugger' one.

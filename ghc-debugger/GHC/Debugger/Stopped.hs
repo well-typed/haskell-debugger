@@ -165,7 +165,6 @@ getVariables vk = do
             term' <- if isBoringTy ty
                         then deepseqTerm term -- deepseq boring types like String, because it is more helpful to print them whole than their structure.
                         else seqTerm term
-            -- insertVarReference i n term' -- update with evaluated term?
             vi <- termToVarInfo n term'
             case term {- original term -} of
 

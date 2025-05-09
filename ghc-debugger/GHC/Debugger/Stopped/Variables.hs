@@ -3,15 +3,17 @@
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
 module GHC.Debugger.Stopped.Variables where
 
+import Control.Monad
+import Control.Monad.IO.Class
+
 import GHC
 import GHC.Types.FieldLabel
-import GHC.Builtin.Names (mkUnboundName)
 import GHC.Runtime.Eval
 import GHC.Core.DataCon
 import GHC.Types.Id as GHC
-import GHC.Types.Name.Occurrence (mkVarOcc)
 import GHC.Tc.Utils.TcType
 import GHC.Utils.Misc (zipEqual)
+import GHC.Types.Unique.Supply (uniqFromTag)
 import qualified GHC.Runtime.Debugger as GHCD
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 
@@ -53,8 +55,8 @@ termToVarInfo top_name top_term = do
           -- Not a record type,
           -- Use indexed fields
           [] -> do
-            let names = zipWith (\ix _ -> mkIndexVar ix) [1..] (dataConOrigArgTys dc)
-            IndexedFields <$> mapM (uncurry go) (zipEqual names subTerms)
+            names <- zipWithM (\ix _ -> mkPositionalVarFieldName top_name ix) [1..] (dataConOrigArgTys dc)
+            IndexedFields <$> mapM (\(n',t') -> go n' t') (zipEqual names subTerms)
           -- Is a record type,
           -- Use field labels
           dataConFields -> do
@@ -63,7 +65,7 @@ termToVarInfo top_name top_term = do
       NewtypeWrap{dc=Right dc, wrapped_term} -> do
         case dataConFieldLabels dc of
           [] -> do
-            let name = mkIndexVar 1
+            name <- mkPositionalVarFieldName top_name 1
             wvi <- go name wrapped_term
             return (IndexedFields [wvi])
           [fld] -> do
@@ -119,8 +121,7 @@ termToVarInfo top_name top_term = do
          then
             return NoVariables
          else do
-            ir <- freshInt
-            insertVarReference ir n term
+            ir <- insertVarReference n term
             return (SpecificVariable ir)
 
       return VarInfo{..}
@@ -131,8 +132,6 @@ termToVarInfo top_name top_term = do
       NewtypeWrap{}  -> True
       RefWrap{}      -> True
       Term{subTerms} -> not $ null subTerms
-
-    mkIndexVar ix = mkUnboundName (mkVarOcc ("_" ++ show @Int ix))
 
 -- | A boring type is one for which we don't care about the structure and would
 -- rather see "whole" when being inspected. Strings and literals are a good

@@ -72,10 +72,10 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
   -- GHC is found in PATH (by hie-bios as well).
   actualVersion <- liftIO $ P.readProcess "ghc" ["--numeric-version"] []
   -- Compare the GLASGOW_HASKELL version (e.g. 913) with the actualVersion (e.g. 9.13.1):
-  when (not $ show __GLASGOW_HASKELL__ `L.isPrefixOf` (filter (/= '.') actualVersion)) $ do
+  when (not $ show ( __GLASGOW_HASKELL__ :: Int ) `L.isPrefixOf` (filter (/= '.') actualVersion)) $ do
     exitWithMsg $ "Aborting...! The GHC version must be the same which " ++
                     "ghc-debug-adapter was compiled against (" ++
-                      show __GLASGOW_HASKELL__ ++
+                      show ( __GLASGOW_HASKELL__ :: Int )++
                         "). Instead, got " ++ (init{-drops \n-} actualVersion) ++ "."
 
   Output.console $ T.pack "Discovering session flags with hie-bios..."
