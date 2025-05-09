@@ -2,20 +2,16 @@
 module Main where
 
 import System.Environment
-import System.Exit
 import Data.Maybe
 import Text.Read
 
 import DAP
-
-import GHC.Debugger.Interface.Messages hiding (Command, Response)
 
 import Development.Debug.Adapter.Init
 import Development.Debug.Adapter.Breakpoints
 import Development.Debug.Adapter.Stepping
 import Development.Debug.Adapter.Stopped
 import Development.Debug.Adapter.Evaluation
-import Development.Debug.Adapter.Interface
 import Development.Debug.Adapter.Exit
 import Development.Debug.Adapter.Handles
 import Development.Debug.Adapter

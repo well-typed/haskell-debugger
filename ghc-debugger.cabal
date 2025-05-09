@@ -42,6 +42,11 @@ common warnings
 library
     import:           warnings
     exposed-modules:  GHC.Debugger,
+                      GHC.Debugger.Evaluation,
+                      GHC.Debugger.Breakpoint,
+                      GHC.Debugger.Stopped,
+                      GHC.Debugger.Stopped.Variables,
+                      GHC.Debugger.Utils,
                       GHC.Debugger.Monad,
                       GHC.Debugger.Interface.Messages
     -- other-modules:

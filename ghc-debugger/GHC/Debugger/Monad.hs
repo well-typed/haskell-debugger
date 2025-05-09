@@ -315,6 +315,21 @@ insertVarReference i name term = do
     rm' = IM.insert i (name, term) rm
   writeIORef ioref rm' & liftIO
 
+-- | Whenever we run a request that continues execution from the current
+-- suspended state, such as Next,Step,Continue, this function should be called
+-- to delete the variable references that become invalid as we leave the
+-- suspended state.
+--
+-- In particular, @'varReferences'@ is reset.
+--
+-- See also section "Lifetime of Objects References" in the DAP specification.
+leaveSuspendedState :: Debugger ()
+leaveSuspendedState = do
+  -- TODO:
+  --  [ ] Preserve bindings introduced by evaluate requests
+  ioref <- asks varReferences
+  liftIO $ writeIORef ioref mempty
+
 --------------------------------------------------------------------------------
 -- Utilities
 --------------------------------------------------------------------------------
