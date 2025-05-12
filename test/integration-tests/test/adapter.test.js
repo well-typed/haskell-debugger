@@ -168,7 +168,7 @@ describe("Debug Adapter Tests", function () {
 
     describe("Variable inspection tests", function () {
 
-        it('ints and strings should be displayed as values', () => {
+        it('ints and strings should be displayed as values', async () => {
 
             let config = {
                   projectRoot: "/data/cabal1",
@@ -183,45 +183,42 @@ describe("Debug Adapter Tests", function () {
 
             const expected = { path: config.projectRoot + "/" + config.entryFile, line: 15 }
 
-            return Promise.all([
-                dc.configurationSequence(),
-                dc.launch(config),
-                dc.hitBreakpoint(config, { path: config.entryFile, line: 15 }, expected, expected).then(() => {
-                    return dc.stackTraceRequest({ threadId: 0 })
-                }).then(stResp => {
-                    let sf0 = stResp.body.stackFrames[0]
-                    return dc.scopesRequest({ frameId: sf0.id })
-                }).then(scResp => {
-                    let localsScope = scResp.body.scopes.find(scope => scope.name == "Locals");
-                    return dc.variablesRequest({ variablesReference: localsScope.variablesReference }).then(variablesResp => {
-                        let variables = variablesResp.body.variables;
+            dc.configurationSequence(),
+            dc.launch(config), 
 
-                        // Int variables are displayed as ints
-                        const aVar = variables.find(v => v.name == 'a');
-                        const bVar = variables.find(v => v.name == 'b');
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 15 }, expected, expected);
 
-                        // Strings are forced and displayed whole rather than as a structure
-                        const cVar = variables.find(v => v.name == 'c');
+            const stResp = await dc.stackTraceRequest({ threadId: 0 });
+            const sf0 = stResp.body.stackFrames[0];
 
-                        assert(aVar.value == '2', `Expected a to be 2, got ${aVar.value}`);
-                        assert(bVar.value == '4', `Expected b to be 4, got ${bVar.value}`);
+            const scResp = await dc.scopesRequest({ frameId: sf0.id });
+            const localsScope = scResp.body.scopes.find(scope => scope.name == "Locals");
 
-                        // Force lazy variable 'c'
-                        return dc.variablesRequest({ variablesReference: cVar.variablesReference });
-                    }).then(cResp => {
-                        const cVar = cResp.body.variables[0];
-                        assert(cVar.value == '"call_fxxx"', `Expected c to be 'call_fxxx', got ${cVar.value}`);
-                        assert(cVar.variablesReference == 0, `Because c is a string (boring type), it shouldn't be expandable`);
+            const variablesResp = await dc.variablesRequest({ variablesReference: localsScope.variablesReference });
+            const variables = variablesResp.body.variables;
 
-                        // After a variable is forced, a new locals request is done. Check again for c == call_fxxx afterwards
-                        return dc.variablesRequest({ variablesReference: localsScope.variablesReference })
-                    }).then(variablesResp => {
-                        const cVar = variablesResp.body.variables.find(v => v.name == 'c');
-                        assert(cVar.value == '"call_fxxx"', `Expected c to be 'call_fxxx' after refreshing the local scope, got ${cVar.value}`);
-                        assert(cVar.variablesReference == 0, `Because c is a string (boring type), it shouldn't be expandable after refreshing the local scope`);
-                    })
-                })
-              ])
+            // Int variables are displayed as ints
+            const aVar = variables.find(v => v.name == 'a');
+            const bVar = variables.find(v => v.name == 'b');
+            // Strings are forced and displayed whole rather than as a structure
+            const cVar = variables.find(v => v.name == 'c');
+
+            assert.strictEqual(aVar.value, '2');
+            assert.strictEqual(bVar.value, '4');
+
+            // Force lazy variable 'c'
+            const cResp = await dc.variablesRequest({ variablesReference: cVar.variablesReference });
+            const cVarForced = cResp.body.variables[0];
+
+            assert.strictEqual(cVarForced.value, '"call_fxxx"');
+            assert.strictEqual(cVarForced.variablesReference, 0, `Because c is a string (boring type), it shouldn't be expandable`);
+
+            // After a variable is forced, a new locals request is done. Check again for c == call_fxxx afterwards
+            const refreshedResp = await dc.variablesRequest({ variablesReference: localsScope.variablesReference });
+            const refreshedCVar = refreshedResp.body.variables.find(v => v.name == 'c');
+
+            assert.strictEqual(refreshedCVar.value, '"call_fxxx"');
+            assert.strictEqual(refreshedCVar.variablesReference, 0, `Because c is a string (boring type), it shouldn't be expandable after refreshing the local scope`);
         })
     })
 })
