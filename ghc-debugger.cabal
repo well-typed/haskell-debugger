@@ -47,6 +47,11 @@ library
                       GHC.Debugger.Stopped,
                       GHC.Debugger.Stopped.Variables,
                       GHC.Debugger.Utils,
+                      GHC.Debugger.Runtime,
+
+                      GHC.Debugger.Runtime.Term.Key,
+                      GHC.Debugger.Runtime.Term.Cache,
+
                       GHC.Debugger.Monad,
                       GHC.Debugger.Interface.Messages
     -- other-modules:

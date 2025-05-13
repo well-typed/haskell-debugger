@@ -4,42 +4,36 @@
 module GHC.Debugger.Stopped.Variables where
 
 import Control.Monad
-import Control.Monad.IO.Class
 
 import GHC
 import GHC.Types.FieldLabel
 import GHC.Runtime.Eval
 import GHC.Core.DataCon
 import GHC.Types.Id as GHC
-import GHC.Tc.Utils.TcType
-import GHC.Utils.Misc (zipEqual)
-import GHC.Types.Unique.Supply (uniqFromTag)
 import qualified GHC.Runtime.Debugger as GHCD
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
+import GHC.Debugger.Runtime
+import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Utils
 
 -- | 'TyThing' to 'VarInfo'. The 'Bool' argument indicates whether to force the
 -- value of the thing (as in @True = :force@, @False = :print@)
-tyThingToVarInfo :: Int {-^ Depth -} -> TyThing -> Debugger VarInfo
-tyThingToVarInfo depth0 = \case
+tyThingToVarInfo :: TyThing -> Debugger VarInfo
+tyThingToVarInfo = \case
   t@(AConLike c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
   t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
   t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
   AnId i -> do
-    -- For boring types we want to get the value as it is (by traversing it to
-    -- the end), rather than stopping short and returning a suspension (e.g.
-    -- for the string tail), because boring types are printed whole rather than
-    -- being represented by an expandable structure.
-    let depth1 = if isBoringTy (GHC.idType i) then maxBound else depth0
-    term <- GHC.obtainTermFromId depth1 False{-don't force-} i
-    termToVarInfo (GHC.idName i) term
+    let key = FromId i
+    term <- obtainTerm key
+    termToVarInfo key term
 
--- | Construct the VarInfos of the fields ('VarFields') of the given 'Name'/'Term'
-termVarFields :: Name -> Term -> Debugger VarFields
-termVarFields top_name top_term = do
+-- | Construct the VarInfos of the fields ('VarFields') of the given 'TermKey'/'Term'
+termVarFields :: TermKey -> Term -> Debugger VarFields
+termVarFields top_key top_term =
 
   -- Make 'VarInfo's for the first layer of subTerms only.
   case top_term of
@@ -47,35 +41,35 @@ termVarFields top_name top_term = do
       _ | isBoringTy (GHCI.termType top_term) ->
         return NoFields
 
-      Term{dc=Right dc, subTerms} -> do
+      Term{dc=Right dc, subTerms=_{- don't use directly! go through @obtainTerm@ -}} -> do
         case dataConFieldLabels dc of
           -- Not a record type,
           -- Use indexed fields
           [] -> do
-            names <- zipWithM (\ix _ -> mkPositionalVarFieldName top_name ix) [1..] (dataConOrigArgTys dc)
-            IndexedFields <$> mapM (\(n',t') -> termToVarInfo n' t') (zipEqual names subTerms)
-          -- Is a record type,
+            let keys = zipWith (\ix _ -> FromPath top_key (PositionalIndex ix)) [1..] (dataConOrigArgTys dc)
+            IndexedFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
+          -- Is a record data con,
           -- Use field labels
           dataConFields -> do
-            let names = map flSelector dataConFields
-            LabeledFields <$> mapM (uncurry termToVarInfo) (zipEqual names subTerms)
-      NewtypeWrap{dc=Right dc, wrapped_term} -> do
+            let keys = map (FromPath top_key . LabeledField . flSelector) dataConFields
+            LabeledFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
+      NewtypeWrap{dc=Right dc, wrapped_term=_{- don't use directly! go through @obtainTerm@ -}} -> do
         case dataConFieldLabels dc of
           [] -> do
-            name <- mkPositionalVarFieldName top_name 1
-            wvi <- termToVarInfo name wrapped_term
+            let key = FromPath top_key (PositionalIndex 1)
+            wvi <- obtainTerm key >>= termToVarInfo key
             return (IndexedFields [wvi])
           [fld] -> do
-            let name = flSelector fld
-            wvi <- termToVarInfo name wrapped_term
+            let key = FromPath top_key (LabeledField (flSelector fld))
+            wvi <- obtainTerm key >>= termToVarInfo key
             return (LabeledFields [wvi])
           _ -> error "unexpected number of Newtype fields: larger than 1"
       _ -> return NoFields
 
 
 -- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
-termToVarInfo :: Name -> Term -> Debugger VarInfo
-termToVarInfo n term = do
+termToVarInfo :: TermKey -> Term -> Debugger VarInfo
+termToVarInfo key term = do
   -- Make a VarInfo for a term
   let
     isThunk
@@ -92,7 +86,7 @@ termToVarInfo n term = do
          Term{}                    -> t{subTerms = []}
          NewtypeWrap{wrapped_term} -> t{wrapped_term = termHead wrapped_term}
          _                         -> t
-  varName <- display n
+  varName <- display key
   varType <- display ty
   varValue <- display =<< GHCD.showTerm (termHead term)
   -- liftIO $ print (varName, varType, varValue, GHCI.isFullyEvaluatedTerm term)
@@ -111,7 +105,7 @@ termToVarInfo n term = do
      then do
         return NoVariables
      else do
-        ir <- insertVarReference n term
+        ir <- getVarReference key
         return (SpecificVariable ir)
 
   return VarInfo{..}
@@ -122,13 +116,4 @@ termToVarInfo n term = do
       NewtypeWrap{}  -> True
       RefWrap{}      -> True
       Term{subTerms} -> not $ null subTerms
-
--- | A boring type is one for which we don't care about the structure and would
--- rather see "whole" when being inspected. Strings and literals are a good
--- example, because it's more useful to see the string value than it is to see
--- a linked list of characters where each has to be forced individually.
-isBoringTy :: Type -> Bool
-isBoringTy t = isDoubleTy t || isFloatTy t || isIntTy t || isWordTy t || isStringTy t
-                || isIntegerTy t || isNaturalTy t || isCharTy t
-
 
