@@ -42,6 +42,8 @@ import qualified Data.IntMap as IM
 import Control.Monad.Reader
 
 import GHC.Debugger.Interface.Messages
+import GHC.Debugger.Runtime.Term.Key
+import GHC.Debugger.Runtime.Term.Cache
 import System.Posix.Signals
 
 -- | A debugger action.
@@ -57,7 +59,8 @@ data DebuggerState = DebuggerState
       { activeBreakpoints :: IORef (ModuleEnv (IM.IntMap (BreakpointStatus, BreakpointKind)))
         -- ^ Maps a 'BreakpointId' in Trie representation to the
         -- 'BreakpointStatus' it was activated with.
-      , varReferences     :: IORef (IM.IntMap (Name, Term), NameEnv Int)
+
+      , varReferences     :: IORef (IM.IntMap TermKey, TermKeyMap Int)
       -- ^ When we're stopped at a breakpoint, this maps variable reference to
       -- Terms to allow further inspection and forcing by reference.
       --
@@ -65,12 +68,12 @@ data DebuggerState = DebuggerState
       -- or resuming evaluation in any available way, this map becomes invalid
       -- and should therefore be cleaned.
       --
-      -- The NameEnv map is a reverse lookup map to find which references already exist for given names
-      , varFieldsMap      :: IORef (NameEnv (IM.IntMap Name))
-      -- ^ A mapping from Name to an IntMap mapping indices to their unique Names
-      -- e.g. `x :-> { 1 :-> _1, 2 :-> _2 }
-      -- This map allows us to re-use Names for sub-fields rather than creating
-      -- them new every time. See 'mkIndexVarName'
+      -- The TermKeyMap map is a reverse lookup map to find which references
+      -- already exist for given names
+
+      , termCache         :: IORef TermCache
+      -- ^ TermCache
+
       , genUniq           :: IORef Int
       -- ^ Generates unique ints
       }
@@ -309,53 +312,28 @@ getModuleByPath path = do
 --------------------------------------------------------------------------------
 
 -- | Find a variable's associated Term and Name by reference ('Int')
-lookupVarByReference :: Int -> Debugger (Maybe (Name, Term))
+lookupVarByReference :: Int -> Debugger (Maybe TermKey)
 lookupVarByReference i = do
   ioref <- asks varReferences
   (rm, _) <- readIORef ioref & liftIO
   return $ IM.lookup i rm
 
--- | Inserts a mapping from the given variable reference to the variable's
--- associated Term and the Name it is bound to for display
---
--- Returns: the variable reference (either a fresh one, or the existing one for this name)
-insertVarReference :: Name -> Term -> Debugger Int
-insertVarReference name term = do
-  ioref <- asks varReferences
-  (rm, nm) <- readIORef ioref & liftIO
-  (i, nm') <- case lookupNameEnv nm name of
-    Nothing       -> do
-      new_i <- freshInt
-      return (new_i, extendNameEnv nm name new_i)
-    Just existing ->
-      return (existing, nm)
-  let
-    rm' = IM.insert i (name, term) rm
-  writeIORef ioref (rm', nm') & liftIO
-  return i
-
--- | Create or find the 'Name' for a parent Name by positional index
---
--- The name is cached the first time it is created and re-used for subsequent
--- accesses in the same context.
-mkPositionalVarFieldName :: Name {-^ Parent Name -} -> Int {-^ Index -} -> Debugger Name
-mkPositionalVarFieldName parent ix = do
-  vfm_ref <- asks varFieldsMap
-  vfm <- liftIO $ readIORef vfm_ref
-  let ixmap = case lookupNameEnv vfm parent of
-        Nothing  -> mempty
-        Just ixm -> ixm
-  case IM.lookup ix ixmap of
-    Just fieldName -> return fieldName
+-- | Finds or creates an integer var reference for the given 'TermKey'.
+-- TODO: Arguably, this mapping should be part of the debug-adapter, and
+-- ghc-debugger should deal in 'TermKey' terms only.
+getVarReference :: TermKey -> Debugger Int
+getVarReference key = do
+  ioref     <- asks varReferences
+  (rm, tkm) <- readIORef ioref & liftIO
+  (i, tkm') <- case lookupTermKeyMap key tkm of
     Nothing -> do
-      u <- liftIO $ uniqFromTag 'F'
-      let
-        fieldName
-          = mkDerivedInternalName (\nocc -> mkVarOcc ("_" ++ show @Int ix))
-                                  u parent
-      liftIO $ writeIORef vfm_ref $
-        extendNameEnv vfm parent (IM.insert ix fieldName ixmap)
-      return fieldName
+      new_i <- freshInt
+      return (new_i, insertTermKeyMap key new_i tkm)
+    Just existing_i ->
+      return (existing_i, tkm)
+  let rm' = IM.insert i key rm
+  writeIORef ioref (rm', tkm') & liftIO
+  return i
 
 -- | Whenever we run a request that continues execution from the current
 -- suspended state, such as Next,Step,Continue, this function should be called
@@ -367,16 +345,17 @@ mkPositionalVarFieldName parent ix = do
 -- See also section "Lifetime of Objects References" in the DAP specification.
 leaveSuspendedState :: Debugger ()
 leaveSuspendedState = do
-  -- TODO:
-  --  [ ] Preserve bindings introduced by evaluate requests?
   ioref <- asks varReferences
-  vfRef <- asks varFieldsMap
   liftIO $ writeIORef ioref mempty
-  liftIO $ writeIORef vfRef mempty
 
 --------------------------------------------------------------------------------
 -- Utilities
 --------------------------------------------------------------------------------
+
+defaultDepth :: Int
+defaultDepth =  2 -- the depth determines how much of the runtime structure is traversed.
+                  -- @obtainTerm@ and friends handle fetching arbitrarily nested data structures
+                  -- so we only depth enough to get to the next level of subterms.
 
 -- | Evaluate a suspended Term to WHNF.
 --
@@ -393,9 +372,11 @@ seqTerm term = do
       () <- fromEvalResult r
       let
         forceThunks = False {- whether to force the thunk subterms -}
-        forceDepth  = 5
+        forceDepth  = defaultDepth
       cvObtainTerm hsc_env forceDepth forceThunks ty val
-    NewtypeWrap{wrapped_term} -> seqTerm wrapped_term
+    NewtypeWrap{wrapped_term} -> do
+      wrapped_term' <- seqTerm wrapped_term
+      return term{wrapped_term=wrapped_term'}
     _ -> return term
 
 -- | Evaluate a Term to NF

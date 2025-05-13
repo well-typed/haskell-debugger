@@ -3,6 +3,8 @@
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
 module GHC.Debugger.Stopped where
 
+import Data.IORef
+import Control.Monad.Reader
 import Control.Monad.IO.Class
 
 import GHC
@@ -23,6 +25,8 @@ import qualified GHC.Runtime.Heap.Inspect as GHCI
 import qualified GHC.Unit.Home.Graph as HUG
 
 import GHC.Debugger.Stopped.Variables
+import GHC.Debugger.Runtime
+import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Utils
@@ -160,40 +164,47 @@ getVariables vk = do
             -- variables of the previous scope.
             -- Somewhat similar to the race in Note [Don't crash if not stopped]
             return (Right [])
-          Just (n, term)
+          Just key -> do
+            term <- obtainTerm key
 
-            -- (VARR)(b)
-            | Suspension{} <- term -> do
+            case term of
 
-              -- Original Term was a suspension:
-              -- It is a "lazy" DAP variable: our reply can ONLY include
-              -- this single variable.
+              -- (VARR)(b)
+              Suspension{} -> do
 
-              let ty = GHCI.termType term
-              term' <- if isBoringTy ty
-                          then deepseqTerm term -- deepseq boring types like String, because it is more helpful to print them whole than their structure.
-                          else seqTerm term
-              vi <- termToVarInfo n term'
+                -- Original Term was a suspension:
+                -- It is a "lazy" DAP variable: our reply can ONLY include
+                -- this single variable.
 
-              return (Left vi)
+                let ty = GHCI.termType term
+                term' <- if isBoringTy ty
+                            then deepseqTerm term -- deepseq boring types like String, because it is more helpful to print them whole than their structure.
+                            else seqTerm term
+                -- update cache with the forced term right away instead of invalidating it.
+                -- TODO: is this the best place to have this update? what's the better abstraction?
+                asks termCache >>= \r -> liftIO $ modifyIORef' r (insertTermCache key term')
+                vi <- termToVarInfo key term'
 
-            -- (VARR)(c)
-            | otherwise -> Right <$> do
+                return (Left vi)
 
-              -- Original Term was already something other than a Suspension;
-              -- Meaning the @SpecificVariable@ request means to inspect the structure.
-              -- Return ONLY the fields
+              -- (VARR)(c)
+              _ -> Right <$> do
 
-              termVarFields n term >>= \case
-                NoFields -> return []
-                LabeledFields xs -> return xs
-                IndexedFields xs -> return xs
+                -- Original Term was already something other than a Suspension;
+                -- Meaning the @SpecificVariable@ request means to inspect the structure.
+                -- Return ONLY the fields
+
+                termVarFields key term >>= \case
+                  NoFields -> return []
+                  LabeledFields xs -> return xs
+                  IndexedFields xs -> return xs
+
 
       -- (VARR)(a) from here onwards
 
       LocalVariables -> fmap Right $
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
-        mapM (tyThingToVarInfo defaultDepth) =<< GHC.getBindings
+        mapM tyThingToVarInfo =<< GHC.getBindings
 
       ModuleVariables -> Right <$> do
         case ibi_tick_mod <$> GHC.resumeBreakpointId r of
@@ -202,7 +213,7 @@ getVariables vk = do
             things <- typeEnvElts <$> getTopEnv curr_modl
             mapM (\tt -> do
               nameStr <- display (getName tt)
-              vi <- tyThingToVarInfo 1 tt
+              vi <- tyThingToVarInfo tt
               return vi{varName = nameStr}) things
 
       GlobalVariables -> Right <$> do
@@ -222,23 +233,12 @@ getVariables vk = do
                     , varRef = NoVariables
                     }
                 Just tt -> do
-                  vi <- tyThingToVarInfo 1 tt {- don't look deep for global and mod vars -}
+                  vi <- tyThingToVarInfo tt
                   return vi{varName = nameStr}
               ) names
 
       NoVariables -> Right <$> do
         return []
-
-defaultDepth =  5 -- the depth determines how much of the structure is traversed.
-                  -- using a small value like 5 here is what causes the
-                  -- structure to be improperly rendered inline with many underscores.
-                  -- Note: GHCi uses depth=100
-                  -- TODO: Investigate why this isn't fast enough to use 100.
-                  -- TODO: We need a new metric to determine how much we force.
-                  -- Depth is not good enough because e.g for a very broad
-                  -- recursive type it will be exponentially many nodes to
-                  -- visit
-                  -- For now, try depth=5
 
 --------------------------------------------------------------------------------
 -- Inspect

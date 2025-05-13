@@ -153,5 +153,5 @@ inspectName n = do
     Nothing -> do
       liftIO . putStrLn =<< display (text "Failed to lookup name: " <+> ppr n)
       pure Nothing
-    Just tt -> Just <$> tyThingToVarInfo 2 tt
+    Just tt -> Just <$> tyThingToVarInfo tt
 
