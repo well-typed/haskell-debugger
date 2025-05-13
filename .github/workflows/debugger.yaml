@@ -24,22 +24,15 @@ jobs:
           name: Haskell Debugger Extension
           path: vscode-extension/result/haskell-debugger-extension-0.1.0.vsix
 
-  build-ghc-debugger:
-    name: Build
-    runs-on: ubuntu-latest # or macOS-latest, or windows-latest
+  sdist-ghc-debugger:
+    name: Sdist
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - uses: haskell-actions/setup@v2
-        with:
-          ghc-version: latest-nightly
-          cabal-version: latest
-          ghcup-release-channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
-
-      - name: Build ghc-debug-adapter
-        run: cabal build exe:ghc-debug-adapter
 
       - name: Package ghc-debug-adapter
         run: cabal sdist
@@ -50,9 +43,28 @@ jobs:
           name: GHC Debugger Source Distribution
           path: dist-newstyle/sdist/ghc-debugger*.tar.gz
 
-  test-ghc-debugger:
-    name: Test
-    needs: build-ghc-debugger
+
+  # build-ghc-debugger:
+  #   name: Build
+  #   runs-on: ubuntu-latest # or macOS-latest, or windows-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         submodules: recursive
+
+  #     - uses: haskell-actions/setup@v2
+  #       with:
+  #         ghc-version: latest-nightly
+  #         cabal-version: latest
+  #         ghcup-release-channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
+
+  #     - name: Build ghc-debug-adapter
+  #       run: cabal build exe:ghc-debug-adapter
+
+  # Building and testing are done on the distributed sdist: not on the full git repo.
+  build-n-test-ghc-debugger:
+    name: Build and Test
+    needs: sdist-ghc-debugger
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +87,7 @@ jobs:
           name: GHC Debugger Source Distribution
           path: ${{ runner.temp }}/dist
 
-      - name: Run integration tests
+      - name: Build and Run integration tests
         run: |
           (cd ${{ runner.temp }}/dist && tar xzf *.tar.gz && rm *.tar.gz && cd ghc-debugger-* && cabal build exe:ghc-debug-adapter --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc)
           export DEBUGGER=$(cd ${{ runner.temp }}/dist/ghc-debugger-* && cabal list-bin exe:ghc-debug-adapter --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc)
