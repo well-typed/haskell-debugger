@@ -22,7 +22,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Haskell Debugger Extension
-          path: vscode-extension/result/haskell-debugger-extension-0.1.0.vsix
+          path: vscode-extension/result/haskell-debugger-extension*.vsix
 
   sdist-ghc-debugger:
     name: Sdist
