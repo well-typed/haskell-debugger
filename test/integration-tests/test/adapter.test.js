@@ -26,7 +26,7 @@ var dc;
 let debuggerProcess;
 
 describe("Debug Adapter Tests", function () {
-    this.timeout(5000); // 5s
+    this.timeout(15000); // 15s
     const cwd = process.cwd();
 
     beforeEach( () => getFreePort().then(port => {
@@ -70,29 +70,6 @@ describe("Debug Adapter Tests", function () {
       dc.stop()
     });
 
-    const simpleLaunchConfigs = [
-        { name: "Vanilla config (no package)",
-          config: {
-            projectRoot: "/data/simple",
-            entryFile: "Main.hs",
-            entryPoint: "main",
-            entryArgs: ["some", "args"],
-            extraGhcArgs: []
-          }
-        },
-        { name: "Cabal config",
-          config : {
-            projectRoot: "/data/cabal1",
-            entryFile: "app/Main.hs",
-            entryPoint: "main",
-            entryArgs: ["some", "args"],
-            extraGhcArgs: []
-          }
-        }
-        // todo: Stack config?
-        // todo: hie.yaml config?
-    ]
-
     const mkHermetic = (path) => {
         const tmp = mkdtempSync(join(tmpdir(), "ghc-debugger-")) + path
         const data = process.cwd() + path;
@@ -100,13 +77,41 @@ describe("Debug Adapter Tests", function () {
         return tmp
     }
 
-    const basicTests = (launchCfg) => {
+    const mkConfig = config => {
 
         // Run tests on the temporary directory. This avoids issues with
         // hie-bios finding bad project roots because of cabal.projects in the
         // file system.
-        const tmp = mkHermetic(launchCfg.config.projectRoot)
-        launchCfg.config.projectRoot = tmp;
+        const tmp = mkHermetic(config.projectRoot)
+        config.projectRoot = tmp;
+
+        return config
+    }
+
+    const simpleLaunchConfigs = [
+        { name: "Vanilla config (no package)",
+          config: mkConfig({
+            projectRoot: "/data/simple",
+            entryFile: "Main.hs",
+            entryPoint: "main",
+            entryArgs: ["some", "args"],
+            extraGhcArgs: []
+          })
+        },
+        { name: "Cabal config",
+          config : mkConfig({
+            projectRoot: "/data/cabal1",
+            entryFile: "app/Main.hs",
+            entryPoint: "main",
+            entryArgs: ["some", "args"],
+            extraGhcArgs: []
+          })
+        }
+        // todo: Stack config?
+        // todo: hie.yaml config?
+    ]
+
+    const basicTests = (launchCfg) => {
 
         // The most basic functionality we test on various different
         // configurations (such as Cabal vs without project vs Stack)
@@ -164,22 +169,69 @@ describe("Debug Adapter Tests", function () {
         })
     }
 
+    const fetchLocalVars = async () => {
+        const stResp = await dc.stackTraceRequest({ threadId: 0 });
+        const sf0 = stResp.body.stackFrames[0];
+        const scResp = await dc.scopesRequest({ frameId: sf0.id });
+        const localsScope = scResp.body.scopes.find(scope => scope.name == "Locals");
+        const variablesResp = await dc.variablesRequest({ variablesReference: localsScope.variablesReference });
+        const variables = variablesResp.body.variables;
+        return {
+            all: variables,
+            get: function (name) {
+                const r = variables.find(v => v.name == name);
+                assert(r, `Variable ${name} not found`);
+                return r;
+            }
+        };
+    }
+
+    const forceLazy = async (v) => {
+        assert.strictEqual(v.presentationHint.lazy, true, `Variable ${v.name} should be lazy`);
+        assert.strictEqual(v.value, '_', `Variable ${v.name} should be "_" because it is lazy`);
+        assert.notStrictEqual(v.variablesReference, 0, `Variable ${v.name} should be expandable (because it is lazy)`);
+
+        // Force a lazy variable
+        const forceResp = await dc.variablesRequest({ variablesReference: v.variablesReference });
+        const forcedVar = forceResp.body.variables[0]
+        return forcedVar
+    }
+
+    const expandVar = async (v) => {
+        assert.notStrictEqual(v.variablesReference, 0, `Variable ${v.name} should be expandable (because it is a structure)`);
+
+        // Expand a structure (similarly to forcing a lazy variable, but because it is not lazy it will fetch the fields)
+        const childrenResp = await dc.variablesRequest({ variablesReference: v.variablesReference });
+        const children = childrenResp.body.variables;
+        return {
+            all: children,
+            get: function (name) {
+                const r = children.find(v => v.name == name);
+                assert(r, `Variable ${name} not found`);
+                return r;
+            }
+        };
+    }
+
+    const assertIsString = (v, expected) => {
+        assert.strictEqual(v.type, "String", `Variable ${v.name} should be a String`);
+        assert.strictEqual(v.value, expected, `Variable ${v.name} should be "${expected}"`);
+        assert.strictEqual(v.variablesReference, 0, `Variable ${v.name} should not be expandable (because it is a String)`);
+    }
+
     simpleLaunchConfigs.forEach(basicTests);
 
     describe("Variable inspection tests", function () {
 
         it('ints and strings should be displayed as values', async () => {
 
-            let config = {
+            let config = mkConfig({
                   projectRoot: "/data/cabal1",
                   entryFile: "app/Main.hs",
                   entryPoint: "main",
                   entryArgs: ["some", "args"],
                   extraGhcArgs: []
-                }
-
-            const tmp = mkHermetic(config.projectRoot)
-            config.projectRoot = tmp;
+                })
 
             const expected = { path: config.projectRoot + "/" + config.entryFile, line: 15 }
 
@@ -188,37 +240,67 @@ describe("Debug Adapter Tests", function () {
 
             await dc.hitBreakpoint(config, { path: config.entryFile, line: 15 }, expected, expected);
 
-            const stResp = await dc.stackTraceRequest({ threadId: 0 });
-            const sf0 = stResp.body.stackFrames[0];
-
-            const scResp = await dc.scopesRequest({ frameId: sf0.id });
-            const localsScope = scResp.body.scopes.find(scope => scope.name == "Locals");
-
-            const variablesResp = await dc.variablesRequest({ variablesReference: localsScope.variablesReference });
-            const variables = variablesResp.body.variables;
+            const variables = await fetchLocalVars()
 
             // Int variables are displayed as ints
-            const aVar = variables.find(v => v.name == 'a');
-            const bVar = variables.find(v => v.name == 'b');
-            // Strings are forced and displayed whole rather than as a structure
-            const cVar = variables.find(v => v.name == 'c');
+            const aVar = variables.get('a');
+            const bVar = variables.get('b');
 
             assert.strictEqual(aVar.value, '2');
             assert.strictEqual(bVar.value, '4');
 
             // Force lazy variable 'c'
-            const cResp = await dc.variablesRequest({ variablesReference: cVar.variablesReference });
-            const cVarForced = cResp.body.variables[0];
+            // Strings are forced and displayed whole rather than as a structure
+            const cVar = variables.get('c');
+            const cVarForced = await forceLazy(cVar);
 
-            assert.strictEqual(cVarForced.value, '"call_fxxx"');
-            assert.strictEqual(cVarForced.variablesReference, 0, `Because c is a string (boring type), it shouldn't be expandable`);
+            assertIsString(cVarForced, '"call_fxxx"');
 
             // After a variable is forced, a new locals request is done. Check again for c == call_fxxx afterwards
-            const refreshedResp = await dc.variablesRequest({ variablesReference: localsScope.variablesReference });
-            const refreshedCVar = refreshedResp.body.variables.find(v => v.name == 'c');
+            const refreshedVars = await fetchLocalVars();
+            const refreshedCVar = refreshedVars.get('c');
 
-            assert.strictEqual(refreshedCVar.value, '"call_fxxx"');
-            assert.strictEqual(refreshedCVar.variablesReference, 0, `Because c is a string (boring type), it shouldn't be expandable after refreshing the local scope`);
+            assertIsString(refreshedCVar, '"call_fxxx"')
+        })
+
+        it('allow arbitrarily deep inspection and strings are displayed as values arbitrarily deep (issue #8 and #9)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/simple2",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 19 }
+
+            dc.configurationSequence(),
+            dc.launch(config), 
+
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 19 }, expected, expected);
+
+            // get the locals
+            let locals = await fetchLocalVars();
+            const pVar = await forceLazy(locals.get('p'));
+            const pChild = await expandVar(pVar);
+            const _1Var = await forceLazy(pChild.get('_1'));
+            assertIsString(_1Var, '"d=1"');
+
+            let focus = pChild.get('_2');
+
+            // Now walk the spine from d=2 through d=6
+            for (let expectedLevel = 2; expectedLevel <= 6; expectedLevel++) {
+                const focusF = await forceLazy(focus);
+                const children = await expandVar(focusF);
+                const dChild = await forceLazy(children.get('_1'));
+                assertIsString(dChild, `"d=${expectedLevel}"`);
+
+                focus = children.get('_2');
+            }
+
+            // Finally, we should be at the OK constructor
+            const focusF = await forceLazy(focus);
+            assert.strictEqual(focusF.value, 'OK');
         })
     })
 })
