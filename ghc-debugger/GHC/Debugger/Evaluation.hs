@@ -48,6 +48,7 @@ debugExecution entry args = do
 
     MainEntry nm -> do
       let prog = fromMaybe "main" nm
+      -- the wrapper is equivalent to GHCi's `:main arg1 arg2 arg3`
       wrapper <- mkEvalWrapper prog args -- bit weird that the prog name is the expression but fine
       let execWrap' fhv = GHCi.EvalApp (GHCi.EvalThis wrapper) (GHCi.EvalThis fhv)
           opts = GHC.execOptions {execWrap = execWrap'}
@@ -102,6 +103,25 @@ doSingleStep = do
   leaveSuspendedState
   GHC.resumeExec SingleStep Nothing
     >>= handleExecResult
+
+doStepOut :: Debugger EvalResult
+doStepOut = do
+#if MIN_VERSION_ghc(9,13,20250514)
+  leaveSuspendedState
+  mb_span <- getCurrentBreakSpan
+  case mb_span of
+    Nothing ->
+      GHC.resumeExec (GHC.StepOut Nothing) Nothing
+        >>= handleExecResult
+    Just loc -> do
+      md <- fromMaybe (error "doStepOut") <$> getCurrentBreakModule
+      ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
+      let current_toplevel_decl = enclosingTickSpan ticks loc
+      GHC.resumeExec (GHC.StepOut (Just (RealSrcSpan current_toplevel_decl Strict.Nothing))) Nothing
+        >>= handleExecResult
+#else
+  doSingleStep -- stub!
+#endif
 
 -- | Resume execution but stop at the next tick within the same function.
 --
