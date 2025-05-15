@@ -28,6 +28,7 @@ let debuggerProcess;
 describe("Debug Adapter Tests", function () {
     this.timeout(15000); // 15s
     const cwd = process.cwd();
+    const ghc_version = cp.execSync('ghc --numeric-version').toString().trim()
 
     beforeEach( () => getFreePort().then(port => {
 
@@ -388,6 +389,70 @@ describe("Debug Adapter Tests", function () {
             assert.strictEqual(s_newVar.value, '3456');
             const s_labVar = await forceLazy(xChild.get("lab"));
             assertIsString(s_labVar, '"label"');
+        })
+    })
+
+
+    describe("Stepping out (step-out)", function () {
+
+        let step_out_broken = ghc_version < "9.15.20250731" // hasn't been merged yet, but let's use this bound; will probably only be in GHC 9.14.2
+
+        // Mimics GHC's T26042b
+        it('without tail calls', async () => {
+
+            let config = mkConfig({
+                  projectRoot: "/data/T6",
+                  entryFile: "MainA.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = (line) => ({ path: config.projectRoot + "/" + config.entryFile, line: line });
+
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 10 }, expected(10), expected(10));
+
+            // foo to bar
+            await dc.stepOutRequest({threadId: 0});
+            await dc.assertStoppedLocation('step', expected(step_out_broken ? 21 : 20));
+
+            // bar back to foo
+            await dc.stepOutRequest({threadId: 0});
+            await dc.assertStoppedLocation('step', expected(step_out_broken ? 15 : 14));
+
+            // back to main
+            await dc.stepOutRequest({threadId: 0});
+            await dc.assertStoppedLocation('step', expected(step_out_broken ? 6 : 6));
+
+            // exit
+            await dc.stepOutRequest({threadId: 0});
+        })
+
+        // Mimics GHC's T26042c
+        it('with tail calls', async () => {
+
+            let config = mkConfig({
+                  projectRoot: "/data/T6",
+                  entryFile: "MainB.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = (line) => ({ path: config.projectRoot + "/" + config.entryFile, line: line });
+
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 10 }, expected(10), expected(10));
+
+            // step out of foo True and observe that we have skipped its call in bar,
+            // and the call of bar in foo False.
+            // we go straight to `main`.
+            await dc.stepOutRequest({threadId: 0});
+
+            await dc.assertStoppedLocation('step', expected(step_out_broken ? 6 : 5))
+
+            // stepping out again exits
+            await dc.stepOutRequest({threadId: 0});
+
         })
     })
 })
