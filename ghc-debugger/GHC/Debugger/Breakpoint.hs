@@ -96,7 +96,7 @@ setBreakpoint FunctionBreak{function} bp_status = do
               , sourceSpan = realSrcSpanToSourceSpan spn
               , breakId = bid
               }
-      case findBreakForBind fun_str modBreaks of
+      case maybe [] (findBreakForBind fun_str) modBreaks of
         []  -> do
           liftIO $ logOutput logger (text $ "No breakpoint found by name " ++ function ++ ". Ignoring...")
           return BreakNotFound
