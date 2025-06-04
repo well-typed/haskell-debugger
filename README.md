@@ -118,3 +118,25 @@ Many not listed! Here are a few things:
 ### Conditionals
 - [ ] Conditional breakpoints     (breakpoint is hit only if condition is satisfied)
 - [ ] Hit conditional breakpoints (stop after N number of hits)
+
+# Building from source
+
+To build `ghc-debug-adapter`:
+```
+cabal build -w /path/to/recent/ghc exe:ghc-debug-adapter
+```
+
+To build the VSCode extension
+```
+cd vscode-extension
+nix-build
+```
+
+## Testing
+
+```
+cd test/integration-tests
+nix-shell
+make GHC=/path/to/recent/ghc \
+     DEBUGGER=$(cd ../.. && cabal list-bin -w /path/to/recent/ghc exe:ghc-debug-adapter)
+```
