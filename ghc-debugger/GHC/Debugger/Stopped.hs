@@ -176,13 +176,8 @@ getVariables vk = do
                 -- It is a "lazy" DAP variable: our reply can ONLY include
                 -- this single variable.
 
-                let ty = GHCI.termType term
-                term' <- if isBoringTy ty
-                            then deepseqTerm term -- deepseq boring types like String, because it is more helpful to print them whole than their structure.
-                            else seqTerm term
-                -- update cache with the forced term right away instead of invalidating it.
-                -- TODO: is this the best place to have this update? what's the better abstraction?
-                asks termCache >>= \r -> liftIO $ modifyIORef' r (insertTermCache key term')
+                term' <- forceTerm key term
+
                 vi <- termToVarInfo key term'
 
                 return (Left vi)

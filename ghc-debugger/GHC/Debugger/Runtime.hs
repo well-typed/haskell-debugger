@@ -56,7 +56,7 @@ obtainTerm key = do
                 PositionalIndex ix -> subTerms !! (ix-1)
                 LabeledField fl    ->
                   case L.findIndex (== fl) (map flSelector $ dataConFieldLabels dc) of
-                    Just ix -> subTerms !! (ix-1)
+                    Just ix -> subTerms !! ix
                     Nothing -> error "Couldn't find labeled field in dataConFieldLabels"
               NewtypeWrap{wrapped_term} ->
                 wrapped_term -- regardless of PathFragment
