@@ -3,7 +3,10 @@
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
 module GHC.Debugger.Stopped.Variables where
 
+import Data.IORef
 import Control.Monad
+import Control.Monad.Reader
+import Control.Monad.IO.Class
 
 import GHC
 import GHC.Types.FieldLabel
@@ -17,6 +20,7 @@ import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Term.Key
+import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Utils
 
 -- | 'TyThing' to 'VarInfo'. The 'Bool' argument indicates whether to force the
@@ -69,14 +73,19 @@ termVarFields top_key top_term =
 
 -- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
 termToVarInfo :: TermKey -> Term -> Debugger VarInfo
-termToVarInfo key term = do
+termToVarInfo key term0 = do
   -- Make a VarInfo for a term
   let
     isThunk
-     | Suspension{} <- term = True
+     | Suspension{} <- term0 = True
      | otherwise = False
-    ty = GHCI.termType term
+    ty = GHCI.termType term0
 
+  term <- if not isThunk && isBoringTy ty
+            then forceTerm key term0 -- make sure that if it's an evaluated boring term then it is /fully/ evaluated.
+            else pure term0
+
+  let
     -- We scrape the subterms to display as the var's value. The structure is
     -- displayed in the editor itself by expanding the variable sub-fields
     termHead t
@@ -96,12 +105,12 @@ termToVarInfo key term = do
   -- We only want to return @SpecificVariable@ (which allows expansion) for
   -- values with sub-fields or thunks.
   varRef <- do
-    if GHCI.isFullyEvaluatedTerm term
+    if GHCI.isFullyEvaluatedTerm term ||
        -- Even if it is already evaluated, we do want to display a
        -- structure as long if it is not a "boring type" (one that does not
        -- provide useful information from being expanded)
        -- (e.g. consider how awkward it is to expand Char# 10 and I# 20)
-       && (isBoringTy ty || not (hasDirectSubTerms term))
+       (not isThunk && (isBoringTy ty || not (hasDirectSubTerms term)))
      then do
         return NoVariables
      else do
@@ -117,3 +126,16 @@ termToVarInfo key term = do
       RefWrap{}      -> True
       Term{subTerms} -> not $ null subTerms
 
+-- | Forces a term to WHNF in the general case, or to NF in the case of 'isBoringTy'.
+-- The term is updated at the given key.
+forceTerm :: TermKey -> Term -> Debugger Term
+forceTerm key term = do
+  let ty = GHCI.termType term
+  term' <- if isBoringTy ty
+              -- deepseq boring types like String, because it is more helpful
+              -- to print them whole than their structure.
+              then deepseqTerm term
+              else seqTerm term
+  -- update cache with the forced term right away instead of invalidating it.
+  asks termCache >>= \r -> liftIO $ modifyIORef' r (insertTermCache key term')
+  return term'
