@@ -39,6 +39,7 @@ describe("Debug Adapter Tests", function () {
             }, 15000); // 15 second timeout
 
             debuggerProcess.stdout.on('data', data => {
+                // NOTE: UNCOMMENT ME TO DEBUG
                 // console.log(data.toString())
                 const text = data.toString();
                 if (text.includes('Running')) {
@@ -235,9 +236,6 @@ describe("Debug Adapter Tests", function () {
 
             const expected = { path: config.projectRoot + "/" + config.entryFile, line: 15 }
 
-            dc.configurationSequence(),
-            dc.launch(config), 
-
             await dc.hitBreakpoint(config, { path: config.entryFile, line: 15 }, expected, expected);
 
             const variables = await fetchLocalVars()
@@ -263,7 +261,7 @@ describe("Debug Adapter Tests", function () {
             assertIsString(refreshedCVar, '"call_fxxx"')
         })
 
-        it('allow arbitrarily deep inspection and strings are displayed as values arbitrarily deep (issue #8 and #9)', async () => {
+        it('allow arbitrarily deep inspection and strings are displayed as values arbitrarily deep when forced (issue #8 and #9)', async () => {
             let config = mkConfig({
                   projectRoot: "/data/simple2",
                   entryFile: "Main.hs",
@@ -272,11 +270,8 @@ describe("Debug Adapter Tests", function () {
                   extraGhcArgs: []
                 })
 
+
             const expected = { path: config.projectRoot + "/" + config.entryFile, line: 19 }
-
-            dc.configurationSequence(),
-            dc.launch(config), 
-
             await dc.hitBreakpoint(config, { path: config.entryFile, line: 19 }, expected, expected);
 
             // get the locals
@@ -301,6 +296,58 @@ describe("Debug Adapter Tests", function () {
             // Finally, we should be at the OK constructor
             const focusF = await forceLazy(focus);
             assert.strictEqual(focusF.value, 'OK');
+        })
+
+        it('strings that are fields of the expanded vars and are not thunks are fully evaluated (issue #11)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/repeat",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 5 }
+
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 5 }, expected, expected)
+
+            // Force only the 2nd "hello" and check the third is already there.
+            // It relies on repeat seemingly only re-using every other thunk?!!?
+            // (Mimics reproducer in #11)
+            let locals = await fetchLocalVars();
+            const xVar = await forceLazy(locals.get('x'));
+            const xChild = await expandVar(xVar);
+            const _2Var = await xChild.get('_2'); // NOTE: Doesn't need to be forced because of this seemingly weird `repeat` behavior where it looks like every other binding is shared but the others are not
+            const _2Child = await expandVar(_2Var);
+            const _2_1Var = await forceLazy(_2Child.get('_1'));
+            const _2_2Var = await forceLazy(_2Child.get('_2'));
+            const _2_2Child = await expandVar(_2_2Var);
+            const _2_2_1Var = await _2_2Child.get('_1') // NOTE: doesn't need to be forced as above
+            assertIsString(_2_2_1Var, '"hello"');
+        })
+
+        it('labeled data structures can be expanded (issue #18)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/labeled",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 8 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 8 }, expected, expected);
+
+            // Force only the 2nd "hello" and check the third is already there.
+            // It relies on repeat seemingly only re-using every other thunk?!!?
+            // (Mimics reproducer in #11)
+            let locals = await fetchLocalVars();
+            const xVar = await forceLazy(locals.get('x'));
+            const xChild = await expandVar(xVar);
+            const s_newVar = await xChild.get('new'); // No force
+            assert.strictEqual(s_newVar.value, '3456');
+            const s_labVar = await forceLazy(xChild.get("lab"));
+            assertIsString(s_labVar, '"label"');
         })
     })
 })
