@@ -30,6 +30,13 @@ PKG_VERSION=$(sed -nE "s/^version:\s*([0-9\.]*).*$/\1/p" ghc-debugger.cabal)
 EXTENSION_NIX_VERSION=$(sed -nE "s/^\s*version = \"(.*)\"\;$/\1/p" vscode-extension/default.nix)
 EXTENSION_PKG_VERSION=$(sed -nE "s/^\s*\"version\":\s*\"(.*)\"\,$/\1/p" vscode-extension/package.json)
 
+if test -z "$PKG_VERSION"; then
+  echo "Error: PKG_VERSION sed expression returned an empty string."
+  echo "Maybe you should try GNU sed: nix-shell -p binutils."
+  echo "Currently using: $(which sed)"
+  exit 1
+fi
+
 # Check versions match
 if [ "$PKG_VERSION" != "$EXTENSION_NIX_VERSION.0" ] || [ "$PKG_VERSION" != "$EXTENSION_PKG_VERSION.0" ]; then
   echo "Error: Version mismatch"
@@ -50,3 +57,4 @@ fi
 git commit --allow-empty -m "Release: $PKG_VERSION"
 git tag "v$PKG_VERSION" -m "Release: $PKG_VERSION"
 
+echo "Please don't forget to push with --tags"
