@@ -48,5 +48,5 @@ fi
 
 # Do the release commit and tag it
 git commit --allow-empty -m "Release: $PKG_VERSION"
-git tag "v$PKG_VERSION"
+git tag "v$PKG_VERSION" -m "Release: $PKG_VERSION"
 
