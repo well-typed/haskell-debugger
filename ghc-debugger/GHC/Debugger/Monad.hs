@@ -24,6 +24,7 @@ import GHC.Driver.Session.Units as GHC
 import GHC.Unit.Module.ModSummary as GHC
 import GHC.Utils.Outputable as GHC
 import GHC.Utils.Monad as GHC
+import GHC.Utils.Misc as GHC
 import GHC.Utils.Logger as GHC
 import GHC.Types.Unique.Supply as GHC
 import GHC.Runtime.Loader as GHC
@@ -106,10 +107,11 @@ runDebugger :: Handle     -- ^ The handle to which GHC's output is logged. The d
             -> FilePath   -- ^ The libdir (given with -B as an arg)
             -> [String]   -- ^ The list of units included in the invocation
             -> [String]   -- ^ The full ghc invocation (as constructed by hie-bios flags)
+            -> FilePath   -- ^ Path to the main function
             -> RunDebuggerSettings -- ^ Other debugger run settings
             -> Debugger a -- ^ 'Debugger' action to run on the session constructed from this invocation
             -> IO a
-runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
+runDebugger dbg_out libdir units ghcInvocation' mainFp conf (Debugger action) = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
 
   GHC.runGhc (Just libdir) $ do
@@ -158,13 +160,16 @@ runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
     -- subsequent call to `getLogger` to be affected by a plugin.
     GHC.initializeSessionPlugins
     hsc_env <- GHC.getSession
-    
-    hs_srcs <- case NE.nonEmpty units of
+
+    (mainTargetTriple, hs_srcs) <- case NE.nonEmpty units of
       Just ne_units -> do
-        GHC.initMulti ne_units (\_ _ _ _ -> {-no options extra check-} pure ())
+        hs_srcs <- GHC.initMulti ne_units (\_ _ _ _ -> {-no options extra check-} pure ())
+        pure (Nothing, hs_srcs)
       Nothing -> do
+        flags <- GHC.getSessionDynFlags
+        let mainTarget = (mainFp, Just (homeUnitId_ flags), Nothing)
         case srcs of
-          [] -> return []
+          [] -> return (Just mainTarget, [])
           _  -> do
             let (hs_srcs, non_hs_srcs) = List.partition GHC.isHaskellishTarget srcs
 
@@ -172,17 +177,20 @@ runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
             -- analysis, then just do one-shot compilation and/or linking.
             -- This means that "ghc Foo.o Bar.o -o baz" links the program as
             -- we expect.
-            if (null hs_srcs)
+            hs_srcs' <- if (null hs_srcs)
                then liftIO (GHC.oneShot hsc_env GHC.NoStop srcs) >> return []
                else do
                  o_files <- GHC.mapMaybeM (\x -> liftIO $ GHC.compileFile hsc_env GHC.NoStop x) non_hs_srcs
                  dflags7 <- GHC.getSessionDynFlags
                  let dflags' = dflags7 { GHC.ldInputs = map (GHC.FileOption "") o_files ++ GHC.ldInputs dflags7 }
                  _ <- GHC.setSessionDynFlags dflags'
-                 return $ map (uncurry (,Nothing,)) hs_srcs
+                 return $ map (uncurry (,Just (homeUnitId_ dflags'),)) hs_srcs
 
-    targets' <- mapM (\(src, uid, phase) -> GHC.guessTarget src uid phase) hs_srcs
-    GHC.setTargets targets'
+            pure (Just mainTarget, hs_srcs')
+
+    targets' <- mapM (GHC.uncurry3 GHC.guessTarget) hs_srcs
+    mainTarget <- traverse (GHC.uncurry3 GHC.guessTarget) mainTargetTriple
+    GHC.setTargets $ addMainTargetIfMissing mainTarget targets'
     ok_flag <- GHC.load GHC.LoadAllTargets
     when (GHC.failed ok_flag) (liftIO $ exitWith (ExitFailure 1))
 
@@ -195,6 +203,25 @@ runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
     GHC.setContext $ preludeImp : map (GHC.IIModule . GHC.ms_mod) mss
 
     runReaderT action =<< initialDebuggerState
+
+-- | Add the optional main target to the list of main targets if missing.
+-- The main target is optional, as some cradle types always list all targets,
+-- but the 'Default' 'Cradle' doesn't list all modules.
+--
+-- We want to support 'Default' Cradles as well, so we add the 'Target' for the
+-- main 'FilePath' (i.e., the filepath we use as the entrypoint for the debugger)
+-- to the list of '[GHC.Target]', if and only if the main 'Target' isn't already listed.
+-- We can't add it unconditionally, as this would be a duplicate 'Target'.
+--
+-- HLS does something similar in @Session.hs@
+addMainTargetIfMissing :: Maybe GHC.Target -> [GHC.Target] -> [GHC.Target]
+addMainTargetIfMissing Nothing targets = targets
+addMainTargetIfMissing (Just mainTarget) targets =
+  case List.find (\t -> targetId t == targetId mainTarget) targets of
+    Just _ ->
+      -- The target already exists, don't add 'mainTarget' to the list of 'Target's
+      targets
+    Nothing -> mainTarget : targets
 
 -- | The logger action used to log GHC output
 debuggerLoggerAction :: Handle -> LogAction

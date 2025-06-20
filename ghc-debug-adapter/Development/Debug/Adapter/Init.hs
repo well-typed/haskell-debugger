@@ -108,7 +108,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
       finished_init <- liftIO $ newEmptyMVar
 
       registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-        [ debuggerThread finished_init writeDebuggerOutput projectRoot flags extraGhcArgs defaultRunConf syncRequests syncResponses
+        [ debuggerThread finished_init writeDebuggerOutput projectRoot flags extraGhcArgs entryFile defaultRunConf syncRequests syncResponses
         , handleDebuggerOutput readDebuggerOutput
         , stdoutCaptureThread
         , stderrCaptureThread
@@ -166,13 +166,14 @@ debuggerThread :: MVar (Either String ()) -- ^ To signal when initialization is 
                -> FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
                -> [String]        -- ^ Extra ghc args
+               -> FilePath
                -> Debugger.RunDebuggerSettings -- ^ Settings for running the debugger
                -> MVar D.Command  -- ^ Read commands
                -> MVar D.Response -- ^ Write reponses
                -> (DebugAdaptorCont () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraGhcArgs runConf requests replies withAdaptor = do
+debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
 
   let finalGhcInvocation = ghcInvocation ++ extraGhcArgs
 
@@ -188,9 +189,9 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraG
 
   catches
     (do
-      Debugger.runDebugger writeDebuggerOutput libdir units finalGhcInvocation runConf $ do
+      Debugger.runDebugger writeDebuggerOutput libdir units finalGhcInvocation mainFp runConf $ do
         liftIO $ signalInitialized (Right ())
-     
+
         forever $ do
           req <- takeMVar requests & liftIO
           resp <- (Debugger.execute req <&> Right)

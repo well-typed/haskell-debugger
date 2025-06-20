@@ -52,8 +52,7 @@ hieBiosFlags root relTarget = runExceptT $ do
 
   let (units', flags') = extractUnits flags
   return HieBiosFlags
-    { ghcInvocation =  -- TODO is this correct? else, the debugger won't work on single files.
-                      flags' ++ ghcDebuggerFlags
+    { ghcInvocation = flags' ++ ghcDebuggerFlags
     , libdir = libdir
     , units  = units'
     }
