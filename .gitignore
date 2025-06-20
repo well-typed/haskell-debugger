@@ -3,3 +3,4 @@
 node_modules/
 vscode-extension/dist/
 vscode-extension/result
+dist-newstyle/
