@@ -7,8 +7,6 @@ import System.Directory
 import Control.Monad.Except
 import Control.Monad.IO.Class
 
-import qualified Data.List as L
-
 import qualified HIE.Bios as HIE
 import qualified HIE.Bios.Types as HIE
 import qualified HIE.Bios.Environment as HIE
@@ -18,6 +16,12 @@ data HieBiosFlags = HieBiosFlags
       { ghcInvocation :: [String]
       , libdir :: FilePath
       , units :: [String]
+      , rootDir :: FilePath
+      -- ^ Root dir as reported by the 'Cradle'
+      , componentDir :: FilePath
+      -- ^ Root dir of the loaded 'ComponentOptions'.
+      -- Important for multi-package cabal projects, as packages are not in the
+      -- root of the cradle, but in some sub-directory.
       }
 
 -- | Make 'HieBiosFlags' from the given target file
@@ -42,19 +46,20 @@ hieBiosFlags root relTarget = runExceptT $ do
 #else
                           HIE.getCompilerOptions target [] cradle
 #endif
-  HIE.ComponentOptions {HIE.componentOptions = flags} <- compilerOpts >>= unwrapCradleResult "Failed to get compiler options using hie-bios cradle"
-
+  componentOpts <- compilerOpts >>= unwrapCradleResult "Failed to get compiler options using hie-bios cradle"
 #if __GLASGOW_HASKELL__ >= 913
   -- fwrite-if-simplified-core requires a recent bug fix regarding GHCi loading
   -- ROMES:TODO: Re-enable as soon as I'm using Matthew's patch.
   -- ["-fwrite-if-simplified-core"] ++
 #endif
 
-  let (units', flags') = extractUnits flags
+  let (units', flags') = extractUnits (HIE.componentOptions componentOpts)
   return HieBiosFlags
     { ghcInvocation = flags' ++ ghcDebuggerFlags
     , libdir = libdir
     , units  = units'
+    , rootDir = HIE.cradleRootDir cradle
+    , componentDir = HIE.componentRoot componentOpts
     }
   where
     unwrapCradleResult m = \case
@@ -65,6 +70,7 @@ hieBiosFlags root relTarget = runExceptT $ do
 extractUnits :: [String] -> ([String], [String])
 extractUnits = go [] []
   where
+    -- TODO: we should likely use the 'processCmdLineP' instead
     go units rest ("-unit" : x : xs) = go (x : units) rest xs
     go units rest (x : xs)           = go units (x : rest) xs
     go units rest []                 = (reverse units, reverse rest)

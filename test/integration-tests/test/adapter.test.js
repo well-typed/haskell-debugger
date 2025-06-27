@@ -222,6 +222,46 @@ describe("Debug Adapter Tests", function () {
 
     simpleLaunchConfigs.forEach(basicTests);
 
+    describe("Multiple home unit tests", function () {
+      const mhuConfig = mkConfig({
+            projectRoot: "/data/cabal-mhu1",
+            entryFile: "bar/app/Main.hs",
+            entryPoint: "main",
+            entryArgs: [],
+            extraGhcArgs: []
+          });
+
+      it("should run program to the end", () => {
+        return Promise.all([
+          dc.configurationSequence(),
+          dc.launch(mhuConfig),
+          dc.waitForEvent("exited").then(
+            (e) =>
+              new Promise((resolve, reject) => {
+                if (e.body.exitCode == 0) resolve(e);
+                else reject(new Error("Expecting ExitCode 1"));
+              })
+          ),
+        ]);
+      });
+
+      it("should stop at break-point in the same home unit", () => {
+        const expected = { path: mhuConfig.projectRoot + "/./" + mhuConfig.entryFile, line: 8 };
+        return dc.hitBreakpoint(mhuConfig, { path: mhuConfig.entryFile, line: 8 }, expected, expected);
+      });
+
+      it("should stop at break-point in different home unit 1", () => {
+        const path = mhuConfig.projectRoot + "/./bar/src/Bar.hs"
+        const expected = { path: path, line: 8 };
+        return dc.hitBreakpoint(mhuConfig, { path: path, line: 8 }, expected, expected);
+      });
+
+      it("should stop at break-point in different home unit 2", () => {
+        const path = mhuConfig.projectRoot + "/./foo/src/Foo.hs"
+        const expected = { path: path, line: 6 };
+        return dc.hitBreakpoint(mhuConfig, { path: path, line: 6 }, expected, expected);
+      });
+    });
     describe("Variable inspection tests", function () {
 
         it('ints and strings should be displayed as values', async () => {

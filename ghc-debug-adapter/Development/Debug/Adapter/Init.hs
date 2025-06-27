@@ -189,7 +189,7 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraG
 
   catches
     (do
-      Debugger.runDebugger writeDebuggerOutput libdir units finalGhcInvocation mainFp runConf $ do
+      Debugger.runDebugger writeDebuggerOutput rootDir componentDir libdir units finalGhcInvocation mainFp runConf $ do
         liftIO $ signalInitialized (Right ())
 
         forever $ do
