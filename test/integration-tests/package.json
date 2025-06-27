@@ -5,5 +5,8 @@
   "dependencies": {
     "@vscode/debugadapter-testsupport": "^1.68",
     "mocha": "^11.2.2"
+  },
+  "scripts": {
+    "test": "mocha"
   }
 }

@@ -3,9 +3,11 @@ module GHC.Debugger.Monad where
 
 import Prelude hiding (mod)
 import Data.Function
+import qualified Data.Foldable as Foldable
 import System.Exit
 import System.IO
 import System.FilePath (normalise)
+import System.Directory (makeAbsolute)
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Exception (assert)
@@ -13,29 +15,21 @@ import Control.Exception (assert)
 import Control.Monad.Catch
 
 import GHC
-import GHC.Types.Name (mkDerivedInternalName)
-import GHC.Types.Name.Occurrence (mkVarOcc)
 import qualified GHCi.BreakArray as BA
 import GHC.Driver.DynFlags as GHC
-import GHC.Driver.Phases as GHC
-import GHC.Driver.Pipeline as GHC
-import GHC.Driver.Config.Logger as GHC
-import GHC.Driver.Session.Units as GHC
 import GHC.Unit.Module.ModSummary as GHC
 import GHC.Utils.Outputable as GHC
-import GHC.Utils.Monad as GHC
 import GHC.Utils.Logger as GHC
 import GHC.Types.Unique.Supply as GHC
 import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Heap.Inspect
 import GHC.Unit.Module.Env as GHC
-import GHC.Types.Name.Env
 import GHC.Driver.Env
 
 import Data.IORef
 import Data.Maybe
-import qualified Data.List.NonEmpty as NE
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.List as List
 import qualified Data.IntMap as IM
 
@@ -44,6 +38,7 @@ import Control.Monad.Reader
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Runtime.Term.Cache
+import GHC.Debugger.Session
 import System.Posix.Signals
 
 -- | A debugger action.
@@ -103,13 +98,16 @@ data RunDebuggerSettings = RunDebuggerSettings
 
 -- | Run a 'Debugger' action on a session constructed from a given GHC invocation.
 runDebugger :: Handle     -- ^ The handle to which GHC's output is logged. The debuggee output is not affected by this parameter.
+            -> FilePath   -- ^ Cradle root directory
+            -> FilePath   -- ^ Component root directory
             -> FilePath   -- ^ The libdir (given with -B as an arg)
             -> [String]   -- ^ The list of units included in the invocation
             -> [String]   -- ^ The full ghc invocation (as constructed by hie-bios flags)
+            -> FilePath   -- ^ Path to the main function
             -> RunDebuggerSettings -- ^ Other debugger run settings
             -> Debugger a -- ^ 'Debugger' action to run on the session constructed from this invocation
             -> IO a
-runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
+runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Debugger action) = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
 
   GHC.runGhc (Just libdir) $ do
@@ -136,53 +134,23 @@ runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
       -- Override the logger to output to the given handle
       GHC.pushLogHook (const $ debuggerLoggerAction dbg_out)
 
-    logger1 <- GHC.getLogger
-    let logger2 = GHC.setLogFlags logger1 (GHC.initLogFlags dflags1)
+    -- TODO: this is weird, we set the session dynflags now to initialise
+    -- the hsc_interp.
+    -- This is incredibly dubious
+    _ <- GHC.setSessionDynFlags dflags1
 
-          -- The rest of the arguments are "dynamic"
-          -- Leftover ones are presumably files
-    (dflags4, fileish_args, _dynamicFlagWarnings) <-
-        GHC.parseDynamicFlags logger2 dflags1 (map (GHC.mkGeneralLocated "on ghc-debugger command arg") ghcInvocation)
+    -- Initialise plugins here because the plugin author might already expect this
+    -- subsequent call to `getLogger` to be affected by a plugin.
+    GHC.initializeSessionPlugins
 
-    let (dflags5, srcs, objs) = GHC.parseTargetFiles dflags4 (map GHC.unLoc fileish_args)
-
-    -- we've finished manipulating the DynFlags, update the session
-    _ <- GHC.setSessionDynFlags dflags5
+    flagsAndTargets <- parseHomeUnitArguments mainFp compDir units ghcInvocation dflags1 rootDir
+    setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
 
     dflags6 <- GHC.getSessionDynFlags
 
     -- Should this be done in GHC=
     liftIO $ GHC.initUniqSupply (GHC.initialUnique dflags6) (GHC.uniqueIncrement dflags6)
 
-    -- Initialise plugins here because the plugin author might already expect this
-    -- subsequent call to `getLogger` to be affected by a plugin.
-    GHC.initializeSessionPlugins
-    hsc_env <- GHC.getSession
-    
-    hs_srcs <- case NE.nonEmpty units of
-      Just ne_units -> do
-        GHC.initMulti ne_units (\_ _ _ _ -> {-no options extra check-} pure ())
-      Nothing -> do
-        case srcs of
-          [] -> return []
-          _  -> do
-            let (hs_srcs, non_hs_srcs) = List.partition GHC.isHaskellishTarget srcs
-
-            -- if we have no haskell sources from which to do a dependency
-            -- analysis, then just do one-shot compilation and/or linking.
-            -- This means that "ghc Foo.o Bar.o -o baz" links the program as
-            -- we expect.
-            if (null hs_srcs)
-               then liftIO (GHC.oneShot hsc_env GHC.NoStop srcs) >> return []
-               else do
-                 o_files <- GHC.mapMaybeM (\x -> liftIO $ GHC.compileFile hsc_env GHC.NoStop x) non_hs_srcs
-                 dflags7 <- GHC.getSessionDynFlags
-                 let dflags' = dflags7 { GHC.ldInputs = map (GHC.FileOption "") o_files ++ GHC.ldInputs dflags7 }
-                 _ <- GHC.setSessionDynFlags dflags'
-                 return $ map (uncurry (,Nothing,)) hs_srcs
-
-    targets' <- mapM (\(src, uid, phase) -> GHC.guessTarget src uid phase) hs_srcs
-    GHC.setTargets targets'
     ok_flag <- GHC.load GHC.LoadAllTargets
     when (GHC.failed ok_flag) (liftIO $ exitWith (ExitFailure 1))
 
@@ -192,7 +160,7 @@ runDebugger dbg_out libdir units ghcInvocation' conf (Debugger action) = do
     -- TODO: Think about Note [GHCi and local Preludes] and what is done in `getImplicitPreludeImports`
     let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
     mss <- getAllLoadedModules
-    GHC.setContext $ preludeImp : map (GHC.IIDecl . GHC.simpleImportDecl . GHC.ms_mod_name) mss
+    GHC.setContext $ preludeImp : map (GHC.IIModule . GHC.ms_mod) mss
 
     runReaderT action =<< initialDebuggerState
 
@@ -299,9 +267,10 @@ getAllLoadedModules =
 -- | Get a 'ModSummary' of a loaded module given its 'FilePath'
 getModuleByPath :: FilePath -> Debugger (Either String ModSummary)
 getModuleByPath path = do
-  -- do this everytime as the loaded modules may have changed
+  -- do this every time as the loaded modules may have changed
   lms <- getAllLoadedModules
-  let matches ms = normalise (msHsFilePath ms) `List.isSuffixOf` path
+  absPath <- liftIO $ makeAbsolute path
+  let matches ms = normalise (msHsFilePath ms) == normalise absPath
   return $ case filter matches lms of
     [x] -> Right x
     [] -> Left $ "No module matched " ++ path ++ ".\nLoaded modules:\n" ++ show (map msHsFilePath lms) ++ "\n. Perhaps you've set a breakpoint on a module that isn't loaded into the session?"
