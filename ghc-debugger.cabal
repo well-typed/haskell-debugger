@@ -58,7 +58,7 @@ library
     -- other-modules:
     -- other-extensions:
     build-depends:    base > 4.21 && < 5,
-                      ghc >= 9.13 && < 9.14, ghci >= 9.13 && < 9.14,
+                      ghc >= 9.13 && < 9.16, ghci >= 9.13 && < 9.16,
                       array >= 0.5.8 && < 0.6,
                       containers >= 0.7 && < 0.9,
                       mtl >= 2.3 && < 3,

@@ -183,7 +183,11 @@ registerBreakpoint bp@GHC.BreakpointId
   -- Set breakpoint in GHC session
   let breakpoint_count = breakpointStatusInt status
   hsc_env <- GHC.getSession
+#if MIN_VERSION_ghc(9,13,20250630)
+  GHC.setupBreakpoint (hscInterp hsc_env) bp breakpoint_count
+#else
   GHC.setupBreakpoint hsc_env bp breakpoint_count
+#endif
 
   -- Register breakpoint in Debugger state
   brksRef <- asks activeBreakpoints
