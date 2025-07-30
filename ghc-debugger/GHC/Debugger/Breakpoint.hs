@@ -13,8 +13,12 @@ import GHC
 #if MIN_VERSION_ghc(9,13,20250417)
 import GHC.Types.Name.Occurrence (sizeOccEnv)
 #endif
+#if MIN_VERSION_ghc(9,13,20250630)
+import GHC.ByteCode.Breakpoints
+#endif
 import GHC.Utils.Error (logOutput)
 import GHC.Driver.DynFlags as GHC
+import GHC.Driver.Env
 import GHC.Driver.Ppr as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Unit.Module.Env as GHC
@@ -39,7 +43,11 @@ clearBreakpoints mfile = do
   hsc_env <- getSession
   bids <- getActiveBreakpoints mfile
   forM_ bids $ \bid -> do
+#if MIN_VERSION_ghc(9,13,20250630)
+    GHC.setupBreakpoint (hscInterp hsc_env) bid (breakpointStatusInt BreakpointDisabled)
+#else
     GHC.setupBreakpoint hsc_env bid (breakpointStatusInt BreakpointDisabled)
+#endif
 
   -- Clear out the state
   bpsRef <- asks activeBreakpoints
@@ -48,7 +56,7 @@ clearBreakpoints mfile = do
 -- | Find a 'BreakpointId' and its span from a module + line + column.
 --
 -- Used by 'setBreakpoints' and 'GetBreakpointsAt' requests
-getBreakpointsAt :: ModSummary {-^ module -} -> Int {-^ line num -} -> Maybe Int {-^ column num -} -> Debugger (Maybe (BreakIndex, RealSrcSpan))
+getBreakpointsAt :: ModSummary {-^ module -} -> Int {-^ line num -} -> Maybe Int {-^ column num -} -> Debugger (Maybe (Int, RealSrcSpan))
 getBreakpointsAt modl lineNum columnNum = do
   -- TODO: Cache moduleLineMap.
   mticks <- makeModuleLineMap (ms_mod modl)
@@ -96,7 +104,11 @@ setBreakpoint FunctionBreak{function} bp_status = do
               , sourceSpan = realSrcSpanToSourceSpan spn
               , breakId = bid
               }
+#if MIN_VERSION_ghc(9,13,20250630)
+      case maybe [] (findBreakForBind fun_str . imodBreaks_modBreaks) modBreaks of
+#else
       case maybe [] (findBreakForBind fun_str) modBreaks of
+#endif
         []  -> do
           liftIO $ logOutput logger (text $ "No breakpoint found by name " ++ function ++ ". Ignoring...")
           return BreakNotFound

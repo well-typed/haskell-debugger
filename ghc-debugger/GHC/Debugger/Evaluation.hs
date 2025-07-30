@@ -17,11 +17,16 @@ import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env as GHC
 import GHC.Driver.Monad
 import GHC.Runtime.Debugger.Breakpoints as GHC
+#if MIN_VERSION_ghc(9,13,20250701)
+import GHC.ByteCode.Breakpoints
+#else
 import GHC.Types.Breakpoint
+#endif
 import GHC.Types.Name.Occurrence (mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig)
 import GHC.Utils.Outputable as GHC
 import qualified GHCi.Message as GHCi
+import qualified GHC.Data.Strict as Strict
 
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Monad

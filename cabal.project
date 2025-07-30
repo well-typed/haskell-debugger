@@ -1,6 +1,6 @@
 packages: .
 
-allow-newer: ghc-bignum,containers,time,ghc
+allow-newer: ghc-bignum,containers,time,ghc,base,template-haskell
 
 package *
     -- Speeds up a bit
