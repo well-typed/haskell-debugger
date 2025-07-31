@@ -2,8 +2,8 @@ import { DebugClient } from '@vscode/debugadapter-testsupport';
 import * as cp from 'child_process';
 import * as net from 'net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { mkdtempSync, cpSync } from 'node:fs';
+import { join, normalize } from 'node:path';
+import { mkdtempSync, cpSync, realpathSync } from 'node:fs';
 import assert from 'assert';
 
 function getFreePort() {
@@ -75,7 +75,7 @@ describe("Debug Adapter Tests", function () {
         const tmp = mkdtempSync(join(tmpdir(), "ghc-debugger-")) + path
         const data = process.cwd() + path;
         cpSync(data, tmp, { recursive: true }) // Copy data contents to temp directory
-        return tmp
+        return realpathSync(tmp)
     }
 
     const mkConfig = config => {
