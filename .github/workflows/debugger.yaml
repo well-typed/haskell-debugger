@@ -55,7 +55,7 @@ jobs:
   #     - uses: haskell-actions/setup@v2
   #       with:
   #         ghc-version: latest-nightly
-  #         cabal-version: latest
+  #         cabal-version: 3.14
   #         ghcup-release-channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
 
   #     - name: Build ghc-debug-adapter
@@ -74,7 +74,7 @@ jobs:
       - uses: haskell-actions/setup@v2
         with:
           ghc-version: latest-nightly
-          cabal-version: latest
+          cabal-version: 3.14
           ghcup-release-channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
 
       - uses: cachix/install-nix-action@v31
