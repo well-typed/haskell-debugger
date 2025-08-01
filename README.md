@@ -99,7 +99,7 @@ Many not listed! Here are a few things:
 - [x] Continue (resume execution forward)
 - [x] Next (step within local function)
 - [x] Step into (single step to next immediate tick)
-- [ ] Step out (execute until end of function and break after the call)
+- [x] Step out (execute until end of function and break after the call)
 
 ### In Reverse
 
