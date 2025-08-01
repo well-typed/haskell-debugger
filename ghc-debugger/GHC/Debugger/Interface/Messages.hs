@@ -210,7 +210,11 @@ data BreakFound
   = BreakFound
     { changed :: !Bool
     -- ^ Did the status of the found breakpoint change?
+#if MIN_VERSION_ghc(9,13,20250730)
+    , breakId :: [GHC.InternalBreakpointId]
+#else
     , breakId :: GHC.BreakpointId
+#endif
     -- ^ Internal breakpoint identifier (module + ix) (TODO: Don't expose GHC)
     , sourceSpan :: SourceSpan
     -- ^ Source span for interface
@@ -229,7 +233,11 @@ data BreakFound
 data EvalResult
   = EvalCompleted { resultVal :: String, resultType :: String }
   | EvalException { resultVal :: String, resultType :: String }
+#if MIN_VERSION_ghc(9,13,20250730)
+  | EvalStopped   { breakId :: Maybe GHC.InternalBreakpointId {-^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)? -} }
+#else
   | EvalStopped   { breakId :: Maybe GHC.BreakpointId {-^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)? -} }
+#endif
   -- | Evaluation failed for some reason other than completed/completed-with-exception/stopped.
   | EvalAbortedWith String
   deriving (Show, Generic)
@@ -283,6 +291,23 @@ instance FromJSON ScopeInfo
 instance FromJSON VarInfo
 instance FromJSON VarFields
 
+#if MIN_VERSION_ghc(9,13,20250730)
+
+instance Show GHC.InternalBreakpointId where
+  show (GHC.InternalBreakpointId m ix) = "InternalBreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix
+
+instance ToJSON GHC.InternalBreakpointId where
+  toJSON (GHC.InternalBreakpointId (Module unit mn) ix) =
+    object [ "module_name" .= moduleNameString mn
+           , "module_unit" .= unitString unit
+           , "ix" .= ix
+           ]
+instance FromJSON GHC.InternalBreakpointId where
+  parseJSON = withObject "InternalBreakpointId" $ \v -> GHC.InternalBreakpointId
+        <$> (Module <$> (stringToUnit <$> v .: "module_unit") <*> (mkModuleName <$> v .: "module_name"))
+        <*> v .: "ix"
+#else
+
 instance Show GHC.BreakpointId where
   show (GHC.BreakpointId m ix) = "BreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix
 
@@ -296,3 +321,5 @@ instance FromJSON GHC.BreakpointId where
   parseJSON = withObject "BreakpointId" $ \v -> GHC.BreakpointId
         <$> (Module <$> (stringToUnit <$> v .: "module_unit") <*> (mkModuleName <$> v .: "module_name"))
         <*> v .: "ix"
+
+#endif

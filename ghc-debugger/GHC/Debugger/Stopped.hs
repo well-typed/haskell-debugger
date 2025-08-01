@@ -12,6 +12,9 @@ import GHC.Types.Unique.FM
 #if MIN_VERSION_ghc(9,13,20250417)
 import GHC.Types.Name.Occurrence (sizeOccEnv)
 #endif
+#if MIN_VERSION_ghc(9,13,20250701)
+import GHC.ByteCode.Breakpoints
+#endif
 import GHC.Types.Name.Reader
 import GHC.Unit.Home.ModInfo
 import GHC.Unit.Module.ModDetails
@@ -202,9 +205,15 @@ getVariables vk = do
         mapM tyThingToVarInfo =<< GHC.getBindings
 
       ModuleVariables -> Right <$> do
-        case ibi_tick_mod <$> GHC.resumeBreakpointId r of
+        case GHC.resumeBreakpointId r of
           Nothing -> return []
-          Just curr_modl -> do
+          Just ibi -> do
+#if MIN_VERSION_ghc(9,13,20250730)
+            curr_modl <- liftIO $ getBreakSourceMod ibi <$>
+                          readIModBreaks (hsc_HUG hsc_env) ibi
+#else
+            let curr_modl = ibi_tick_mod ibi
+#endif
             things <- typeEnvElts <$> getTopEnv curr_modl
             mapM (\tt -> do
               nameStr <- display (getName tt)
@@ -212,9 +221,15 @@ getVariables vk = do
               return vi{varName = nameStr}) things
 
       GlobalVariables -> Right <$> do
-        case ibi_tick_mod <$> GHC.resumeBreakpointId r of
+        case GHC.resumeBreakpointId r of
           Nothing -> return []
-          Just curr_modl -> do
+          Just ibi -> do
+#if MIN_VERSION_ghc(9,13,20250730)
+            curr_modl <- liftIO $ getBreakSourceMod ibi <$>
+                          readIModBreaks (hsc_HUG hsc_env) ibi
+#else
+            let curr_modl = ibi_tick_mod ibi
+#endif
             names <- map greName . globalRdrEnvElts <$> getTopImported curr_modl
             mapM (\n-> do
               nameStr <- display n

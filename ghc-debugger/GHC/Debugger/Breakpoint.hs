@@ -83,11 +83,19 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
         Just (bix, spn) -> do
           let bid = BreakpointId { bi_tick_mod = ms_mod modl
                                  , bi_tick_index = bix }
+#if MIN_VERSION_ghc(9,13,20250730)
+          (changed, ibis) <- registerBreakpoint bid bp_status ModuleBreakpointKind
+#else
           changed <- registerBreakpoint bid bp_status ModuleBreakpointKind
+#endif
           return $ BreakFound
             { changed = changed
             , sourceSpan = realSrcSpanToSourceSpan spn
+#if MIN_VERSION_ghc(9,13,20250730)
+            , breakId = ibis
+#else
             , breakId = bid
+#endif
             }
 setBreakpoint FunctionBreak{function} bp_status = do
   logger <- getLogger
@@ -98,11 +106,19 @@ setBreakpoint FunctionBreak{function} bp_status = do
           applyBreak (bix, spn) = do
             let bid = BreakpointId { bi_tick_mod = modl
                                    , bi_tick_index = bix }
+#if MIN_VERSION_ghc(9,13,20250730)
+            (changed, ibis) <- registerBreakpoint bid bp_status FunctionBreakpointKind
+#else
             changed <- registerBreakpoint bid bp_status FunctionBreakpointKind
+#endif
             return $ BreakFound
               { changed = changed
               , sourceSpan = realSrcSpanToSourceSpan spn
+#if MIN_VERSION_ghc(9,13,20250730)
+              , breakId = ibis
+#else
               , breakId = bid
+#endif
               }
 #if MIN_VERSION_ghc(9,13,20250630)
       case maybe [] (findBreakForBind fun_str . imodBreaks_modBreaks) modBreaks of

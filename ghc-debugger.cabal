@@ -1,4 +1,4 @@
-cabal-version:      3.0
+cabal-version:      3.14
 name:               ghc-debugger
 version:            0.4.0.0
 synopsis:
@@ -39,6 +39,11 @@ source-repository head
 common warnings
     ghc-options: -Wall
 
+-- custom-setup
+--   setup-depends:
+--     base        >= 4.21 && < 5,
+--     Cabal-hooks >= 3.14 && < 3.18,
+
 library
     import:           warnings
     exposed-modules:  GHC.Debugger,
@@ -56,7 +61,7 @@ library
                       GHC.Debugger.Session,
                       GHC.Debugger.Interface.Messages
     -- other-modules:
-    -- other-extensions:
+    default-extensions: CPP
     build-depends:    base > 4.21 && < 5,
                       ghc >= 9.13 && < 9.16, ghci >= 9.13 && < 9.16,
                       array >= 0.5.8 && < 0.6,
@@ -104,6 +109,7 @@ executable ghc-debug-adapter
         dap >= 0.2 && < 1,
     hs-source-dirs:   ghc-debug-adapter
     default-language: GHC2021
+    default-extensions: CPP
     ghc-options: -threaded
 
 test-suite ghc-debugger-test

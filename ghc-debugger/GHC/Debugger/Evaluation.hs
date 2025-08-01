@@ -169,7 +169,11 @@ handleExecResult = \case
       -- TODO: force the exception to display string with Backtrace?
       return EvalStopped{breakId = Nothing}
     ExecBreak {breakNames = _, breakPointId} ->
+#if MIN_VERSION_ghc(9,13,20250730)
+      return EvalStopped{breakId = breakPointId}
+#else
       return EvalStopped{breakId = toBreakpointId <$> breakPointId}
+#endif
 
 -- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
 inspectName :: Name -> Debugger (Maybe VarInfo)

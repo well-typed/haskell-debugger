@@ -25,6 +25,7 @@ import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Heap.Inspect
 import GHC.Unit.Module.Env as GHC
+import GHC.Runtime.Debugger.Breakpoints
 import GHC.Driver.Env
 
 import Data.IORef
@@ -175,7 +176,11 @@ debuggerLoggerAction h a b c d = do
 -- 'BreakpointStatus' being set.
 --
 -- Returns @True@ when the breakpoint status is changed.
+#if MIN_VERSION_ghc(9,13,20250730)
+registerBreakpoint :: GHC.BreakpointId -> BreakpointStatus -> BreakpointKind -> Debugger (Bool, [GHC.InternalBreakpointId])
+#else
 registerBreakpoint :: GHC.BreakpointId -> BreakpointStatus -> BreakpointKind -> Debugger Bool
+#endif
 registerBreakpoint bp@GHC.BreakpointId
                     { GHC.bi_tick_mod = mod
                     , GHC.bi_tick_index = bid } status kind = do
@@ -183,7 +188,11 @@ registerBreakpoint bp@GHC.BreakpointId
   -- Set breakpoint in GHC session
   let breakpoint_count = breakpointStatusInt status
   hsc_env <- GHC.getSession
-#if MIN_VERSION_ghc(9,13,20250630)
+#if MIN_VERSION_ghc(9,13,20250730)
+  internal_break_ids <- getInternalBreaksOf bp
+  forM_ internal_break_ids $ \ibi -> do
+    GHC.setupBreakpoint (hscInterp hsc_env) ibi breakpoint_count
+#elif MIN_VERSION_ghc(9,13,20250630)
   GHC.setupBreakpoint (hscInterp hsc_env) bp breakpoint_count
 #else
   GHC.setupBreakpoint hsc_env bp breakpoint_count
@@ -227,12 +236,21 @@ registerBreakpoint bp@GHC.BreakpointId
 
   -- no races since the debugger execution is run in a single thread
   liftIO $ writeIORef brksRef newBrks
+#if MIN_VERSION_ghc(9,13,20250730)
+  return (changed, internal_break_ids)
+#else
   return changed
+#endif
+
 
 -- | Get a list with all currently active breakpoints on the given module (by path)
 --
 -- If the path argument is @Nothing@, get all active function breakpoints instead
+#if MIN_VERSION_ghc(9,13,20250730)
+getActiveBreakpoints :: Maybe FilePath -> Debugger [GHC.InternalBreakpointId]
+#else
 getActiveBreakpoints :: Maybe FilePath -> Debugger [GHC.BreakpointId]
+#endif
 getActiveBreakpoints mfile = do
   m <- asks activeBreakpoints >>= liftIO . readIORef
   case mfile of
@@ -240,7 +258,11 @@ getActiveBreakpoints mfile = do
       mms <- getModuleByPath file
       case mms of
         Right ms ->
-          return $
+#if MIN_VERSION_ghc(9,13,20250730)
+          concat <$> mapM getInternalBreaksOf
+#else
+          return
+#endif
             [ GHC.BreakpointId mod bix
             | (mod, im) <- moduleEnvToList m
             , mod == ms_mod ms
@@ -251,7 +273,11 @@ getActiveBreakpoints mfile = do
           displayWarnings [e]
           return []
     Nothing -> do
-      return $
+#if MIN_VERSION_ghc(9,13,20250730)
+      concat <$> mapM getInternalBreaksOf
+#else
+      return
+#endif
         [ GHC.BreakpointId mod bix
         | (mod, im) <- moduleEnvToList m
         , (bix, (status, kind)) <- IM.assocs im
@@ -420,4 +446,14 @@ instance GHC.GhcMonad Debugger where
   getSession = liftGhc GHC.getSession
   setSession s = liftGhc $ GHC.setSession s
 
+--------------------------------------------------------------------------------
 
+#if MIN_VERSION_ghc(9,13,20250730)
+-- | Find all the internal breakpoints that use the given source-level breakpoint id
+getInternalBreaksOf :: BreakpointId -> Debugger [InternalBreakpointId]
+getInternalBreaksOf bi = do
+  bs <- mkBreakpointOccurrences
+  return $
+    fromMaybe [] {- still not found after refresh -} $
+      lookupBreakpointOccurrences bs bi
+#endif
