@@ -109,9 +109,9 @@ Many not listed! Here are a few things:
 
 ## Breakpoints
 
-- [x] Module breakpoints
-- [x] Function breakpoints
-- [x] Exception breakpoints
+- [x] Module breakpoints
+- [x] Function breakpoints
+- [x] Exception breakpoints
 - [ ] Data breakpoints
 - [ ] Instruction breakpoints
 
