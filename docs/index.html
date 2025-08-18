@@ -65,7 +65,7 @@
 
     /* https://modernfontstacks.com/ */
     body {
-        overflow-x: hidden;
+        /* overflow-x: hidden; */
         background-color: #fffff9;
         color: #111;
 
@@ -101,12 +101,12 @@
         z-index: -100;
     }
 
-    pre > code {
-        display: block;
+    pre {
+        white-space: pre-wrap;
+        border-radius: 0.33em;
+        padding: 1.33em;
         background-color: #fffff9;
         color: #111;
-        padding: 1.33em;
-        border-radius: 0.33em;
         font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
         font-weight: normal;
     }
@@ -144,7 +144,7 @@
       font-weight: 600;
     }
 
-    code.dark {
+    pre.dark {
       background: #5f5086;
       color: #fffff9
     }
@@ -223,7 +223,9 @@
             <p>
             First, the executable must be made available in <code>PATH</code>. It can be downloaded and installed from hackage with:
             </p>
-            <pre style="margin: 1em 0"><code class="dark" style="width: 100%; font-size: 0.8rem">cabal install ghc-debugger:ghc-debug-adapter --program-suffix="-$(ghc --numeric-version)"</code></pre>
+            <div>
+            <pre style="margin: 1em 0;" class="dark"><code>cabal install ghc-debugger:ghc-debug-adapter --program-suffix="-$(ghc --numeric-version)"</code></pre>
+            </div>
             <p style="margin-top:0em; padding-top: 0em;"><em><code>ghc-debug-adapter</code> is only supported from GHC 9.14 onwards.</em></p>
             <p style="margin-top:2em">
             Second, your editor must be taught how to launch <code>ghc-debug-adapter</code>:
@@ -305,13 +307,13 @@
 
     <section style="background:#453a62; color:#fffff9">
         <h2 id="talks">Talks</h2>
-        <div style="display: flex; flex-direction: row; gap: 1em; flex-wrap: wrap; margin: auto; text-align: center; margin-top: 1em">
-            <iframe width="560" height="315" src="https://www.youtube.com/embed/p-hBweQg42s?si=mjZ_G-p0jrJoy7yj" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+        <div style="display: flex; flex-direction: row; gap: 1em; flex-wrap: wrap; margin: auto; text-align: center; margin-top: 1em; width: 100%; justify-content: center; align-items: center;">
+            <iframe style="aspect-ratio: 16 / 9; width: 100%; max-width: 50em" src="https://www.youtube.com/embed/p-hBweQg42s?si=mjZ_G-p0jrJoy7yj" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
             <!-- <iframe width="560" height="315" src="https://www.youtube.com/embed/p-hBweQg42s?si=mjZ_G-p0jrJoy7yj" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe> -->
         </div>
     </section>
 
-    <footer  style="background:#453a62; color:#fffff9">
+    <footer style="background:#453a62; color:#fffff9">
         &copy; 2025 <a style="color:#fffff9" href="https://mercury.com">Mercury</a>, <a style="color:#fffff9" href="https://well-typed.com">Well-Typed, LLP</a>
     </footer>
 
