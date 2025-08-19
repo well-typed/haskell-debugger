@@ -1,15 +1,41 @@
-{-# LANGUAGE CPP, RecordWildCards, LambdaCase #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
+
 module Development.Debug.Adapter.Flags where
 
-import Data.Function
-import System.FilePath
-import System.Directory
+import Colog.Core (LogAction (..), Severity (..), WithSeverity (..))
+import Colog.Core.Action (cmap)
+import Control.Applicative ((<|>))
+import Control.Exception (handleJust)
+import Control.Monad
 import Control.Monad.Except
 import Control.Monad.IO.Class
+import Control.Monad.Trans.Maybe
+import Data.Bifunctor
+import Data.Function
+import Data.Functor ((<&>))
+import Data.Maybe
+import Data.Text (Text)
+import qualified Data.Text as Text
+import Data.Void
+import Prettyprinter
+import Prettyprinter.Render.Text (renderStrict)
+import System.Directory hiding (findFile)
+import System.FilePath
+import System.IO.Error
 
 import qualified HIE.Bios as HIE
-import qualified HIE.Bios.Types as HIE
+import qualified HIE.Bios.Config as Config
+import qualified HIE.Bios.Cradle as HIE
 import qualified HIE.Bios.Environment as HIE
+import qualified HIE.Bios.Types as HIE
+import qualified Hie.Cabal.Parser as Implicit
+import qualified Hie.Locate as Implicit
+import qualified Hie.Yaml as Implicit
+
+import qualified Development.Debug.Adapter.Output as Output
 
 -- | Flags inferred by @hie-bios@ to invoke GHC
 data HieBiosFlags = HieBiosFlags
@@ -24,16 +50,33 @@ data HieBiosFlags = HieBiosFlags
       -- root of the cradle, but in some sub-directory.
       }
 
--- | Make 'HieBiosFlags' from the given target file
-hieBiosFlags :: FilePath {-^ Project root -} -> FilePath {-^ Entry file relative to root -} -> IO (Either String HieBiosFlags)
-hieBiosFlags root relTarget = runExceptT $ do
+renderHieBiosLog :: WithSeverity HIE.Log -> Text
+renderHieBiosLog msgWithSev =
+  let
+    docToText = renderStrict . layoutPretty defaultLayoutOptions
+    logMsg :: Text
+    logMsg = docToText (pretty $ getMsg msgWithSev)
+    herald = case getSeverity msgWithSev of
+      Debug -> "[DEBUG]"
+      Info -> "[INFO]"
+      Warning -> "[WARNING]"
+      Error -> "[ERROR]"
+  in
+    herald <> " " <> logMsg
 
+-- | Make 'HieBiosFlags' from the given target file
+hieBiosFlags :: LogAction IO Text {-^ Logger -}
+             -> FilePath {-^ Project root -}
+             -> FilePath {-^ Entry file relative to root -}
+             -> IO (Either String HieBiosFlags)
+hieBiosFlags textLogger root relTarget = runExceptT $ do
+  let logger = cmap renderHieBiosLog textLogger
   let target = root </> relTarget
 
   explicitCradle <- HIE.findCradle target & liftIO
-  -- TODO: Use proper loggers here
-  cradle <- maybe (HIE.loadImplicitCradle mempty target)
-                  (HIE.loadCradle mempty) explicitCradle & liftIO
+
+  cradle <- maybe (loadImplicitCradle logger target)
+                  (HIE.loadCradle logger) explicitCradle & liftIO
 
   libdir <- liftIO (HIE.getRuntimeGhcLibDir cradle) >>= unwrapCradleResult "Failed to get runtime GHC libdir"
 
@@ -80,3 +123,139 @@ ghcDebuggerFlags :: [String]
 ghcDebuggerFlags =
   [ "-fno-it" -- don't introduce @it@ after evaluating something at the prompt
   ]
+
+-- ----------------------------------------------------------------------------
+-- Implicit cradle discovery logic mirroring the one used by HLS.
+-- The code itself is copy-pasted from HLS.
+-- Obviously, we want to reuse the logic without having to depend on HLS.
+-- We should factor out a common sub-component from HLS and use it here as well.
+-- ----------------------------------------------------------------------------
+
+loadImplicitCradle :: Show a => LogAction IO (WithSeverity HIE.Log) -> FilePath -> IO (HIE.Cradle a)
+loadImplicitCradle l wfile = do
+  is_dir <- doesDirectoryExist wfile
+  let wdir | is_dir = wfile
+           | otherwise = takeDirectory wfile
+  cfg <- runMaybeT (implicitConfig wdir)
+  case cfg of
+    Just bc -> HIE.getCradle l absurd bc
+    Nothing -> return $ HIE.defaultCradle l wdir
+
+-- | Wraps up the cradle inferred by @inferCradleTree@ as a @CradleConfig@ with no dependencies
+implicitConfig :: FilePath -> MaybeT IO (Config.CradleConfig a, FilePath)
+implicitConfig = (fmap . first) (Config.CradleConfig noDeps) . inferCradleTree
+  where
+  noDeps :: [FilePath]
+  noDeps = []
+
+
+inferCradleTree :: FilePath -> MaybeT IO (Config.CradleTree a, FilePath)
+inferCradleTree start_dir =
+       maybeItsBios
+   -- If we have both a config file (cabal.project/stack.yaml) and a work dir
+   -- (dist-newstyle/.stack-work), prefer that
+   <|> (cabalExecutable >> cabalConfigDir start_dir >>= \dir -> cabalWorkDir dir >> pure (simpleCabalCradle dir))
+   <|> (stackExecutable >> stackConfigDir start_dir >>= \dir -> stackWorkDir dir >> stackCradle dir)
+   -- If we have a cabal.project OR we have a .cabal and dist-newstyle, prefer cabal
+   <|> (cabalExecutable >> (cabalConfigDir start_dir <|> cabalFileAndWorkDir) <&> simpleCabalCradle)
+   -- If we have a stack.yaml, use stack
+   <|> (stackExecutable >> stackConfigDir start_dir >>= stackCradle)
+   -- If we have a cabal file, use cabal
+   <|> (cabalExecutable >> cabalFileDir start_dir <&> simpleCabalCradle)
+
+  where
+  maybeItsBios = (\wdir -> (Config.Bios (Config.Program $ wdir </> ".hie-bios") Nothing Nothing, wdir)) <$> biosWorkDir start_dir
+
+  cabalFileAndWorkDir = cabalFileDir start_dir >>= (\dir -> cabalWorkDir dir >> pure dir)
+
+-- | Generate a stack cradle given a filepath.
+--
+-- Since we assume there was proof that this file belongs to a stack cradle
+-- we look immediately for the relevant @*.cabal@ and @stack.yaml@ files.
+-- We do not look for package.yaml, as we assume the corresponding .cabal has
+-- been generated already.
+--
+-- We parse the @stack.yaml@ to find relevant @*.cabal@ file locations, then
+-- we parse the @*.cabal@ files to generate a mapping from @hs-source-dirs@ to
+-- component names.
+stackCradle :: FilePath -> MaybeT IO (Config.CradleTree a, FilePath)
+stackCradle fp = do
+  pkgs <- Implicit.stackYamlPkgs fp
+  pkgsWithComps <- liftIO $ catMaybes <$> mapM (Implicit.nestedPkg fp) pkgs
+  let yaml = fp </> "stack.yaml"
+  pure $ (,fp) $ case pkgsWithComps of
+    [] -> Config.Stack (Config.StackType Nothing (Just yaml))
+    ps -> Config.StackMulti mempty $ do
+      Implicit.Package n cs <- ps
+      c <- cs
+      let (prefix, comp) = Implicit.stackComponent n c
+      pure (prefix, Config.StackType (Just comp) (Just yaml))
+
+-- | By default, we generate a simple cabal cradle which is equivalent to the
+-- following hie.yaml:
+--
+-- @
+--   cradle:
+--     cabal:
+-- @
+--
+-- Note, this only works reliable for reasonably modern cabal versions >= 3.2.
+simpleCabalCradle :: FilePath -> (Config.CradleTree a, FilePath)
+simpleCabalCradle fp = (Config.Cabal $ Config.CabalType Nothing Nothing, fp)
+
+cabalExecutable :: MaybeT IO FilePath
+cabalExecutable = MaybeT $ findExecutable "cabal"
+
+stackExecutable :: MaybeT IO FilePath
+stackExecutable = MaybeT $ findExecutable "stack"
+
+biosWorkDir :: FilePath -> MaybeT IO FilePath
+biosWorkDir = findFileUpwards (".hie-bios" ==)
+
+cabalWorkDir :: FilePath -> MaybeT IO ()
+cabalWorkDir wdir = do
+  check <- liftIO $ doesDirectoryExist (wdir </> "dist-newstyle")
+  unless check $ fail "No dist-newstyle"
+
+stackWorkDir :: FilePath -> MaybeT IO ()
+stackWorkDir wdir = do
+  check <- liftIO $ doesDirectoryExist (wdir </> ".stack-work")
+  unless check $ fail "No .stack-work"
+
+cabalConfigDir :: FilePath -> MaybeT IO FilePath
+cabalConfigDir = findFileUpwards (\fp -> fp == "cabal.project" || fp == "cabal.project.local")
+
+cabalFileDir :: FilePath -> MaybeT IO FilePath
+cabalFileDir = findFileUpwards (\fp -> takeExtension fp == ".cabal")
+
+stackConfigDir :: FilePath -> MaybeT IO FilePath
+stackConfigDir = findFileUpwards isStack
+  where
+    isStack name = name == "stack.yaml"
+
+-- | Searches upwards for the first directory containing a file to match
+-- the predicate.
+findFileUpwards :: (FilePath -> Bool) -> FilePath -> MaybeT IO FilePath
+findFileUpwards p dir = do
+  cnts <-
+    liftIO
+    $ handleJust
+        -- Catch permission errors
+        (\(e :: IOError) -> if isPermissionError e then Just [] else Nothing)
+        pure
+        (findFile p dir)
+
+  case cnts of
+    [] | dir' == dir -> fail "No cabal files"
+            | otherwise   -> findFileUpwards p dir'
+    _ : _ -> return dir
+  where dir' = takeDirectory dir
+
+-- | Sees if any file in the directory matches the predicate
+findFile :: (FilePath -> Bool) -> FilePath -> IO [FilePath]
+findFile p dir = do
+  b <- doesDirectoryExist dir
+  if b then getFiles >>= filterM doesPredFileExist else return []
+  where
+    getFiles = filter p <$> getDirectoryContents dir
+    doesPredFileExist file = doesFileExist $ dir </> file

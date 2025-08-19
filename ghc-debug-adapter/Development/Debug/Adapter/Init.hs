@@ -9,6 +9,7 @@ import qualified Data.Text.IO as T
 import qualified System.Process as P
 import Data.Function
 import Data.Functor
+import Colog.Core (LogAction (..))
 import Control.Monad.IO.Class
 import System.IO
 import GHC.IO.Encoding
@@ -63,8 +64,8 @@ data LaunchArgs
 -- | Initialize debugger
 --
 -- Returns @True@ if successful.
-initDebugger ::  LaunchArgs -> DebugAdaptor Bool
-initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs, extraGhcArgs} = do
+initDebugger :: LogAction IO T.Text -> LaunchArgs -> DebugAdaptor Bool
+initDebugger logger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs, extraGhcArgs} = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
 
@@ -79,7 +80,7 @@ initDebugger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryAr
                         "). Instead, got " ++ (init{-drops \n-} actualVersion) ++ "."
 
   Output.console $ T.pack "Discovering session flags with hie-bios..."
-  mflags <- liftIO (hieBiosFlags projectRoot entryFile)
+  mflags <- liftIO (hieBiosFlags logger projectRoot entryFile)
   case mflags of
     Left e -> do exitWithMsg e
                  return False

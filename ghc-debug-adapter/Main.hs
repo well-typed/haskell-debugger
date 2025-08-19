@@ -36,7 +36,7 @@ main = do
   withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
     hSetBuffering realStdout LineBuffering
     l <- handleLogger realStdout
-    runDAPServerWithLogger (cmap renderDAPLog l) config talk
+    runDAPServerWithLogger (cmap renderDAPLog l) config (talk l)
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: Int -> IO ServerConfig
@@ -90,57 +90,58 @@ getConfig port = do
 -- | Main function where requests are received and Events + Responses are returned.
 -- The core logic of communicating between the client <-> adaptor <-> debugger
 -- is implemented in this function.
-talk :: Command -> DebugAdaptor ()
+talk :: LogAction IO T.Text -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk CommandInitialize = do
-  -- InitializeRequestArguments{..} <- getArguments
-  sendInitializeResponse
+talk l = \ case
+  CommandInitialize -> do
+    -- InitializeRequestArguments{..} <- getArguments
+    sendInitializeResponse
 --------------------------------------------------------------------------------
-talk CommandLaunch = do
-  success <- initDebugger =<< getArguments
-  if success then do
-    sendLaunchResponse   -- ack
-    sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
-  else
-    sendError ErrorMessageCancelled Nothing
+  CommandLaunch -> do
+    success <- initDebugger l =<< getArguments
+    if success then do
+      sendLaunchResponse   -- ack
+      sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
+    else
+      sendError ErrorMessageCancelled Nothing
 --------------------------------------------------------------------------------
-talk CommandAttach = undefined
+  CommandAttach -> undefined
 --------------------------------------------------------------------------------
-talk CommandBreakpointLocations       = commandBreakpointLocations
-talk CommandSetBreakpoints            = commandSetBreakpoints
-talk CommandSetFunctionBreakpoints    = commandSetFunctionBreakpoints
-talk CommandSetExceptionBreakpoints   = commandSetExceptionBreakpoints
-talk CommandSetDataBreakpoints        = undefined
-talk CommandSetInstructionBreakpoints = undefined
+  CommandBreakpointLocations       -> commandBreakpointLocations
+  CommandSetBreakpoints            -> commandSetBreakpoints
+  CommandSetFunctionBreakpoints    -> commandSetFunctionBreakpoints
+  CommandSetExceptionBreakpoints   -> commandSetExceptionBreakpoints
+  CommandSetDataBreakpoints        -> undefined
+  CommandSetInstructionBreakpoints -> undefined
 ----------------------------------------------------------------------------
-talk CommandLoadedSources = undefined
+  CommandLoadedSources -> undefined
 ----------------------------------------------------------------------------
-talk CommandConfigurationDone = do
-  sendConfigurationDoneResponse
-  -- now that it has been configured, start executing until it halts, then send an event
-  startExecution >>= handleEvalResult False
+  CommandConfigurationDone -> do
+    sendConfigurationDoneResponse
+    -- now that it has been configured, start executing until it halts, then send an event
+    startExecution >>= handleEvalResult False
 ----------------------------------------------------------------------------
-talk CommandThreads    = commandThreads
-talk CommandStackTrace = commandStackTrace
-talk CommandScopes     = commandScopes
-talk CommandVariables  = commandVariables
+  CommandThreads    -> commandThreads
+  CommandStackTrace -> commandStackTrace
+  CommandScopes     -> commandScopes
+  CommandVariables  -> commandVariables
 ----------------------------------------------------------------------------
-talk CommandContinue   = commandContinue
+  CommandContinue   -> commandContinue
 ----------------------------------------------------------------------------
-talk CommandNext       = commandNext
+  CommandNext       -> commandNext
 ----------------------------------------------------------------------------
-talk CommandStepIn     = commandStepIn
-talk CommandStepOut    = commandStepOut
+  CommandStepIn     -> commandStepIn
+  CommandStepOut    -> commandStepOut
 ----------------------------------------------------------------------------
-talk CommandEvaluate   = commandEvaluate
+  CommandEvaluate   -> commandEvaluate
 ----------------------------------------------------------------------------
-talk CommandTerminate  = commandTerminate
-talk CommandDisconnect = commandDisconnect
+  CommandTerminate  -> commandTerminate
+  CommandDisconnect -> commandDisconnect
 ----------------------------------------------------------------------------
-talk CommandModules = sendModulesResponse (ModulesResponse [] Nothing)
-talk CommandSource = undefined
-talk CommandPause = undefined
-talk (CustomCommand "mycustomcommand") = undefined
+  CommandModules -> sendModulesResponse (ModulesResponse [] Nothing)
+  CommandSource -> undefined
+  CommandPause -> undefined
+  (CustomCommand "mycustomcommand") -> undefined
 ----------------------------------------------------------------------------
 -- talk cmd = logInfo $ BL8.pack ("GOT cmd " <> show cmd)
 ----------------------------------------------------------------------------

@@ -209,7 +209,7 @@ getVariables vk = do
           Nothing -> return []
           Just ibi -> do
 #if MIN_VERSION_ghc(9,13,20250730)
-            curr_modl <- liftIO $ getBreakSourceMod ibi <$>
+            curr_modl <- liftIO $ bi_tick_mod . getBreakSourceId ibi <$>
                           readIModBreaks (hsc_HUG hsc_env) ibi
 #else
             let curr_modl = ibi_tick_mod ibi
@@ -225,7 +225,7 @@ getVariables vk = do
           Nothing -> return []
           Just ibi -> do
 #if MIN_VERSION_ghc(9,13,20250730)
-            curr_modl <- liftIO $ getBreakSourceMod ibi <$>
+            curr_modl <- liftIO $ bi_tick_mod . getBreakSourceId ibi <$>
                           readIModBreaks (hsc_HUG hsc_env) ibi
 #else
             let curr_modl = ibi_tick_mod ibi
@@ -277,4 +277,3 @@ getTopImported modl = do
 #else
     Just hmi -> return emptyGlobalRdrEnv
 #endif
-
