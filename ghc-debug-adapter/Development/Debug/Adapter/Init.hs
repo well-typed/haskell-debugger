@@ -9,7 +9,6 @@ import qualified Data.Text.IO as T
 import qualified System.Process as P
 import Data.Function
 import Data.Functor
-import Colog.Core (LogAction (..))
 import Control.Monad.IO.Class
 import System.IO
 import GHC.IO.Encoding
@@ -24,6 +23,7 @@ import System.Directory
 import Development.Debug.Adapter
 import Development.Debug.Adapter.Exit
 import Development.Debug.Adapter.Flags
+import Development.Debug.Adapter.Logger
 import qualified Development.Debug.Adapter.Output as Output
 
 import qualified GHC.Debugger as Debugger
@@ -64,7 +64,7 @@ data LaunchArgs
 -- | Initialize debugger
 --
 -- Returns @True@ if successful.
-initDebugger :: LogAction IO T.Text -> LaunchArgs -> DebugAdaptor Bool
+initDebugger :: LogAction IO (WithSeverity T.Text) -> LaunchArgs -> DebugAdaptor Bool
 initDebugger logger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs, extraGhcArgs} = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar

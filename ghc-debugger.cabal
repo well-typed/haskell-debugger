@@ -90,6 +90,7 @@ executable ghc-debug-adapter
                       Development.Debug.Adapter.Evaluation,
                       Development.Debug.Adapter.Init,
                       Development.Debug.Adapter.Interface,
+                      Development.Debug.Adapter.Logger,
                       Development.Debug.Adapter.Output,
                       Development.Debug.Adapter.Exit,
                       Development.Debug.Adapter.Handles,

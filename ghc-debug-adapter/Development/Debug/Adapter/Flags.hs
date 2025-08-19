@@ -5,8 +5,6 @@
 
 module Development.Debug.Adapter.Flags where
 
-import Colog.Core (LogAction (..), Severity (..), WithSeverity (..))
-import Colog.Core.Action (cmap)
 import Control.Applicative ((<|>))
 import Control.Exception (handleJust)
 import Control.Monad
@@ -18,10 +16,7 @@ import Data.Function
 import Data.Functor ((<&>))
 import Data.Maybe
 import Data.Text (Text)
-import qualified Data.Text as Text
 import Data.Void
-import Prettyprinter
-import Prettyprinter.Render.Text (renderStrict)
 import System.Directory hiding (findFile)
 import System.FilePath
 import System.IO.Error
@@ -35,7 +30,7 @@ import qualified Hie.Cabal.Parser as Implicit
 import qualified Hie.Locate as Implicit
 import qualified Hie.Yaml as Implicit
 
-import qualified Development.Debug.Adapter.Output as Output
+import Development.Debug.Adapter.Logger
 
 -- | Flags inferred by @hie-bios@ to invoke GHC
 data HieBiosFlags = HieBiosFlags
@@ -50,27 +45,13 @@ data HieBiosFlags = HieBiosFlags
       -- root of the cradle, but in some sub-directory.
       }
 
-renderHieBiosLog :: WithSeverity HIE.Log -> Text
-renderHieBiosLog msgWithSev =
-  let
-    docToText = renderStrict . layoutPretty defaultLayoutOptions
-    logMsg :: Text
-    logMsg = docToText (pretty $ getMsg msgWithSev)
-    herald = case getSeverity msgWithSev of
-      Debug -> "[DEBUG]"
-      Info -> "[INFO]"
-      Warning -> "[WARNING]"
-      Error -> "[ERROR]"
-  in
-    herald <> " " <> logMsg
-
 -- | Make 'HieBiosFlags' from the given target file
-hieBiosFlags :: LogAction IO Text {-^ Logger -}
+hieBiosFlags :: LogAction IO (WithSeverity Text) {-^ Logger -}
              -> FilePath {-^ Project root -}
              -> FilePath {-^ Entry file relative to root -}
              -> IO (Either String HieBiosFlags)
 hieBiosFlags textLogger root relTarget = runExceptT $ do
-  let logger = cmap renderHieBiosLog textLogger
+  let logger = cmapWithSev renderPretty textLogger
   let target = root </> relTarget
 
   explicitCradle <- HIE.findCradle target & liftIO

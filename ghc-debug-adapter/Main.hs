@@ -14,6 +14,7 @@ import Development.Debug.Adapter.Stopped
 import Development.Debug.Adapter.Evaluation
 import Development.Debug.Adapter.Exit
 import Development.Debug.Adapter.Handles
+import Development.Debug.Adapter.Logger
 import Development.Debug.Adapter
 
 import System.IO (hSetBuffering, BufferMode(LineBuffering))
@@ -36,7 +37,8 @@ main = do
   withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
     hSetBuffering realStdout LineBuffering
     l <- handleLogger realStdout
-    runDAPServerWithLogger (cmap renderDAPLog l) config (talk l)
+    let loggerWithSev = cmap (renderWithSeverity id) l
+    runDAPServerWithLogger (cmap renderDAPLog l) config (talk loggerWithSev)
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: Int -> IO ServerConfig
@@ -90,7 +92,7 @@ getConfig port = do
 -- | Main function where requests are received and Events + Responses are returned.
 -- The core logic of communicating between the client <-> adaptor <-> debugger
 -- is implemented in this function.
-talk :: LogAction IO T.Text -> Command -> DebugAdaptor ()
+talk :: LogAction IO (WithSeverity T.Text) -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
 talk l = \ case
   CommandInitialize -> do
