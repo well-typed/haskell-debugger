@@ -80,12 +80,12 @@ exitCleanupWithMsg final_handle msg = do
   exitWithMsg msg
 
 -- | Logs the error to the debug console and sends a terminate event
-exitWithMsg :: String -> DebugAdaptor ()
+exitWithMsg :: String -> DebugAdaptor a
 exitWithMsg msg = do
   Output.important (T.pack msg)
   exitCleanly
 
-exitCleanly :: DebugAdaptor ()
+exitCleanly :: DebugAdaptor a
 exitCleanly = do
 
   sendTerminatedEvent (TerminatedEvent False)
