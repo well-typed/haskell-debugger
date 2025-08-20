@@ -1,14 +1,19 @@
-{-# LANGUAGE CPP, LambdaCase, OverloadedStrings, RecordWildCards, DerivingStrategies, DeriveGeneric, DeriveAnyClass #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- | TODO: This module should be called Launch.
 module Development.Debug.Adapter.Init where
 
-import qualified Data.List as L
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified System.Process as P
 import Data.Function
 import Data.Functor
+import Data.Version (Version(..), showVersion, makeVersion)
 import Control.Monad.IO.Class
 import System.IO
 import GHC.IO.Encoding
@@ -65,25 +70,35 @@ data LaunchArgs
 --
 -- Returns @True@ if successful.
 initDebugger :: LogAction IO (WithSeverity T.Text) -> LaunchArgs -> DebugAdaptor Bool
-initDebugger logger LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs, extraGhcArgs} = do
+initDebugger l LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs, extraGhcArgs} = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
+  let hieBiosLogger = cmapWithSev renderPretty l
+  cradle <- liftIO (hieBiosCradle hieBiosLogger projectRoot entryFile) >>=
+    \ case
+      Left e ->
+        exitWithMsg e
+
+      Right c -> pure c
 
   Output.console $ T.pack "Checking GHC version against debugger version..."
   -- GHC is found in PATH (by hie-bios as well).
-  actualVersion <- liftIO $ P.readProcess "ghc" ["--numeric-version"] []
+  actualVersion <- liftIO (hieBiosRuntimeGhcVersion hieBiosLogger cradle) >>=
+    \ case
+      Left e ->
+        exitWithMsg e
+      Right c -> pure c
   -- Compare the GLASGOW_HASKELL version (e.g. 913) with the actualVersion (e.g. 9.13.1):
-  when (not $ show ( __GLASGOW_HASKELL__ :: Int ) `L.isPrefixOf` (filter (/= '.') actualVersion)) $ do
+  when (compileTimeGhcWithoutPatchVersion /= forgetPatchVersion actualVersion) $ do
     exitWithMsg $ "Aborting...! The GHC version must be the same which " ++
                     "ghc-debug-adapter was compiled against (" ++
-                      show ( __GLASGOW_HASKELL__ :: Int )++
-                        "). Instead, got " ++ (init{-drops \n-} actualVersion) ++ "."
+                      showVersion compileTimeGhcWithoutPatchVersion++
+                        "). Instead, got " ++ (showVersion actualVersion) ++ "."
 
   Output.console $ T.pack "Discovering session flags with hie-bios..."
-  mflags <- liftIO (hieBiosFlags logger projectRoot entryFile)
+  mflags <- liftIO (hieBiosFlags hieBiosLogger cradle projectRoot entryFile)
   case mflags of
-    Left e -> do exitWithMsg e
-                 return False
+    Left e -> exitWithMsg e
     Right flags -> do
 
       let nextFreshBreakpointId = 0
@@ -229,3 +244,16 @@ handleDebuggerOutput readDebuggerOutput withAdaptor = do
         \(_e::SomeException) ->
           -- Cleanly exit when readDebuggerOutput is closed or thread is killed.
           return ()
+
+compileTimeGhcWithoutPatchVersion :: Version
+compileTimeGhcWithoutPatchVersion =
+  let
+    versionNumber = __GLASGOW_HASKELL__ :: Int
+    (major, minor) = divMod versionNumber 100
+  in
+    makeVersion [major, minor]
+
+forgetPatchVersion :: Version -> Version
+forgetPatchVersion v = case versionBranch v of
+  (major:minor:_patches) -> makeVersion [major, minor]
+  _ -> v

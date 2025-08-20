@@ -15,11 +15,12 @@ import Data.Bifunctor
 import Data.Function
 import Data.Functor ((<&>))
 import Data.Maybe
-import Data.Text (Text)
+import Data.Version
 import Data.Void
 import System.Directory hiding (findFile)
 import System.FilePath
 import System.IO.Error
+import Text.ParserCombinators.ReadP (readP_to_S)
 
 import qualified HIE.Bios as HIE
 import qualified HIE.Bios.Config as Config
@@ -45,20 +46,34 @@ data HieBiosFlags = HieBiosFlags
       -- root of the cradle, but in some sub-directory.
       }
 
+hieBiosCradle :: LogAction IO (WithSeverity HIE.Log) {-^ Logger -}
+              -> FilePath {-^ Project root -}
+              -> FilePath {-^ Entry file relative to root -}
+              -> IO (Either String (HIE.Cradle Void))
+hieBiosCradle logger root relTarget = runExceptT $ do
+  let target = root </> relTarget
+  explicitCradle <- HIE.findCradle target & liftIO
+  cradle <- maybe (loadImplicitCradle logger target)
+                  (HIE.loadCradle logger) explicitCradle & liftIO
+  pure cradle
+
+hieBiosRuntimeGhcVersion :: LogAction IO (WithSeverity HIE.Log)
+                         -> HIE.Cradle Void
+                         -> IO (Either String Version)
+hieBiosRuntimeGhcVersion _logger cradle = runExceptT $ do
+  out <- liftIO (HIE.getRuntimeGhcVersion cradle) >>= unwrapCradleResult "Failed to get runtime GHC version"
+  case versionMaybe out of
+    Nothing -> throwError $ "Failed to parse GHC version: " <> out
+    Just ver -> pure ver
+
 -- | Make 'HieBiosFlags' from the given target file
-hieBiosFlags :: LogAction IO (WithSeverity Text) {-^ Logger -}
+hieBiosFlags :: LogAction IO (WithSeverity HIE.Log) {-^ Logger -}
+             -> HIE.Cradle Void {-^ Project cradle the entry file belongs to -}
              -> FilePath {-^ Project root -}
              -> FilePath {-^ Entry file relative to root -}
              -> IO (Either String HieBiosFlags)
-hieBiosFlags textLogger root relTarget = runExceptT $ do
-  let logger = cmapWithSev renderPretty textLogger
+hieBiosFlags _logger cradle root relTarget = runExceptT $ do
   let target = root </> relTarget
-
-  explicitCradle <- HIE.findCradle target & liftIO
-
-  cradle <- maybe (loadImplicitCradle logger target)
-                  (HIE.loadCradle logger) explicitCradle & liftIO
-
   libdir <- liftIO (HIE.getRuntimeGhcLibDir cradle) >>= unwrapCradleResult "Failed to get runtime GHC libdir"
 
   -- To determine the flags we MUST set the current directory to the root
@@ -85,11 +100,12 @@ hieBiosFlags textLogger root relTarget = runExceptT $ do
     , rootDir = HIE.cradleRootDir cradle
     , componentDir = HIE.componentRoot componentOpts
     }
-  where
-    unwrapCradleResult m = \case
-      HIE.CradleNone     -> throwError $ "HIE.CradleNone\n" ++ m
-      HIE.CradleFail err -> throwError $ unlines (HIE.cradleErrorStderr err) ++ "\n" ++ m
-      HIE.CradleSuccess x -> return x
+
+unwrapCradleResult :: MonadError String m => [Char] -> HIE.CradleLoadResult a -> m a
+unwrapCradleResult m = \case
+  HIE.CradleNone      -> throwError $ "HIE.CradleNone\n" ++ m
+  HIE.CradleFail err  -> throwError $ unlines (HIE.cradleErrorStderr err) ++ "\n" ++ m
+  HIE.CradleSuccess x -> return x
 
 extractUnits :: [String] -> ([String], [String])
 extractUnits = go [] []
@@ -104,6 +120,16 @@ ghcDebuggerFlags :: [String]
 ghcDebuggerFlags =
   [ "-fno-it" -- don't introduce @it@ after evaluating something at the prompt
   ]
+
+
+-- ----------------------------------------------------------------------------
+-- Utilities
+-- ----------------------------------------------------------------------------
+
+versionMaybe :: String -> Maybe Version
+versionMaybe xs = case reverse $ readP_to_S parseVersion xs of
+  [] -> Nothing
+  (x:_) -> Just (fst x)
 
 -- ----------------------------------------------------------------------------
 -- Implicit cradle discovery logic mirroring the one used by HLS.
