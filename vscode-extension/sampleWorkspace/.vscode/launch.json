@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "type": "ghc-debugger",
+            "type": "haskell-debugger",
             "request": "launch",
             "name": "Haskell Debugger",
             "projectRoot": "${workspaceFolder}",

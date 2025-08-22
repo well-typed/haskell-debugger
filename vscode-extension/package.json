@@ -4,7 +4,7 @@
   "version": "0.5.0",
   "publisher": "romes",
   "description": "The GHC Haskell Debugger",
-  "repository": "https://github.com/well-typed/ghc-debugger",
+  "repository": "https://github.com/well-typed/haskell-debugger",
   "author": {
     "name": "Rodrigo Mesquita",
     "email": "rodrigo@well-typed.com"
@@ -61,7 +61,7 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onDebug",
-    "onDebugResolve:ghc-debugger"
+    "onDebugResolve:haskell-debugger"
   ],
   "workspaceTrust": {
     "request": "never"
@@ -114,7 +114,7 @@
     ],
     "debuggers": [
       {
-        "type": "ghc-debugger",
+        "type": "haskell-debugger",
         "languages": [
           "haskell"
         ],
@@ -156,7 +156,7 @@
         },
         "initialConfigurations": [
           {
-            "type": "ghc-debugger",
+            "type": "haskell-debugger",
             "request": "launch",
             "name": "Haskell Debugger",
             "projectRoot": "${workspaceFolder}",
@@ -171,7 +171,7 @@
             "label": "Haskell Debugger: Launch",
             "description": "A new configuration for 'debugging' a Haskell project.",
             "body": {
-              "type": "ghc-debugger",
+              "type": "haskell-debugger",
               "request": "launch",
               "name": "Haskell Debugger",
               "projectRoot": "^\"\\${workspaceFolder}\"",

@@ -9,11 +9,11 @@
 -- * DebugAdaptor crashes while executing (handled by DAP library?)
 -- * One of the threads launched by registerNewDebugSession crash
 --
--- == 2. The ghc-debugger process
+-- == 2. The haskell-debugger process
 -- * GHC debugger crashes while initializing (e.g. while compiling or when discovering flags)
 -- * GHC debugger crashes while executing a request
 --
--- == 3. The debuggee loaded in ghc-debugger and runs
+-- == 3. The debuggee loaded in haskell-debugger and runs
 -- * The debuggee terminates successfully
 -- * The debuggee terminates with an exception
 -- * The debuggee crashes in another way

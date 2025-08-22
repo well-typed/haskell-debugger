@@ -105,7 +105,7 @@ pattern BREAK_ON_EXCEPTION, BREAK_ON_ERROR :: T.Text
 pattern BREAK_ON_EXCEPTION = "break-on-exception"
 pattern BREAK_ON_ERROR = "break-on-error"
 
--- | Turn a ghc-debugger 'BreakFound' into a DAP 'Breakpoint'.
+-- | Turn a haskell-debugger 'BreakFound' into a DAP 'Breakpoint'.
 --
 -- Additionally, gets a fresh Id for the breakpoint and registers it on the breakpoint map
 registerBreakFound :: BreakFound -> DebugAdaptor [DAP.Breakpoint]

@@ -115,7 +115,7 @@ extractUnits = go [] []
     go units rest (x : xs)           = go units (x : rest) xs
     go units rest []                 = (reverse units, reverse rest)
 
--- | Flags specific to ghc-debugger to append to all GHC invocations.
+-- | Flags specific to haskell-debugger to append to all GHC invocations.
 ghcDebuggerFlags :: [String]
 ghcDebuggerFlags =
   [ "-fno-it" -- don't introduce @it@ after evaluating something at the prompt

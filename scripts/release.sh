@@ -21,12 +21,12 @@
 
 set -e
 
-if [ ! -f "ghc-debugger.cabal" ]; then
-  echo "Error: ghc-debugger.cabal not found. Please run this script from the project root."
+if [ ! -f "haskell-debugger.cabal" ]; then
+  echo "Error: haskell-debugger.cabal not found. Please run this script from the project root."
   exit 1
 fi
 
-PKG_VERSION=$(sed -nE "s/^version:\s*([0-9\.]*).*$/\1/p" ghc-debugger.cabal)
+PKG_VERSION=$(sed -nE "s/^version:\s*([0-9\.]*).*$/\1/p" haskell-debugger.cabal)
 EXTENSION_NIX_VERSION=$(sed -nE "s/^\s*version = \"(.*)\"\;$/\1/p" vscode-extension/default.nix)
 EXTENSION_PKG_VERSION=$(sed -nE "s/^\s*\"version\":\s*\"(.*)\"\,$/\1/p" vscode-extension/package.json)
 

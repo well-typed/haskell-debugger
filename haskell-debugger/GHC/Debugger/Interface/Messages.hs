@@ -6,7 +6,7 @@
              #-}
 {-# OPTIONS_GHC -Wno-orphans #-} -- JSON GHC.BreakpointId
 
--- | Types for sending and receiving messages to/from ghc-debugger
+-- | Types for sending and receiving messages to/from haskell-debugger
 module GHC.Debugger.Interface.Messages where
 
 import GHC.Generics
@@ -75,7 +75,7 @@ data Command
   -- Haskell function arguments.
   | DebugExecution { entryPoint :: EntryPoint, runArgs :: [String] }
 
-  -- | Terminate ghc-debugger and exit
+  -- | Terminate haskell-debugger and exit
   | TerminateProcess
 
 -- | An entry point for program execution.
@@ -190,7 +190,7 @@ data SourceSpan = SourceSpan
 -- Responses
 --------------------------------------------------------------------------------
 
--- | The responses sent by `ghc-debugger` to the client
+-- | The responses sent by `haskell-debugger` to the client
 data Response
   = DidEval EvalResult
   | DidSetBreakpoint BreakFound
