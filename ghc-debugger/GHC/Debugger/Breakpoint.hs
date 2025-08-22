@@ -10,12 +10,8 @@ import Data.IORef
 import Data.Bits (xor)
 
 import GHC
-#if MIN_VERSION_ghc(9,13,20250417)
 import GHC.Types.Name.Occurrence (sizeOccEnv)
-#endif
-#if MIN_VERSION_ghc(9,13,20250630)
 import GHC.ByteCode.Breakpoints
-#endif
 import GHC.Utils.Error (logOutput)
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
@@ -43,11 +39,7 @@ clearBreakpoints mfile = do
   hsc_env <- getSession
   bids <- getActiveBreakpoints mfile
   forM_ bids $ \bid -> do
-#if MIN_VERSION_ghc(9,13,20250630)
     GHC.setupBreakpoint (hscInterp hsc_env) bid (breakpointStatusInt BreakpointDisabled)
-#else
-    GHC.setupBreakpoint hsc_env bid (breakpointStatusInt BreakpointDisabled)
-#endif
 
   -- Clear out the state
   bpsRef <- asks activeBreakpoints
@@ -83,7 +75,7 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
         Just (bix, spn) -> do
           let bid = BreakpointId { bi_tick_mod = ms_mod modl
                                  , bi_tick_index = bix }
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
           (changed, ibis) <- registerBreakpoint bid bp_status ModuleBreakpointKind
 #else
           changed <- registerBreakpoint bid bp_status ModuleBreakpointKind
@@ -91,7 +83,7 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
           return $ BreakFound
             { changed = changed
             , sourceSpan = realSrcSpanToSourceSpan spn
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
             , breakId = ibis
 #else
             , breakId = bid
@@ -106,7 +98,7 @@ setBreakpoint FunctionBreak{function} bp_status = do
           applyBreak (bix, spn) = do
             let bid = BreakpointId { bi_tick_mod = modl
                                    , bi_tick_index = bix }
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
             (changed, ibis) <- registerBreakpoint bid bp_status FunctionBreakpointKind
 #else
             changed <- registerBreakpoint bid bp_status FunctionBreakpointKind
@@ -114,17 +106,13 @@ setBreakpoint FunctionBreak{function} bp_status = do
             return $ BreakFound
               { changed = changed
               , sourceSpan = realSrcSpanToSourceSpan spn
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
               , breakId = ibis
 #else
               , breakId = bid
 #endif
               }
-#if MIN_VERSION_ghc(9,13,20250630)
       case maybe [] (findBreakForBind fun_str . imodBreaks_modBreaks) modBreaks of
-#else
-      case maybe [] (findBreakForBind fun_str) modBreaks of
-#endif
         []  -> do
           liftIO $ logOutput logger (text $ "No breakpoint found by name " ++ function ++ ". Ignoring...")
           return BreakNotFound

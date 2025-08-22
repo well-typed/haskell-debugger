@@ -8,20 +8,13 @@ import Control.Monad.Catch
 import Data.Maybe
 
 import GHC
-#if MIN_VERSION_ghc(9,13,20250417)
-import GHC.Types.Name.Occurrence (sizeOccEnv)
-#endif
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Data.FastString
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env as GHC
 import GHC.Driver.Monad
 import GHC.Runtime.Debugger.Breakpoints as GHC
-#if MIN_VERSION_ghc(9,13,20250701)
 import GHC.ByteCode.Breakpoints
-#else
-import GHC.Types.Breakpoint
-#endif
 import GHC.Types.Name.Occurrence (mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig)
 import GHC.Utils.Outputable as GHC
@@ -106,7 +99,6 @@ doSingleStep = do
 
 doStepOut :: Debugger EvalResult
 doStepOut = do
-#if MIN_VERSION_ghc(9,13,20250514)
   leaveSuspendedState
   mb_span <- getCurrentBreakSpan
   case mb_span of
@@ -119,9 +111,6 @@ doStepOut = do
       let current_toplevel_decl = enclosingTickSpan ticks loc
       GHC.resumeExec (GHC.StepOut (Just (RealSrcSpan current_toplevel_decl Strict.Nothing))) Nothing
         >>= handleExecResult
-#else
-  doSingleStep -- stub!
-#endif
 
 -- | Resume execution but stop at the next tick within the same function.
 --
@@ -169,7 +158,7 @@ handleExecResult = \case
       -- TODO: force the exception to display string with Backtrace?
       return EvalStopped{breakId = Nothing}
     ExecBreak {breakNames = _, breakPointId} ->
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
       return EvalStopped{breakId = breakPointId}
 #else
       return EvalStopped{breakId = toBreakpointId <$> breakPointId}

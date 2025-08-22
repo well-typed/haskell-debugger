@@ -47,7 +47,7 @@ data Command
 
   -- | Get the variables in scope for the current breakpoint.
   --
-  -- Note: for GHCs <9.13 this only reports the variables free in the expression
+  -- Note: for GHCs <9.16 this only reports the variables free in the expression
   -- we're stopped at rather than all variables in scope.
   | GetVariables VariableReference
 
@@ -210,7 +210,7 @@ data BreakFound
   = BreakFound
     { changed :: !Bool
     -- ^ Did the status of the found breakpoint change?
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
     , breakId :: [GHC.InternalBreakpointId]
 #else
     , breakId :: GHC.BreakpointId
@@ -233,7 +233,7 @@ data BreakFound
 data EvalResult
   = EvalCompleted { resultVal :: String, resultType :: String }
   | EvalException { resultVal :: String, resultType :: String }
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
   | EvalStopped   { breakId :: Maybe GHC.InternalBreakpointId {-^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)? -} }
 #else
   | EvalStopped   { breakId :: Maybe GHC.BreakpointId {-^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)? -} }
@@ -291,7 +291,7 @@ instance FromJSON ScopeInfo
 instance FromJSON VarInfo
 instance FromJSON VarFields
 
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
 
 instance Show GHC.InternalBreakpointId where
   show (GHC.InternalBreakpointId m ix) = "InternalBreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix
