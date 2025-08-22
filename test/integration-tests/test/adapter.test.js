@@ -396,6 +396,7 @@ describe("Debug Adapter Tests", function () {
     describe("Stepping out (step-out)", function () {
 
         let step_out_broken = ghc_version < "9.15.20250731" // hasn't been merged yet, but let's use this bound; will probably only be in GHC 9.14.2
+        let need_opt = step_out_broken
 
         // Mimics GHC's T26042b
         it('without tail calls', async () => {
@@ -405,7 +406,7 @@ describe("Debug Adapter Tests", function () {
                   entryFile: "MainA.hs",
                   entryPoint: "main",
                   entryArgs: [],
-                  extraGhcArgs: []
+                  extraGhcArgs: need_opt ? ["-O", "-fno-unoptimized-core-for-interpreter"] : []
                 })
 
             const expected = (line) => ({ path: config.projectRoot + "/" + config.entryFile, line: line });
@@ -436,7 +437,7 @@ describe("Debug Adapter Tests", function () {
                   entryFile: "MainB.hs",
                   entryPoint: "main",
                   entryArgs: [],
-                  extraGhcArgs: []
+                  extraGhcArgs: need_opt ? ["-O", "-fno-unoptimized-core-for-interpreter"] : []
                 })
 
             const expected = (line) => ({ path: config.projectRoot + "/" + config.entryFile, line: line });
