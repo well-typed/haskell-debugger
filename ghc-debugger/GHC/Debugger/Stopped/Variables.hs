@@ -4,15 +4,12 @@
 module GHC.Debugger.Stopped.Variables where
 
 import Data.IORef
-import Control.Monad
 import Control.Monad.Reader
-import Control.Monad.IO.Class
 
 import GHC
 import GHC.Types.FieldLabel
 import GHC.Runtime.Eval
 import GHC.Core.DataCon
-import GHC.Types.Id as GHC
 import qualified GHC.Runtime.Debugger as GHCD
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 

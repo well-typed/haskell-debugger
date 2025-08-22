@@ -142,9 +142,7 @@ initHomeUnitEnv unitDflags env = do
         , ue_namever         = GHC.ghcNameVersion dflags1
         , ue_home_unit_graph = home_unit_graph
         , ue_current_unit    = homeUnitId_ dflags0
-#if MIN_VERSION_ghc(9,13,20250402)
         , ue_module_graph    = ue_module_graph (hsc_unit_env env)
-#endif
         , ue_eps             = ue_eps (hsc_unit_env env)
         }
   pure $ hscSetFlags dflags1 $ hscSetUnitEnv unit_env env

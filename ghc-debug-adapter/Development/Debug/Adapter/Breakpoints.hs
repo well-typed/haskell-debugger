@@ -116,7 +116,7 @@ registerBreakFound b =
     BreakFoundNoLoc _ch -> pure [ DAP.defaultBreakpoint { DAP.breakpointVerified = True } ]
     BreakFound _ch iid ss -> do
       source <- fileToSource ss.file
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
       bids <- mapM registerNewBreakpoint iid
       pure $ map (\bid -> DAP.defaultBreakpoint
         { DAP.breakpointVerified = True
@@ -141,7 +141,7 @@ registerBreakFound b =
 #endif
 
 -- | Adds new BreakpointId for a givent StgPoint
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
 registerNewBreakpoint :: GHC.InternalBreakpointId -> DebugAdaptor BreakpointId
 #else
 registerNewBreakpoint :: GHC.BreakpointId -> DebugAdaptor BreakpointId

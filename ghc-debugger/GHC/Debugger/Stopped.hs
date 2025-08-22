@@ -3,18 +3,12 @@
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
 module GHC.Debugger.Stopped where
 
-import Data.IORef
 import Control.Monad.Reader
-import Control.Monad.IO.Class
 
 import GHC
 import GHC.Types.Unique.FM
-#if MIN_VERSION_ghc(9,13,20250417)
 import GHC.Types.Name.Occurrence (sizeOccEnv)
-#endif
-#if MIN_VERSION_ghc(9,13,20250701)
 import GHC.ByteCode.Breakpoints
-#endif
 import GHC.Types.Name.Reader
 import GHC.Unit.Home.ModInfo
 import GHC.Unit.Module.ModDetails
@@ -24,12 +18,10 @@ import GHC.Driver.Env as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Runtime.Eval
 import GHC.Types.SrcLoc
-import qualified GHC.Runtime.Heap.Inspect as GHCI
 import qualified GHC.Unit.Home.Graph as HUG
 
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Runtime
-import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Utils
@@ -110,11 +102,7 @@ getScopes = GHC.getCurrentBreakSpan >>= \case
                     }
         , ScopeInfo { kind = GlobalVariablesScope
                     , expensive = True
-#if MIN_VERSION_ghc(9,13,20250417)
                     , numVars = Just (sizeOccEnv imported)
-#else
-                    , numVars = Nothing
-#endif
                     , sourceSpan
                     }
         ]
@@ -208,7 +196,7 @@ getVariables vk = do
         case GHC.resumeBreakpointId r of
           Nothing -> return []
           Just ibi -> do
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
             curr_modl <- liftIO $ bi_tick_mod . getBreakSourceId ibi <$>
                           readIModBreaks (hsc_HUG hsc_env) ibi
 #else
@@ -224,7 +212,7 @@ getVariables vk = do
         case GHC.resumeBreakpointId r of
           Nothing -> return []
           Just ibi -> do
-#if MIN_VERSION_ghc(9,13,20250730)
+#if MIN_VERSION_ghc(9,14,2)
             curr_modl <- liftIO $ bi_tick_mod . getBreakSourceId ibi <$>
                           readIModBreaks (hsc_HUG hsc_env) ibi
 #else
@@ -272,8 +260,4 @@ getTopImported modl = do
   hsc_env <- getSession
   liftIO $ HUG.lookupHugByModule modl (hsc_HUG hsc_env) >>= \case
     Nothing -> return emptyGlobalRdrEnv
-#if MIN_VERSION_ghc(9,13,20250417)
     Just hmi -> mkTopLevImportedEnv hsc_env hmi
-#else
-    Just hmi -> return emptyGlobalRdrEnv
-#endif
