@@ -1,24 +1,26 @@
 cabal-version:      3.14
-name:               ghc-debugger
+name:               haskell-debugger
 version:            0.5.0.0
 synopsis:
     A step-through machine-interface debugger for GHC Haskell
 
-description:        The GHC debugger package provides a binary
-                    @ghc-debug-adapter@ that implements the Debug Adapter
-                    Protocol (DAP) for debugging Haskell programs.
+description:        The GHC debugger package provides a standalone executable
+                    called @hdb@ which can be used to step-through Haskell
+                    programs and can act as a Debug Adapter Protocol (DAP)
+                    server in the @--server@ mode for debugging Haskell
+                    programs.
                     .
                     The Debug Adapter is implemented on top of the
-                    @ghc-debugger@ library which defines the primitive
+                    @haskell-debugger@ library which defines the primitive
                     debugging capabilities. These debugger features are
                     implemented by managing a GHC session and debugging it
                     through the GHC API.
                     .
-                    The @ghc-debug-adapter@ is transparently compatible with
-                    most projects because it uses @hie-bios@ to figure out the
-                    right flags to invoke GHC with.
+                    The @hdb@ is transparently compatible with most projects
+                    because it uses @hie-bios@ to figure out the right flags to
+                    invoke GHC with.
                     .
-                    Additional information can be found [in the README](https://github.com/well-typed/ghc-debugger).
+                    Additional information can be found [in the README](https://github.com/well-typed/haskell-debugger).
 
 license:            BSD-3-Clause
 license-file:       LICENSE
@@ -29,12 +31,12 @@ category:           Development
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
                     README.md
-homepage:           https://github.com/well-typed/ghc-debugger
-bug-reports:        https://github.com/well-typed/ghc-debugger/issues
+homepage:           https://github.com/well-typed/haskell-debugger
+bug-reports:        https://github.com/well-typed/haskell-debugger/issues
 
 source-repository head
     type: git
-    location: https://github.com/well-typed/ghc-debugger
+    location: https://github.com/well-typed/haskell-debugger
 
 common warnings
     ghc-options: -Wall
@@ -77,10 +79,10 @@ library
                       aeson >= 2.2.3 && < 2.3,
                       hie-bios >= 0.15 && < 0.18
 
-    hs-source-dirs:   ghc-debugger
+    hs-source-dirs:   haskell-debugger
     default-language: Haskell2010
 
-executable ghc-debug-adapter
+executable hdb
     import:           warnings
     main-is:          Main.hs
     other-modules:    Development.Debug.Adapter.Flags,
@@ -102,7 +104,7 @@ executable ghc-debug-adapter
         process, mtl, unix,
         prettyprinter,
 
-        ghc-debugger,
+        haskell-debugger,
         hie-bios,
         co-log-core,
         implicit-hie ^>=0.1.4.0,
@@ -112,12 +114,12 @@ executable ghc-debug-adapter
         async >= 2.2.5 && < 2.3,
         text >= 2.1 && < 2.3,
         dap >= 0.2 && < 1,
-    hs-source-dirs:   ghc-debug-adapter
+    hs-source-dirs:   hdb
     default-language: GHC2021
     default-extensions: CPP
     ghc-options: -threaded
 
-test-suite ghc-debugger-test
+test-suite haskell-debugger-test
     import:           warnings
     default-language: Haskell2010
     -- other-modules:
@@ -127,4 +129,4 @@ test-suite ghc-debugger-test
     main-is:          Main.hs
     build-depends:
         base >=4.14,
-        ghc-debugger
+        haskell-debugger

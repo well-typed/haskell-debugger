@@ -24,7 +24,7 @@ jobs:
           name: Haskell Debugger Extension
           path: vscode-extension/result/haskell-debugger-extension*.vsix
 
-  sdist-ghc-debugger:
+  sdist-haskell-debugger:
     name: Sdist
     runs-on: ubuntu-latest
     steps:
@@ -34,37 +34,19 @@ jobs:
 
       - uses: haskell-actions/setup@v2
 
-      - name: Package ghc-debug-adapter
+      - name: Package hdb
         run: cabal sdist
 
-      - name: Upload ghc-debugger source distribution
+      - name: Upload haskell-debugger source distribution
         uses: actions/upload-artifact@v4
         with:
           name: GHC Debugger Source Distribution
-          path: dist-newstyle/sdist/ghc-debugger*.tar.gz
-
-
-  # build-ghc-debugger:
-  #   name: Build
-  #   runs-on: ubuntu-latest # or macOS-latest, or windows-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with:
-  #         submodules: recursive
-
-  #     - uses: haskell-actions/setup@v2
-  #       with:
-  #         ghc-version: latest-nightly
-  #         cabal-version: 3.14
-  #         ghcup-release-channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
-
-  #     - name: Build ghc-debug-adapter
-  #       run: cabal build exe:ghc-debug-adapter
+          path: dist-newstyle/sdist/haskell-debugger*.tar.gz
 
   # Building and testing are done on the distributed sdist: not on the full git repo.
-  build-n-test-ghc-debugger:
+  build-n-test-haskell-debugger:
     name: Build and Test
-    needs: sdist-ghc-debugger
+    needs: sdist-haskell-debugger
     runs-on: ubuntu-latest
     continue-on-error: true # Run all jobs in the matrix to the end
     strategy:
@@ -90,7 +72,7 @@ jobs:
         with:
           nix_path: nixpkgs=channel:nixos-unstable
 
-      - name: Download ghc-debug-adapter source dist
+      - name: Download hdb source dist
         uses: actions/download-artifact@v4
         with:
           name: GHC Debugger Source Distribution
@@ -98,21 +80,11 @@ jobs:
 
       - name: Build and Run integration tests
         run: |
-          (cd ${{ runner.temp }}/dist && tar xzf *.tar.gz && rm *.tar.gz && cd ghc-debugger-* && cabal build exe:ghc-debug-adapter --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
-          export DEBUGGER=$(cd ${{ runner.temp }}/dist/ghc-debugger-* && cabal list-bin exe:ghc-debug-adapter --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
+          (cd ${{ runner.temp }}/dist && tar xzf *.tar.gz && rm *.tar.gz && cd haskell-debugger-* && cabal build exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
+          export DEBUGGER=$(cd ${{ runner.temp }}/dist/haskell-debugger-* && cabal list-bin exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
           echo "DEBUGGER: $DEBUGGER"
           cd test/integration-tests/
           make clean
           make node_modules
           make test
-
-  # release-ghc-debugger:
-  #   needs: [test-ghc-debugger, docs-ghc-debugger, build-vscode-extension]
-  #   name: Publish a new release of the ghc-debugger
-  #   # Only if this is a tagged release with v*
-  #   # if: startsWith(github.ref, 'refs/tags/v')
-  #   uses: ./.github/workflows/release.yaml
-  #   with:
-  #     tag_name: ${{ github.ref_name }}
-
 

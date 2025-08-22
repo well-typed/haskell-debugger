@@ -300,7 +300,7 @@ getModuleByPath path = do
   return $ case filter matches lms of
     [x] -> Right x
     [] -> Left $ "No module matched " ++ path ++ ".\nLoaded modules:\n" ++ show (map msHsFilePath lms) ++ "\n. Perhaps you've set a breakpoint on a module that isn't loaded into the session?"
-    xs -> Left $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path ++ ". Please report a bug at https://github.com/well-typed/ghc-debugger."
+    xs -> Left $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path ++ ". Please report a bug at https://github.com/well-typed/haskell-debugger."
 
 --------------------------------------------------------------------------------
 -- Variable references
@@ -315,7 +315,7 @@ lookupVarByReference i = do
 
 -- | Finds or creates an integer var reference for the given 'TermKey'.
 -- TODO: Arguably, this mapping should be part of the debug-adapter, and
--- ghc-debugger should deal in 'TermKey' terms only.
+-- haskell-debugger should deal in 'TermKey' terms only.
 getVarReference :: TermKey -> Debugger Int
 getVarReference key = do
   ioref     <- asks varReferences

@@ -196,7 +196,7 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraG
   -- See Notes (CWD) above
   setCurrentDirectory workDir
 
-  -- Log ghc-debugger invocation
+  -- Log haskell-debugger invocation
   withAdaptor $
     Output.console $ T.pack $
       "libdir: " <> libdir <> "\n" <>

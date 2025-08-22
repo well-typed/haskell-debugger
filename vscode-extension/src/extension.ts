@@ -33,7 +33,7 @@ function getFreePort(): Promise<number> {
 	});
 }
 
-let logger : vscode.OutputChannel = vscode.window.createOutputChannel("ghc-debug-adapter");
+let logger : vscode.OutputChannel = vscode.window.createOutputChannel("hdb");
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -48,7 +48,7 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 			if (targetResource) {
 				vscode.debug.startDebugging(undefined, {
-					type: 'ghc-debugger',
+					type: 'haskell-debugger',
 					name: 'Run File',
 					request: 'launch',
 					entryFile: targetResource.fsPath,
@@ -67,7 +67,7 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 			if (targetResource) {
 				vscode.debug.startDebugging(undefined, {
-					type: 'ghc-debugger',
+					type: 'haskell-debugger',
 					name: 'Debug File',
 					request: 'launch',
 					entryFile: targetResource.fsPath,
@@ -85,11 +85,11 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// register a configuration provider for 'ghc-debugger' debug type
+	// register a configuration provider for 'haskell-debugger' debug type
 	const provider = new GHCConfigurationProvider();
-	context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('ghc-debugger', provider));
+	context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('haskell-debugger', provider));
 
-	context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory('ghc-debugger', factory));
+	context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory('haskell-debugger', factory));
 	// if ('dispose' in factory) {
 	// 	context.subscriptions.push(factory);
 	// }
@@ -181,13 +181,12 @@ class GHCDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDescr
 		// return new vscode.DebugAdapterServer(4717, 'localhost');
 
 		const port = await getFreePort();
-		this.logger.appendLine(`[Factory] Launching ghc-debugger on port ${port}`);
+		this.logger.appendLine(`[Factory] Launching haskell-debugger on port ${port}`);
 
-		// const debuggerProcess = cp.spawn('ghc-debug-adapter', ['--port', port.toString(), "+RTS", "-pj"], {cwd: "/var/folders/tv/35hlch6s3y15hfvndc71l6d40000gn/T/tmp.7Vsfzyoozc"});
-		const debuggerProcess = cp.spawn('ghc-debug-adapter', ['--port', port.toString()]);
+		const debuggerProcess = cp.spawn('hdb', ['--server', '--port', port.toString()]);
 
         debuggerProcess.on('spawn', () => {
-            this.logger.appendLine('[Factory] ghc-debugger spawned...');
+            this.logger.appendLine('[Factory] haskell-debugger spawned...');
         });
 
 		debuggerProcess.stdout.on('data', (data) => {
@@ -199,18 +198,18 @@ class GHCDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDescr
 		});
 
 		debuggerProcess.on('exit', (code, signal) => {
-			this.logger.appendLine(`[exit] ghc-debugger exited with code ${code} and signal ${signal}`);
+			this.logger.appendLine(`[exit] haskell-debugger exited with code ${code} and signal ${signal}`);
 		});
 
 		debuggerProcess.on('error', (err) => {
-			this.logger.appendLine(`[error] Failed to start ghc-debugger: ${err.message}`);
+			this.logger.appendLine(`[error] Failed to start haskell-debugger: ${err.message}`);
 		});
 
 		this.processes.set(session.id, debuggerProcess);
 
         const ready = new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(() => {
-                reject(new Error("ghc-debugger did not signal readiness in time"));
+                reject(new Error("haskell-debugger did not signal readiness in time"));
             }, 15000); // 15 second timeout
 
 		    this.logger.appendLine(`[Factory] Waiting for debugger to be ready...`);
@@ -262,7 +261,7 @@ class GHCConfigurationProvider implements vscode.DebugConfigurationProvider {
 		if (!config.type && !config.request && !config.name) {
 			const editor = vscode.window.activeTextEditor;
 			if (editor && editor.document.languageId === 'markdown') {
-				config.type = 'ghc-debugger';
+				config.type = 'haskell-debugger';
 				config.name = 'Launch';
 				config.request = 'launch';
 				config.entryFile = '${file}';

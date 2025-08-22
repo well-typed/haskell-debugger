@@ -31,8 +31,8 @@ defaultStdoutForwardingAction line = do
 main :: IO ()
 main = do
   port <- getArgs >>= \case
-            ["--port", readMaybe -> Just p] -> return p
-            _ -> fail "usage: --port <port>"
+            ["--server", "--port", readMaybe -> Just p] -> return p
+            _ -> fail "usage: --server --port <port>"
   config <- getConfig port
   withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
     hSetBuffering realStdout LineBuffering

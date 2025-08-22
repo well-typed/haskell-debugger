@@ -32,11 +32,11 @@ describe("Debug Adapter Tests", function () {
 
     beforeEach( () => getFreePort().then(port => {
 
-        debuggerProcess = cp.spawn('ghc-debug-adapter', ['--port', port.toString()]);
+        debuggerProcess = cp.spawn('hdb', ['--server', '--port', port.toString()]);
 
         const ready = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
-                reject(new Error("ghc-debugger did not signal readiness in time"));
+                reject(new Error("haskell-debugger did not signal readiness in time"));
             }, 15000); // 15 second timeout
 
             debuggerProcess.stdout.on('data', data => {
@@ -73,7 +73,7 @@ describe("Debug Adapter Tests", function () {
     });
 
     const mkHermetic = (path) => {
-        const tmp = mkdtempSync(join(tmpdir(), "ghc-debugger-")) + path
+        const tmp = mkdtempSync(join(tmpdir(), "haskell-debugger-")) + path
         const data = process.cwd() + path;
         cpSync(data, tmp, { recursive: true }) // Copy data contents to temp directory
         return realpathSync(tmp)

@@ -1,4 +1,4 @@
-# Revision history for ghc-debugger
+# Revision history for haskell-debugger
 
 ## (unreleased) 0.5.0.0
 
