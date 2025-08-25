@@ -7,7 +7,7 @@ synopsis:
 description:        The GHC debugger package provides a standalone executable
                     called @hdb@ which can be used to step-through Haskell
                     programs and can act as a Debug Adapter Protocol (DAP)
-                    server in the @--server@ mode for debugging Haskell
+                    server in the @server@ mode for debugging Haskell
                     programs.
                     .
                     The Debug Adapter is implemented on top of the
@@ -117,6 +117,9 @@ executable hdb
         async >= 2.2.5 && < 2.3,
         text >= 2.1 && < 2.3,
         dap >= 0.2 && < 1,
+
+        haskeline >= 0.8 && < 1,
+        optparse-applicative >= 0.19 && < 1
     hs-source-dirs:   hdb
     default-language: GHC2021
     default-extensions: CPP
