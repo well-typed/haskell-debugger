@@ -38,7 +38,7 @@ describe("Debug Adapter Tests", function () {
                 ...process.env, HDB_CACHE_DIR: cacheDir
             }
         };
-        debuggerProcess = cp.spawn('hdb', ['--server', '--port', port.toString()], hdbEnv);
+        debuggerProcess = cp.spawn('hdb', ['server', '--port', port.toString()], hdbEnv);
 
         const ready: Promise<void> = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
