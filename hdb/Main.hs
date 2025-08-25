@@ -22,6 +22,85 @@ import DAP.Log
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import GHC.IO.Handle.FD
+import Options.Applicative hiding (command)
+import qualified Options.Applicative
+
+-- | The options `hdb` is invoked in the command line with
+data HdbOptions
+  -- | @server --port <port>@
+  = HdbDAPServer
+    { port :: Int
+    }
+  -- | @[--entry-point=<entryPoint>] [--extra-ghc-args="<args>"] [<entryFile>] -- [<entryArgs>]@
+  | HdbCLI
+    { entryPoint :: String
+    , entryFile :: FilePath
+    , entryArgs :: [String]
+    , extraGhcArgs :: [String]
+    }
+
+--------------------------------------------------------------------------------
+-- Options parser
+--------------------------------------------------------------------------------
+
+-- | Parser for HdbDAPServer options
+serverParser :: Parser HdbOptions
+serverParser = HdbDAPServer
+  <$> option auto
+      ( long "port"
+     <> short 'p'
+     <> metavar "PORT"
+     <> help "DAP server port" )
+
+-- | Parser for HdbCLI options
+cliParser :: Parser HdbOptions
+cliParser = HdbCLI
+  <$> strOption
+      ( long "entry-point"
+     <> short 'e'
+     <> metavar "ENTRY_POINT"
+     <> value "main"
+     <> help "The name of the function that is called to start execution (default: main)" )
+  <*> argument str
+      ( metavar "ENTRY_FILE"
+     <> help "The relative path from the project root to the file with the entry point for execution" )
+  <*> many
+        ( argument str
+          ( metavar "ENTRY_ARGS..."
+         <> help "The arguments passed to the entryPoint. If the entryPoint is main, these arguments are passed as environment arguments (as in getArgs) rather than direct function arguments."
+          )
+        )
+  <*> option (words <$> str)
+      ( long "extra-ghc-args"
+     <> metavar "GHC_ARGS"
+     <> value []
+     <> help "Additional flags to pass to the ghc invocation that loads the program for debugging" )
+
+-- | Combined parser for HdbOptions
+hdbOptionsParser :: Parser HdbOptions
+hdbOptionsParser = hsubparser
+  ( Options.Applicative.command "server"
+    ( info serverParser
+      ( progDesc "Start the Haskell debugger in DAP server mode" ) )
+ <> Options.Applicative.command "run"
+    ( info cliParser
+      ( progDesc "Debug a Haskell program in CLI mode" ) )
+  )
+  -- <|> cliParser  -- Default to CLI mode if no subcommand
+
+-- | Main parser info
+hdbParserInfo :: ParserInfo HdbOptions
+hdbParserInfo = info (hdbOptionsParser <**> helper)
+  ( fullDesc
+ <> header "Haskell debugger supporting both CLI and DAP modes" )
+
+-- | Parse command line arguments
+parseHdbOptions :: IO HdbOptions
+parseHdbOptions = customExecParser
+  defaultPrefs{prefShowHelpOnError = True, prefShowHelpOnEmpty = True}
+  hdbParserInfo
+
+--------------------------------------------------------------------------------
 
 defaultStdoutForwardingAction :: T.Text -> IO ()
 defaultStdoutForwardingAction line = do
@@ -29,17 +108,18 @@ defaultStdoutForwardingAction line = do
 
 main :: IO ()
 main = do
-  port <- getArgs >>= \case
-            ["--server", "--port", readMaybe -> Just p] -> return p
-            _ -> fail "usage: --server --port <port>"
-  config <- getConfig port
-  withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
-    hSetBuffering realStdout LineBuffering
-    l <- handleLogger realStdout
-    let
-      timeStampLogger = cmapIO renderWithTimestamp l
-      loggerWithSev = cmap (renderWithSeverity id) timeStampLogger
-    runDAPServerWithLogger (cmap renderDAPLog timeStampLogger) config (talk loggerWithSev)
+  hdbOpts <- parseHdbOptions
+  case hdbOpts of
+    HdbDAPServer{port} -> do
+      config <- getConfig port
+      withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
+        hSetBuffering realStdout LineBuffering
+        l <- handleLogger realStdout
+        let
+          timeStampLogger = cmapIO renderWithTimestamp l
+          loggerWithSev = cmap (renderWithSeverity id) timeStampLogger
+        runDAPServerWithLogger (cmap renderDAPLog timeStampLogger) config (talk loggerWithSev)
+    _ -> error "todo"
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: Int -> IO ServerConfig

@@ -183,7 +183,7 @@ class GHCDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDescr
 		const port = await getFreePort();
 		this.logger.appendLine(`[Factory] Launching haskell-debugger on port ${port}`);
 
-		const debuggerProcess = cp.spawn('hdb', ['--server', '--port', port.toString()]);
+		const debuggerProcess = cp.spawn('hdb', ['server', '--port', port.toString()]);
 
         debuggerProcess.on('spawn', () => {
             this.logger.appendLine('[Factory] haskell-debugger spawned...');
