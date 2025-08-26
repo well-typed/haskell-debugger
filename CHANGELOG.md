@@ -1,8 +1,20 @@
 # Revision history for haskell-debugger
 
-## (unreleased) 0.5.0.0
+## 0.5.0.0 -- 2025-08-26
 
-* Add support for stepping out of functions
+* Compatibility with GHC 9.14
+* Add support for stepping out of functions as a tech preview
+* Use implicit cradle discovery to better support multiple configurations,
+  mirroring HLS (and thus providing a more similar experience)
+* Query the GHC runtime version via hie-bios, now honoring e.g. `with-compiler:
+  ...` in `cabal.project` to fetch the right GHC version
+* Rename package from `ghc-debugger` to `haskell-debugger`, and
+  `ghc-debug-adapter` to `hdb`, to be consistent with other tools and
+  ecosystems and to avoid ambiguity with `ghc-debug` (program heap analysis library and
+  tool)
+* Use cache directories for `hdb` to have faster startup times. This will only
+  be enabled for compilers supporting the upcoming `.gbc` (compiled bytecode
+  artifact) files.
 
 ## 0.4.0.0 -- 2025-06-27
 
