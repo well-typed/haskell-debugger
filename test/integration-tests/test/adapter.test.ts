@@ -2,11 +2,12 @@ import { DebugClient } from '@vscode/debugadapter-testsupport';
 import * as cp from 'child_process';
 import * as net from 'net';
 import { tmpdir } from 'node:os';
-import { join, normalize } from 'node:path';
+import { join } from 'node:path';
 import { mkdtempSync, cpSync, realpathSync } from 'node:fs';
 import assert from 'assert';
+import { describe, beforeEach, afterEach, it } from 'mocha';
 
-function getFreePort() {
+function getFreePort(): Promise<number> {
 	return new Promise((resolve, reject) => {
 		const server = net.createServer();
 		server.listen(0, () => {
@@ -22,7 +23,7 @@ function getFreePort() {
 	});
 }
 
-var dc;
+var dc: DebugClient;
 let debuggerProcess;
 
 describe("Debug Adapter Tests", function () {
@@ -31,10 +32,15 @@ describe("Debug Adapter Tests", function () {
     const ghc_version = cp.execSync('ghc --numeric-version').toString().trim()
 
     beforeEach( () => getFreePort().then(port => {
+        const cacheDir = mkHermeticCacheDir();
+        const hdbEnv = {
+            env: {
+                ...process.env, HDB_CACHE_DIR: cacheDir
+            }
+        };
+        debuggerProcess = cp.spawn('hdb', ['--server', '--port', port.toString()], hdbEnv);
 
-        debuggerProcess = cp.spawn('hdb', ['--server', '--port', port.toString()]);
-
-        const ready = new Promise((resolve, reject) => {
+        const ready: Promise<void> = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 reject(new Error("haskell-debugger did not signal readiness in time"));
             }, 15000); // 15 second timeout
@@ -72,10 +78,15 @@ describe("Debug Adapter Tests", function () {
       dc.stop()
     });
 
-    const mkHermetic = (path) => {
-        const tmp = mkdtempSync(join(tmpdir(), "haskell-debugger-")) + path
+    const mkHermetic = (path: string) => {
+        const tmp = mkdtempSync(join(tmpdir(), "hdb-")) + path
         const data = process.cwd() + path;
         cpSync(data, tmp, { recursive: true }) // Copy data contents to temp directory
+        return realpathSync(tmp)
+    }
+
+    const mkHermeticCacheDir = () => {
+        const tmp = mkdtempSync(join(tmpdir(), "hdb-cache-"))
         return realpathSync(tmp)
     }
 
@@ -85,8 +96,7 @@ describe("Debug Adapter Tests", function () {
         // hie-bios finding bad project roots because of cabal.projects in the
         // file system.
         const tmp = mkHermetic(config.projectRoot)
-        config.projectRoot = tmp;
-
+        config.projectRoot = tmp
         return config
     }
 
@@ -175,7 +185,7 @@ describe("Debug Adapter Tests", function () {
         const stResp = await dc.stackTraceRequest({ threadId: 0 });
         const sf0 = stResp.body.stackFrames[0];
         const scResp = await dc.scopesRequest({ frameId: sf0.id });
-        const localsScope = scResp.body.scopes.find(scope => scope.name == "Locals");
+        const localsScope = scResp.body.scopes.find(scope => scope.name == "Locals")!!;
         const variablesResp = await dc.variablesRequest({ variablesReference: localsScope.variablesReference });
         const variables = variablesResp.body.variables;
         return {
