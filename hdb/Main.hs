@@ -17,6 +17,8 @@ import Development.Debug.Adapter.Handles
 import Development.Debug.Adapter.Logger
 import Development.Debug.Adapter
 
+import Development.Debug.Interactive
+
 import System.IO (hSetBuffering, BufferMode(LineBuffering))
 import DAP.Log
 import qualified Data.Text as T
@@ -82,11 +84,11 @@ hdbOptionsParser = hsubparser
   ( Options.Applicative.command "server"
     ( info serverParser
       ( progDesc "Start the Haskell debugger in DAP server mode" ) )
- <> Options.Applicative.command "run"
+ <> Options.Applicative.command "cli"
     ( info cliParser
       ( progDesc "Debug a Haskell program in CLI mode" ) )
   )
-  -- <|> cliParser  -- Default to CLI mode if no subcommand
+  <|> cliParser  -- Default to CLI mode if no subcommand
 
 -- | Main parser info
 hdbParserInfo :: ParserInfo HdbOptions
@@ -119,7 +121,9 @@ main = do
           timeStampLogger = cmapIO renderWithTimestamp l
           loggerWithSev = cmap (renderWithSeverity id) timeStampLogger
         runDAPServerWithLogger (cmap renderDAPLog timeStampLogger) config (talk loggerWithSev)
-    _ -> error "todo"
+    HdbCLI{..} -> do
+      runIDM entryPoint entryFile entryArgs extraGhcArgs $
+        debugInteractive
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: Int -> IO ServerConfig

@@ -1,0 +1,233 @@
+{-# LANGUAGE LambdaCase, ViewPatterns, RecordWildCards #-}
+module Development.Debug.Interactive where
+
+import System.IO
+import System.Exit
+import System.Directory
+import System.Console.Haskeline
+import System.Console.Haskeline.Completion
+import Control.Monad.State
+import Control.Monad.Reader
+import Control.Monad.RWS
+import Options.Applicative
+import Options.Applicative.BashCompletion
+
+import Development.Debug.Adapter.Flags  -- use different namespace for common things
+import Development.Debug.Adapter.Logger -- ditto
+import Development.Debug.Adapter.Handles
+
+import GHC.Debugger.Interface.Messages
+import GHC.Debugger.Monad
+import GHC.Debugger
+
+-- | Interactive debugging monad
+type InteractiveDM a = InputT (RWST (String{-entry point-}, [String]{-run args-}) ()
+                                (Maybe Command{-last cmd-}) Debugger) a
+
+-- | Run it
+runIDM :: String   -- ^ entryPoint
+       -> FilePath -- ^ entryFile
+       -> [String] -- ^ entryArgs
+       -> [String] -- ^ extraGhcArgs
+       -> InteractiveDM a
+       -> IO a
+runIDM entryPoint entryFile entryArgs extraGhcArgs act = do
+  projectRoot <- getCurrentDirectory
+  l           <- handleLogger stdout
+  let loggerWithSev = cmap (renderWithSeverity id) l
+  let hieBiosLogger = cmapWithSev renderPretty loggerWithSev
+  cradle <- hieBiosCradle hieBiosLogger projectRoot entryFile >>=
+    \case
+      Left e -> exitWithMsg e
+      Right c -> pure c
+  mflags <- hieBiosFlags hieBiosLogger cradle projectRoot entryFile
+  case mflags of
+    Left e -> exitWithMsg e
+    Right HieBiosFlags{..} -> do
+      let defaultRunConf = RunDebuggerSettings
+            { supportsANSIStyling = True
+            , supportsANSIHyperlinks = False
+            }
+      let finalGhcInvocation = ghcInvocation ++ extraGhcArgs
+      runDebugger stdout rootDir componentDir libdir units finalGhcInvocation entryFile defaultRunConf $
+        fmap fst $
+          evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
+                   (entryPoint, entryArgs) Nothing
+  where
+    exitWithMsg str = do
+      putStrLn str
+      exitWith (ExitFailure 33)
+
+  --   completeF = completeWordWithPrev Nothing filenameWordBreakChars $
+  --     \(reverse -> previous) word -> do
+  --       let comp_words = words previous ++ [word]
+  --           comp_cword = length comp_words
+  --       case execParserPure parserPrefs cmdParserInfo
+  --           ("--bash-completion-index":show comp_cword:
+  --             concat (zipWith (\fl a -> [fl, show a]) (repeat "--bash-completion-word") comp_words)) of
+  --         CompletionInvoked CompletionResult{execCompletion} ->
+  --           map simpleCompletion . words <$> liftIO (execCompletion "")
+  --         _ -> return []
+
+-- | Run the interactive command-line debugger
+debugInteractive :: InteractiveDM ()
+debugInteractive = withInterrupt loop
+  where
+    loop = handleInterrupt loop $ do
+      minput <- getInputLine "(hdb) "
+      case minput of
+        Nothing -> outputStrLn "Exiting..." >> liftIO (exitWith ExitSuccess)
+        Just "" -> do
+          lift get >>= \case
+            Nothing -> return ()
+            Just (cmd :: Command) -> do
+              out <- lift . lift $ execute cmd -- repeat last command
+              printResponse out
+        Just input -> do
+          mcmd <- parseCmd input
+          lift $ put mcmd
+          case mcmd of
+            Nothing -> return ()
+            Just cmd -> do
+              out <- lift . lift $ execute cmd
+              printResponse out
+      loop
+
+--------------------------------------------------------------------------------
+-- Printing
+--------------------------------------------------------------------------------
+
+printResponse :: Response -> InteractiveDM ()
+printResponse = \case
+  DidEval er -> outputStrLn $ show er
+  DidSetBreakpoint bf       -> outputStrLn $ show bf
+  DidRemoveBreakpoint bf    -> outputStrLn $ show bf
+  DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
+  DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
+  DidContinue er -> outputStrLn $ show er
+  DidStep er -> outputStrLn $ show er
+  DidExec er -> outputStrLn $ show er
+  GotStacktrace stackframes -> outputStrLn $ show stackframes
+  GotScopes scopeinfos -> outputStrLn $ show scopeinfos
+  GotVariables vis -> outputStrLn $ show vis -- (Either VarInfo [VarInfo])
+  Aborted str -> outputStrLn ("Aborted: " ++ str)
+  Initialised -> pure ()
+
+--------------------------------------------------------------------------------
+-- Command parser
+--------------------------------------------------------------------------------
+
+breakpointParser :: Parser Breakpoint
+breakpointParser =
+  ( ModuleBreak
+  <$> argument str
+      ( metavar "PATH" -- todo: accept module breaks using module name
+     <> help "Path to module to break at" )
+  <*> argument auto
+      ( metavar "LINE_NUM"
+     <> help "The line number to break at" )
+  <*> optional (argument auto
+      ( metavar "COLUMN_NUM"
+     <> help "The column number to break at" ))
+  )
+  <|>
+  ( FunctionBreak
+    <$> option str
+      ( long "name"
+     <> short 'n'
+     <> metavar "FUNCTION_NAME"
+     <> help "Set a breakpoint using the function name" )
+  )
+  <|>
+  ( flag' OnExceptionsBreak ( long "exceptions" )
+  )
+  <|>
+  ( flag' OnUncaughtExceptionsBreak ( long "error" )
+  )
+
+runParser :: String -> [String] -> Parser Command
+runParser entryPoint entryArgs =
+  -- --entry <name> with some args
+  -- (DebugExecution <$> parseEntry <*> parseSomeArgs)
+  -- --entry <name> without any args
+  -- <|> (DebugExecution <$> parseEntry <*> pure [])
+  -- just some args
+  (DebugExecution (mkEntry entryPoint) <$> parseSomeArgs)
+  -- just "run"
+  <|> (pure $ DebugExecution (mkEntry entryPoint) entryArgs)
+  where
+    parseEntry =
+      fmap mkEntry $
+      option str
+        ( long "entry"
+        <> short 'e'
+        <> metavar "FUNCTION_NAME"
+        <> help "Run with this entry point"
+        )
+    parseSomeArgs =
+      some ( argument str
+        ( metavar "ARGS" <> help "Arguments to pass to the entry point. If empty, the arguments given at the debugger invocation are used." ) )
+    mkEntry entry
+      | entry == "main" = MainEntry Nothing
+      | otherwise = FunctionEntry entryPoint
+
+-- | Combined parser for 'Command'
+cmdParser :: String -> [String] -> Parser Command
+cmdParser entryPoint entryArgs = hsubparser
+  ( Options.Applicative.command "break"
+    ( info (SetBreakpoint <$> breakpointParser)
+      ( progDesc "Set a breakpoint" ) )
+  <>
+    Options.Applicative.command "delete"
+    ( info (DelBreakpoint <$> breakpointParser)
+      ( progDesc "Delete a breakpoint" ) )
+  <>
+    Options.Applicative.command "run"
+    ( info (runParser entryPoint entryArgs)
+      ( progDesc "Run the debuggee" ) )
+  <>
+    Options.Applicative.command "next"
+    ( info (pure DoStepLocal)
+      ( progDesc "Step over to the next line" ) )
+  <>
+    Options.Applicative.command "step"
+    ( info (pure DoSingleStep)
+      ( progDesc "Step-in to the next immediate location" ) )
+  <>
+    Options.Applicative.command "finish"
+    ( info (pure DoStepOut)
+      ( progDesc "Step-out of the current function into the caller/its continuation" ) )
+  <>
+    Options.Applicative.command "continue"
+    ( info (pure DoContinue)
+      ( progDesc "Continue executing from the current breakpoint" ) )
+  <>
+    Options.Applicative.command "print"
+    ( info (DoEval . unwords <$> many (argument str ( metavar "EXPRESSION"
+     <> help "Expression to evaluate in the current context" )))
+      ( progDesc "Evaluate an expression in the current context" ) )
+  )
+
+-- | Main parser info
+cmdParserInfo :: String -> [String] -> ParserInfo Command
+cmdParserInfo entryPoint entryArgs = info (cmdParser entryPoint entryArgs)
+  ( fullDesc )
+
+-- | Parse command line arguments
+parseCmd :: String -> InteractiveDM (Maybe Command)
+parseCmd input = do
+  (entryPoint, entryArgs) <- lift ask
+  let
+    res = execParserPure
+     parserPrefs
+     (cmdParserInfo entryPoint entryArgs)
+     (words input)
+   in case res of
+    Success x ->
+      return (Just x)
+    Failure bad ->
+      let (msg, _exit) = renderFailure bad "(hdb)"
+       in outputStrLn msg >> pure Nothing
+    _ -> outputStrLn "Unsupported command parsing mode" >> pure Nothing
+
+parserPrefs = prefs (disambiguate <> showHelpOnError <> showHelpOnEmpty)
