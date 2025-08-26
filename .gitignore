@@ -1,6 +1,7 @@
 *.bkp
 .vscode/
 node_modules/
+test/integration-tests/out/
 vscode-extension/dist/
 vscode-extension/result
 dist-newstyle/

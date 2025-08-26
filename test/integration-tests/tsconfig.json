@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "outDir": "./out",
+    "rootDir": "./test",
+    "esModuleInterop": true,
+  },
+  "include": ["test/**/*"],
+  "exclude": ["node_modules", "data"]
+}
