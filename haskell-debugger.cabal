@@ -98,7 +98,8 @@ executable hdb
                       Development.Debug.Adapter.Output,
                       Development.Debug.Adapter.Exit,
                       Development.Debug.Adapter.Handles,
-                      Development.Debug.Adapter
+                      Development.Debug.Adapter,
+                      Development.Debug.Interactive
     build-depends:
         base, ghc,
         exceptions, aeson, bytestring,
@@ -119,7 +120,7 @@ executable hdb
         dap >= 0.2 && < 1,
 
         haskeline >= 0.8 && < 1,
-        optparse-applicative >= 0.19 && < 1
+        optparse-applicative >= 0.18 && < 0.20
     hs-source-dirs:   hdb
     default-language: GHC2021
     default-extensions: CPP
