@@ -29,6 +29,7 @@ data DebugAdaptorState = DAS
 #else
       , breakpointMap :: Map.Map GHC.BreakpointId BreakpointSet
 #endif
+      , entryFile :: FilePath
       , entryPoint :: String
       , entryArgs :: [String]
       , projectRoot :: FilePath

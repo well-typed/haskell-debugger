@@ -1,0 +1,12 @@
+cabal-version:   3.8
+name:            a
+version:         0.1.0.0
+build-type:      Simple
+
+
+executable a
+    main-is:          Main.hs
+    build-depends:    base
+    hs-source-dirs:   app
+    ghc-options: -this-package-name a
+    default-language: Haskell2010

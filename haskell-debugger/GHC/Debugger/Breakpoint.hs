@@ -21,6 +21,7 @@ import GHC.Unit.Module.Env as GHC
 import GHC.Utils.Outputable as GHC
 
 import GHC.Debugger.Monad
+import GHC.Debugger.Session
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 
@@ -135,5 +136,5 @@ setBreakpoint exception_bp bp_status = do
     -- option is OFF and bp is ON (i.e. XOR)
     breakOn = bp_status /= BreakpointDisabled
     didChange = gopt opt dflags `xor` breakOn
-  GHC.setInteractiveDynFlags $ dflags `ch_opt` opt
+  setInteractiveDebuggerDynFlags $ dflags `ch_opt` opt
   return (BreakFoundNoLoc didChange)

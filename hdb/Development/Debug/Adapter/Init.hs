@@ -24,11 +24,12 @@ import Control.Monad
 import Data.Aeson as Aeson
 import GHC.Generics
 import System.Directory
+import System.FilePath
 
 import Development.Debug.Adapter
 import Development.Debug.Adapter.Exit
 import Development.Debug.Adapter.Flags
-import Development.Debug.Adapter.Logger
+import GHC.Debugger.Logger
 import qualified Development.Debug.Adapter.Output as Output
 
 import qualified GHC.Debugger as Debugger
@@ -38,6 +39,19 @@ import GHC.Debugger.Interface.Messages hiding (Command, Response)
 
 import DAP
 import Development.Debug.Adapter.Handles
+
+--------------------------------------------------------------------------------
+-- * Logging
+--------------------------------------------------------------------------------
+
+data InitLog
+  = DebuggerLog Debugger.DebuggerLog
+  | FlagsLog FlagsLog
+
+instance Pretty InitLog where
+  pretty = \ case
+    DebuggerLog msg -> pretty msg
+    FlagsLog msg -> pretty msg
 
 --------------------------------------------------------------------------------
 -- * Client
@@ -69,11 +83,11 @@ data LaunchArgs
 -- | Initialize debugger
 --
 -- Returns @True@ if successful.
-initDebugger :: LogAction IO (WithSeverity T.Text) -> LaunchArgs -> DebugAdaptor Bool
-initDebugger l LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entryArgs, extraGhcArgs} = do
+initDebugger :: Recorder (WithSeverity InitLog) -> LaunchArgs -> DebugAdaptor Bool
+initDebugger l LaunchArgs{__sessionId, projectRoot, entryFile = entryFile, entryPoint, entryArgs, extraGhcArgs} = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
-  let hieBiosLogger = cmapWithSev renderPretty l
+  let hieBiosLogger = cmapWithSev FlagsLog l
   cradle <- liftIO (hieBiosCradle hieBiosLogger projectRoot entryFile) >>=
     \ case
       Left e ->
@@ -123,8 +137,9 @@ initDebugger l LaunchArgs{__sessionId, projectRoot, entryFile, entryPoint, entry
 
       finished_init <- liftIO $ newEmptyMVar
 
-      registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{..}
-        [ debuggerThread finished_init writeDebuggerOutput projectRoot flags extraGhcArgs entryFile defaultRunConf syncRequests syncResponses
+      let absEntryFile = normalise $ projectRoot </> entryFile
+      registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{entryFile=absEntryFile,..}
+        [ debuggerThread l finished_init writeDebuggerOutput projectRoot flags extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
         , handleDebuggerOutput readDebuggerOutput
         , stdoutCaptureThread
         , stderrCaptureThread
@@ -177,7 +192,8 @@ stderrCaptureThread withAdaptor = do
 --    This sets the global CWD for this process, disallowing multiple sessions
 --    at the same, but that's OK because we currently only support
 --    single-session mode. Each new session gets a new debugger process.
-debuggerThread :: MVar (Either String ()) -- ^ To signal when initialization is complete.
+debuggerThread :: Recorder (WithSeverity InitLog)
+               -> MVar (Either String ()) -- ^ To signal when initialization is complete.
                -> Handle          -- ^ The write end of a handle for debug compiler output
                -> FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
@@ -189,7 +205,7 @@ debuggerThread :: MVar (Either String ()) -- ^ To signal when initialization is 
                -> (DebugAdaptorCont () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
+debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
 
   let finalGhcInvocation = ghcInvocation ++ extraGhcArgs
 
@@ -210,7 +226,7 @@ debuggerThread finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraG
 
         forever $ do
           req <- takeMVar requests & liftIO
-          resp <- (Debugger.execute req <&> Right)
+          resp <- (Debugger.execute (cmapWithSev DebuggerLog recorder) req <&> Right)
                     `catch` \(e :: SomeException) ->
                         pure (Left (displayExceptionWithContext e))
           either bad reply resp

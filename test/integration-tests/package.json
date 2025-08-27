@@ -8,7 +8,7 @@
   },
   "scripts": {
     "compile": "tsc",
-    "test": "mocha --parallel"
+    "test": "mocha"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

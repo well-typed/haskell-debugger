@@ -21,6 +21,7 @@ import System.Directory hiding (findFile)
 import System.FilePath
 import System.IO.Error
 import Text.ParserCombinators.ReadP (readP_to_S)
+import Prettyprinter
 
 import qualified HIE.Bios as HIE
 import qualified HIE.Bios.Config as Config
@@ -31,7 +32,16 @@ import qualified Hie.Cabal.Parser as Implicit
 import qualified Hie.Locate as Implicit
 import qualified Hie.Yaml as Implicit
 
-import Development.Debug.Adapter.Logger
+import GHC.Debugger.Logger
+
+data FlagsLog
+  = HieBiosLog HIE.Log
+  | LogCradle (HIE.Cradle Void)
+
+instance Pretty FlagsLog where
+  pretty = \ case
+    HieBiosLog msg -> pretty msg
+    LogCradle crdl -> "Determined Cradle:" <+> viaShow crdl
 
 -- | Flags inferred by @hie-bios@ to invoke GHC
 data HieBiosFlags = HieBiosFlags
@@ -46,18 +56,21 @@ data HieBiosFlags = HieBiosFlags
       -- root of the cradle, but in some sub-directory.
       }
 
-hieBiosCradle :: LogAction IO (WithSeverity HIE.Log) {-^ Logger -}
+hieBiosCradle :: Recorder (WithSeverity FlagsLog) {-^ Logger -}
               -> FilePath {-^ Project root -}
               -> FilePath {-^ Entry file relative to root -}
               -> IO (Either String (HIE.Cradle Void))
 hieBiosCradle logger root relTarget = runExceptT $ do
   let target = root </> relTarget
   explicitCradle <- HIE.findCradle target & liftIO
-  cradle <- maybe (loadImplicitCradle logger target)
-                  (HIE.loadCradle logger) explicitCradle & liftIO
+  cradle <- maybe (loadImplicitCradle hieBiosLogger target)
+                  (HIE.loadCradle hieBiosLogger) explicitCradle & liftIO
+  logWith logger Info $ LogCradle cradle
   pure cradle
+  where
+    hieBiosLogger = toCologAction $ cmapWithSev HieBiosLog logger
 
-hieBiosRuntimeGhcVersion :: LogAction IO (WithSeverity HIE.Log)
+hieBiosRuntimeGhcVersion :: Recorder (WithSeverity FlagsLog)
                          -> HIE.Cradle Void
                          -> IO (Either String Version)
 hieBiosRuntimeGhcVersion _logger cradle = runExceptT $ do
@@ -67,7 +80,7 @@ hieBiosRuntimeGhcVersion _logger cradle = runExceptT $ do
     Just ver -> pure ver
 
 -- | Make 'HieBiosFlags' from the given target file
-hieBiosFlags :: LogAction IO (WithSeverity HIE.Log) {-^ Logger -}
+hieBiosFlags :: Recorder (WithSeverity FlagsLog) {-^ Logger -}
              -> HIE.Cradle Void {-^ Project cradle the entry file belongs to -}
              -> FilePath {-^ Project root -}
              -> FilePath {-^ Entry file relative to root -}
