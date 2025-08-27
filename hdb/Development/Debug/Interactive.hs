@@ -13,16 +13,25 @@ import Options.Applicative
 import Options.Applicative.BashCompletion
 
 import Development.Debug.Adapter.Flags  -- use different namespace for common things
-import Development.Debug.Adapter.Logger -- ditto
 import Development.Debug.Adapter.Handles
 
+import GHC.Debugger.Logger
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Monad
 import GHC.Debugger
 
 -- | Interactive debugging monad
-type InteractiveDM a = InputT (RWST (String{-entry point-}, [String]{-run args-}) ()
+type InteractiveDM a = InputT (RWST (FilePath{-entry file-},String{-entry point-}, [String]{-run args-}) ()
                                 (Maybe Command{-last cmd-}) Debugger) a
+
+data InteractiveLog
+  = DebuggerLog DebuggerLog
+  | FlagsLog FlagsLog
+
+instance Pretty InteractiveLog where
+  pretty = \ case
+    DebuggerLog msg -> pretty msg
+    FlagsLog msg -> pretty msg
 
 -- | Run it
 runIDM :: String   -- ^ entryPoint
@@ -34,8 +43,9 @@ runIDM :: String   -- ^ entryPoint
 runIDM entryPoint entryFile entryArgs extraGhcArgs act = do
   projectRoot <- getCurrentDirectory
   l           <- handleLogger stdout
-  let loggerWithSev = cmap (renderWithSeverity id) l
-  let hieBiosLogger = cmapWithSev renderPretty loggerWithSev
+  let
+    loggerWithSev = cmap renderPrettyWithSeverity (fromCologAction l)
+  let hieBiosLogger = cmapWithSev FlagsLog loggerWithSev
   cradle <- hieBiosCradle hieBiosLogger projectRoot entryFile >>=
     \case
       Left e -> exitWithMsg e
@@ -52,7 +62,7 @@ runIDM entryPoint entryFile entryArgs extraGhcArgs act = do
       runDebugger stdout rootDir componentDir libdir units finalGhcInvocation entryFile defaultRunConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
-                   (entryPoint, entryArgs) Nothing
+                   (entryFile, entryPoint, entryArgs) Nothing
   where
     exitWithMsg str = do
       putStrLn str
@@ -70,9 +80,10 @@ runIDM entryPoint entryFile entryArgs extraGhcArgs act = do
   --         _ -> return []
 
 -- | Run the interactive command-line debugger
-debugInteractive :: InteractiveDM ()
-debugInteractive = withInterrupt loop
+debugInteractive :: Recorder (WithSeverity InteractiveLog) -> InteractiveDM ()
+debugInteractive recorder = withInterrupt loop
   where
+    debugRec = cmapWithSev DebuggerLog recorder
     loop = handleInterrupt loop $ do
       minput <- getInputLine "(hdb) "
       case minput of
@@ -81,31 +92,31 @@ debugInteractive = withInterrupt loop
           lift get >>= \case
             Nothing -> return ()
             Just (cmd :: Command) -> do
-              out <- lift . lift $ execute cmd -- repeat last command
-              printResponse out
+              out <- lift . lift $ execute debugRec cmd -- repeat last command
+              printResponse debugRec out
         Just input -> do
           mcmd <- parseCmd input
           lift $ put mcmd
           case mcmd of
             Nothing -> return ()
             Just cmd -> do
-              out <- lift . lift $ execute cmd
-              printResponse out
+              out <- lift . lift $ execute debugRec cmd
+              printResponse debugRec out
       loop
 
 --------------------------------------------------------------------------------
 -- Printing
 --------------------------------------------------------------------------------
 
-printResponse :: Response -> InteractiveDM ()
-printResponse = \case
+printResponse :: Recorder (WithSeverity DebuggerLog) -> Response -> InteractiveDM ()
+printResponse recd = \case
   DidEval er -> outputStrLn $ show er
   DidSetBreakpoint bf       -> outputStrLn $ show bf
   DidRemoveBreakpoint bf    -> outputStrLn $ show bf
   DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
   DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
   DidContinue er -> outputStrLn $ show er
-  DidStep er -> printEvalResult er
+  DidStep er -> printEvalResult recd er
   DidExec er -> outputStrLn $ show er
   GotStacktrace stackframes -> outputStrLn $ show stackframes
   GotScopes scopeinfos -> outputStrLn $ show scopeinfos
@@ -113,11 +124,11 @@ printResponse = \case
   Aborted str -> outputStrLn ("Aborted: " ++ str)
   Initialised -> pure ()
 
-printEvalResult :: EvalResult -> InteractiveDM ()
-printEvalResult EvalStopped{breakId} = do
-  out <- lift . lift $ execute GetScopes
-  printResponse out
-printEvalResult er = outputStrLn $ show er
+printEvalResult :: Recorder (WithSeverity DebuggerLog) -> EvalResult -> InteractiveDM ()
+printEvalResult recd EvalStopped{breakId} = do
+  out <- lift . lift $ execute recd GetScopes
+  printResponse recd out
+printEvalResult _ er = outputStrLn $ show er
 
 --------------------------------------------------------------------------------
 -- Command parser
@@ -151,16 +162,16 @@ breakpointParser =
   ( flag' OnUncaughtExceptionsBreak ( long "error" )
   )
 
-runParser :: String -> [String] -> Parser Command
-runParser entryPoint entryArgs =
+runParser :: FilePath -> String -> [String] -> Parser Command
+runParser entryFile entryPoint entryArgs =
   -- --entry <name> with some args
   -- (DebugExecution <$> parseEntry <*> parseSomeArgs)
   -- --entry <name> without any args
   -- <|> (DebugExecution <$> parseEntry <*> pure [])
   -- just some args
-  (DebugExecution (mkEntry entryPoint) <$> parseSomeArgs)
+  (DebugExecution (mkEntry entryPoint) entryFile <$> parseSomeArgs)
   -- just "run"
-  <|> (pure $ DebugExecution (mkEntry entryPoint) entryArgs)
+  <|> (pure $ DebugExecution (mkEntry entryPoint) entryFile entryArgs)
   where
     parseEntry =
       fmap mkEntry $
@@ -178,8 +189,8 @@ runParser entryPoint entryArgs =
       | otherwise = FunctionEntry entryPoint
 
 -- | Combined parser for 'Command'
-cmdParser :: String -> [String] -> Parser Command
-cmdParser entryPoint entryArgs = hsubparser
+cmdParser :: FilePath -> String -> [String] -> Parser Command
+cmdParser entryFile entryPoint entryArgs = hsubparser
   ( Options.Applicative.command "break"
     ( info (SetBreakpoint <$> breakpointParser)
       ( progDesc "Set a breakpoint" ) )
@@ -189,7 +200,7 @@ cmdParser entryPoint entryArgs = hsubparser
       ( progDesc "Delete a breakpoint" ) )
   <>
     Options.Applicative.command "run"
-    ( info (runParser entryPoint entryArgs)
+    ( info (runParser entryFile entryPoint entryArgs)
       ( progDesc "Run the debuggee" ) )
   <>
     Options.Applicative.command "next"
@@ -215,18 +226,18 @@ cmdParser entryPoint entryArgs = hsubparser
   )
 
 -- | Main parser info
-cmdParserInfo :: String -> [String] -> ParserInfo Command
-cmdParserInfo entryPoint entryArgs = info (cmdParser entryPoint entryArgs)
+cmdParserInfo :: FilePath -> String -> [String] -> ParserInfo Command
+cmdParserInfo entryFile entryPoint entryArgs = info (cmdParser entryFile entryPoint entryArgs)
   ( fullDesc )
 
 -- | Parse command line arguments
 parseCmd :: String -> InteractiveDM (Maybe Command)
 parseCmd input = do
-  (entryPoint, entryArgs) <- lift ask
+  (entryFile, entryPoint, entryArgs) <- lift ask
   let
     res = execParserPure
      parserPrefs
-     (cmdParserInfo entryPoint entryArgs)
+     (cmdParserInfo entryFile entryPoint entryArgs)
      (words input)
    in case res of
     Success x ->

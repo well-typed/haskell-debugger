@@ -233,14 +233,75 @@ describe("Debug Adapter Tests", function () {
 
     simpleLaunchConfigs.forEach(basicTests);
 
-    describe("Multiple home unit tests", function () {
-      const mhuConfig = mkConfig({
-            projectRoot: "/data/cabal-mhu1",
-            entryFile: "bar/app/Main.hs",
+    describe("Multiple main function tests", function () {
+        const multiMainConfig = mkConfig({
+            projectRoot: "/data/multi-mains",
+            entryFile: "app/Main.hs",
             entryPoint: "main",
             entryArgs: [],
-            extraGhcArgs: []
-          });
+            extraGhcArgs: [],
+        });
+
+        it("should run program to the end", () => {
+            return Promise.all([
+                dc.configurationSequence(),
+                dc.launch(multiMainConfig),
+                dc.waitForEvent("exited").then(
+                    (e) =>
+                    new Promise((resolve, reject) => {
+                        if (e.body.exitCode == 0) resolve(e);
+                        else reject(new Error("Expecting ExitCode 0"));
+                    })
+                ),
+            ]);
+        });
+        it("should stop at break-point", () => {
+            const expected = { path: multiMainConfig.projectRoot + "/./" + multiMainConfig.entryFile, line: 6 };
+            return dc.hitBreakpoint(multiMainConfig, { path: multiMainConfig.entryFile, line: 6 }, expected, expected);
+        });
+
+        it("should run the right main", async () => {
+
+            const multiMainConfig = mkConfig({
+                projectRoot: "/data/multi-mains",
+                entryFile: "second/Main.hs",
+                entryPoint: "main",
+                entryArgs: [],
+                extraGhcArgs: [],
+            });
+
+            let outputEvents = [];
+            dc.on("output", (event) => {
+              outputEvents.push(event.body);
+            });
+
+            return Promise.all([
+                dc.configurationSequence(),
+                dc.launch(multiMainConfig),
+                dc.waitForEvent("exited").then(
+                    (e) => {
+                        const allOutput = outputEvents.map((o) => o.output).join("");
+                        assert.ok(allOutput.includes("The right main"), "Expecting the right Main");
+                        assert.ok(!allOutput.includes("The bad main"), "Not expecting the bad main");
+                        return new Promise((resolve, reject) => {
+                            if (e.body.exitCode == 0) {
+                                resolve(e);
+                            }
+                            else reject(new Error("Expecting ExitCode 0"));
+                        });
+                    })
+                ]);
+        });
+    });
+
+    describe("Multiple home unit tests", function () {
+      const mhuConfig = mkConfig({
+        projectRoot: "/data/cabal-mhu1",
+        entryFile: "bar/app/Main.hs",
+        entryPoint: "main",
+        entryArgs: [],
+        extraGhcArgs: [],
+      });
 
       it("should run program to the end", () => {
         return Promise.all([
@@ -478,7 +539,7 @@ describe("Debug Adapter Tests", function () {
         const expected = (line) => ({ path: config.projectRoot + "/" + config.entryFile, line: line });
 
         // Capture output events
-        const outputEvents = [];
+        let outputEvents = [];
         dc.on("output", (event) => {
           outputEvents.push(event.body);
         });

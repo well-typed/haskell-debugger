@@ -12,6 +12,10 @@ module GHC.Debugger.Session (
   toGhcTarget,
   CacheDirs(..),
   getCacheDirs,
+  -- * Debugger's Interactive Home Unit
+  interactiveGhcDebuggerUnitId,
+  getInteractiveDebuggerDynFlags,
+  setInteractiveDebuggerDynFlags,
   -- * DynFlags modifications
   setWorkingDirectory,
   setCacheDirs,
@@ -114,8 +118,9 @@ setupHomeUnitGraph flagsAndTargets = do
   GHC.setTargets (fmap toGhcTarget targetDetails)
 
 -- | Set up the 'HomeUnitGraph' with empty 'HomeUnitEnv's.
-createUnitEnvFromFlags :: NonEmpty.NonEmpty DynFlags -> IO HomeUnitGraph
-createUnitEnvFromFlags unitDflags = do
+-- The first 'DynFlags' are the 'DynFlags' for the interactive session.
+createUnitEnvFromFlags :: DynFlags -> [DynFlags] -> IO HomeUnitGraph
+createUnitEnvFromFlags initialDynFlags unitDflags = do
   let
     newInternalUnitEnv dflags hpt = mkHomeUnitEnv State.emptyUnitState Nothing dflags hpt Nothing
 
@@ -123,7 +128,22 @@ createUnitEnvFromFlags unitDflags = do
     emptyHpt <- emptyHomePackageTable
     pure (homeUnitId_ dflags, newInternalUnitEnv dflags emptyHpt)) unitDflags
 
-  pure $ unitEnv_new (Map.fromList (NonEmpty.toList unitEnvList))
+  interactiveHomeUnit <- do
+    let interactiveDynFlags = initialDynFlags
+          { homeUnitId_ = interactiveGhcDebuggerUnitId
+          , importPaths = []
+          , packageFlags =
+              [ ExposePackage
+                  ("-package-id " ++ unitIdString unitId)
+                  (UnitIdArg $ RealUnit (Definite unitId))
+                  (ModRenaming True [])
+              | (unitId, _) <- unitEnvList
+              ]
+          }
+    emptyHpt <- emptyHomePackageTable
+    pure (homeUnitId_ interactiveDynFlags, newInternalUnitEnv interactiveDynFlags emptyHpt)
+
+  pure $ unitEnv_new (Map.fromList (interactiveHomeUnit : unitEnvList))
 
 -- | Given a set of 'DynFlags', set up the 'UnitEnv' and 'HomeUnitEnv' for this
 -- 'HscEnv'.
@@ -133,7 +153,7 @@ initHomeUnitEnv :: [DynFlags] -> HscEnv -> IO HscEnv
 initHomeUnitEnv unitDflags env = do
   let dflags0         = hsc_dflags env
   -- additionally, set checked dflags so we don't lose fixes
-  initial_home_graph <- createUnitEnvFromFlags (dflags0 NonEmpty.:| unitDflags)
+  initial_home_graph <- createUnitEnvFromFlags dflags0 unitDflags
   let home_units = unitEnv_keys initial_home_graph
   home_unit_graph <- forM initial_home_graph $ \homeUnitEnv -> do
     let cached_unit_dbs = homeUnitEnv_unit_dbs homeUnitEnv
@@ -151,12 +171,12 @@ initHomeUnitEnv unitDflags env = do
       , homeUnitEnv_home_unit = Just home_unit
       }
 
-  let dflags1 = homeUnitEnv_dflags $ unitEnv_lookup (homeUnitId_ dflags0) home_unit_graph
+  let dflags1 = homeUnitEnv_dflags $ unitEnv_lookup interactiveGhcDebuggerUnitId home_unit_graph
   let unit_env = UnitEnv
         { ue_platform        = targetPlatform dflags1
         , ue_namever         = GHC.ghcNameVersion dflags1
         , ue_home_unit_graph = home_unit_graph
-        , ue_current_unit    = homeUnitId_ dflags0
+        , ue_current_unit    = interactiveGhcDebuggerUnitId
         , ue_module_graph    = ue_module_graph (hsc_unit_env env)
         , ue_eps             = ue_eps (hsc_unit_env env)
         }
@@ -273,6 +293,53 @@ getCacheDirs prefix opts = do
     -- Create a unique folder per set of different GHC options, assuming that each different set of
     -- GHC options will create incompatible interface files.
     opts_hash = B.unpack $ B16.encode $ H.finalize $ H.updates H.init (map B.pack opts)
+
+-- ----------------------------------------------------------------------------
+-- The Interactive DynFlags
+-- ----------------------------------------------------------------------------
+
+interactiveGhcDebuggerUnit :: Unit
+interactiveGhcDebuggerUnit = stringToUnit "interactiveGhcDebugger"
+
+interactiveGhcDebuggerUnitId :: UnitId
+interactiveGhcDebuggerUnitId = toUnitId interactiveGhcDebuggerUnit
+
+getInteractiveDebuggerDynFlags :: GhcMonad m => m DynFlags
+getInteractiveDebuggerDynFlags = do
+  env <- getSession
+  pure $ ue_unitFlags interactiveGhcDebuggerUnitId (hsc_unit_env env)
+
+-- | Set the interactive 'DynFlags' for the haskell-debugger session.
+-- We manage a separate home unit for the interactive 'DynFlags'.
+-- The invariant is that 'DynFlags' found in 'InteractiveContext' *must* be
+-- the same 'DynFlags' as the ones found in 'interactiveGhcDebuggerUnitId' in
+-- the 'HomeUnitEnv'
+-- This function upholds this invariant.
+--
+-- Always prefer this, over 'setInteractiveDynFlags'.
+setInteractiveDebuggerDynFlags :: GhcMonad m => DynFlags -> m ()
+setInteractiveDebuggerDynFlags dflags = do
+  env <- getSession
+  norm_dflags <- GHC.normaliseInteractiveDynFlags (hsc_logger env) dflags
+  env' <- GHC.initialiseInteractiveDynFlags norm_dflags env
+  -- Make sure the 'InteractiveContext' and 'interactiveGhcDebuggerUnitId' have exactly
+  -- the same 'DynFlags'
+  let newEnv =
+        if homeUnitId_ (hsc_dflags env') == interactiveGhcDebuggerUnitId
+          then hscSetFlags norm_dflags env'
+          else
+            let
+              unit_env = hsc_unit_env env'
+            in env'
+                { hsc_unit_env = unit_env
+                    { ue_home_unit_graph =
+                        updateUnitFlags
+                          interactiveGhcDebuggerUnitId
+                          (const norm_dflags)
+                          (ue_home_unit_graph unit_env)
+                    }
+                }
+  setSession newEnv
 
 -- ----------------------------------------------------------------------------
 -- Modification of DynFlags

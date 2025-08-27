@@ -73,13 +73,13 @@ data Command
   -- When the @'EntryPoint'@ is @'Main'@, @'runArgs'@ are set as process
   -- invocation arguments (as in @argv@) rather than passed directly as a
   -- Haskell function arguments.
-  | DebugExecution { entryPoint :: EntryPoint, runArgs :: [String] }
+  | DebugExecution { entryPoint :: EntryPoint, entryFile :: FilePath, runArgs :: [String] }
 
   -- | Terminate haskell-debugger and exit
   | TerminateProcess
 
 -- | An entry point for program execution.
-data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnName :: String }
+data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnName :: String }
   deriving (Show, Generic)
 
 -- | A breakpoint can be set/removed on functions by name, or in modules by

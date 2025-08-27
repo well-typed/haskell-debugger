@@ -5,3 +5,4 @@ test/integration-tests/out/
 vscode-extension/dist/
 vscode-extension/result
 dist-newstyle/
+cabal.project.local

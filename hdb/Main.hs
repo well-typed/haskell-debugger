@@ -14,13 +14,13 @@ import Development.Debug.Adapter.Stopped
 import Development.Debug.Adapter.Evaluation
 import Development.Debug.Adapter.Exit
 import Development.Debug.Adapter.Handles
-import Development.Debug.Adapter.Logger
+import GHC.Debugger.Logger
 import Development.Debug.Adapter
 
 import Development.Debug.Interactive
 
 import System.IO (hSetBuffering, BufferMode(LineBuffering))
-import DAP.Log
+import qualified DAP.Log as DAP
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import GHC.IO.Handle.FD
@@ -118,12 +118,21 @@ main = do
         hSetBuffering realStdout LineBuffering
         l <- handleLogger realStdout
         let
-          timeStampLogger = cmapIO renderWithTimestamp l
-          loggerWithSev = cmap (renderWithSeverity id) timeStampLogger
-        runDAPServerWithLogger (cmap renderDAPLog timeStampLogger) config (talk loggerWithSev)
+          timeStampLogger :: Recorder T.Text
+          timeStampLogger = cmapIO renderWithTimestamp (fromCologAction l)
+          loggerWithSev :: Recorder (WithSeverity MainLog)
+          loggerWithSev = cmap renderPrettyWithSeverity timeStampLogger
+        runDAPServerWithLogger (toCologAction $ cmap DAP.renderDAPLog timeStampLogger) config (talk loggerWithSev)
     HdbCLI{..} -> do
+      l <- handleLogger stdout
+      let
+        timeStampLogger :: Recorder T.Text
+        timeStampLogger = cmapIO renderWithTimestamp (fromCologAction l)
+        loggerWithSev :: Recorder (WithSeverity MainLog)
+        loggerWithSev = cmap renderPrettyWithSeverity timeStampLogger
       runIDM entryPoint entryFile entryArgs extraGhcArgs $
-        debugInteractive
+        debugInteractive (cmapWithSev InteractiveLog loggerWithSev)
+
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: Int -> IO ServerConfig
@@ -174,10 +183,18 @@ getConfig port = do
 -- * Talk
 --------------------------------------------------------------------------------
 
+data MainLog
+  = InitLog InitLog
+  | InteractiveLog InteractiveLog
+
+instance Pretty MainLog where
+  pretty = \ case
+    InitLog msg -> pretty msg
+
 -- | Main function where requests are received and Events + Responses are returned.
 -- The core logic of communicating between the client <-> adaptor <-> debugger
 -- is implemented in this function.
-talk :: LogAction IO (WithSeverity T.Text) -> Command -> DebugAdaptor ()
+talk :: Recorder (WithSeverity MainLog) -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
 talk l = \ case
   CommandInitialize -> do
@@ -185,7 +202,7 @@ talk l = \ case
     sendInitializeResponse
 --------------------------------------------------------------------------------
   CommandLaunch -> do
-    success <- initDebugger l =<< getArguments
+    success <- initDebugger (cmapWithSev InitLog l) =<< getArguments
     if success then do
       sendLaunchResponse   -- ack
       sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session

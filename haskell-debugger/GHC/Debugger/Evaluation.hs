@@ -1,19 +1,32 @@
-{-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
-   DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
-   TypeApplications, ScopedTypeVariables, BangPatterns #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 module GHC.Debugger.Evaluation where
 
 import Control.Monad.IO.Class
 import Control.Monad.Catch
+import qualified Data.List as List
 import Data.Maybe
+import System.FilePath
+import qualified Prettyprinter as Pretty
 
 import GHC
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
+import GHC.Unit.Types
 import GHC.Data.FastString
 import GHC.Driver.DynFlags as GHC
+import GHC.Driver.Monad as GHC
 import GHC.Driver.Env as GHC
-import GHC.Driver.Monad
 import GHC.Runtime.Debugger.Breakpoints as GHC
+import qualified GHC.Unit.Module.ModSummary as GHC
 import GHC.ByteCode.Breakpoints
 import GHC.Types.Name.Occurrence (mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig)
@@ -25,20 +38,38 @@ import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Monad
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
+import GHC.Debugger.Logger
+
+data EvalLog
+  = LogEvalModule GHC.Module
+
+instance Pretty EvalLog where
+  pretty = \ case
+    LogEvalModule modl -> "Eval Module Context:" Pretty.<+> pretty (GHC.showSDocUnsafe (ppr modl))
 
 --------------------------------------------------------------------------------
 -- * Evaluation
 --------------------------------------------------------------------------------
 
 -- | Run a program with debugging enabled
-debugExecution :: EntryPoint -> [String] {-^ Args -} -> Debugger EvalResult
-debugExecution entry args = do
+debugExecution :: Recorder (WithSeverity EvalLog) -> FilePath -> EntryPoint -> [String] {-^ Args -} -> Debugger EvalResult
+debugExecution recorder entryFile entry args = do
 
   -- consider always using :trace like ghci-dap to always have a stacktrace?
   -- better solution could involve profiling stack traces or from IPE info?
+  modSummaryOfEntryFile <- findUnitIdOfEntryFile entryFile
+  let modOfEntryFile = GHC.ms_mod modSummaryOfEntryFile
+      unitIdOfEntryFile = GHC.ms_unitid modSummaryOfEntryFile
+
+  let
+    evalModule = mkModule (RealUnit (Definite unitIdOfEntryFile))
+                                         (moduleName modOfEntryFile)
+
+  logWith recorder Info $ LogEvalModule evalModule
+  old_context <- GHC.getContext
+  GHC.setContext [GHC.IIModule evalModule]
 
   (entryExp, exOpts) <- case entry of
-
     MainEntry nm -> do
       let prog = fromMaybe "main" nm
       -- the wrapper is equivalent to GHCi's `:main arg1 arg2 arg3`
@@ -53,11 +84,12 @@ debugExecution entry args = do
       -- be "\"some\"" "\"things\"".
       return (fn ++ " " ++ unwords args, GHC.execOptions)
 
-  GHC.execStmt entryExp exOpts >>= handleExecResult
-
+  exec_res <- GHC.execStmt entryExp exOpts
+  GHC.setContext old_context -- restore context after running `main`
+  handleExecResult exec_res
   where
     -- It's not ideal to duplicate these two functions from ghci, but its unclear where they would better live. Perhaps next to compileParsedExprRemote? The issue is run
-    mkEvalWrapper :: GhcMonad m => String -> [String] ->  m ForeignHValue
+    mkEvalWrapper :: GhcMonad m => String -> [String] -> m ForeignHValue
     mkEvalWrapper progname' args' =
       runInternal $ GHC.compileParsedExprRemote
       $ evalWrapper' `GHC.mkHsApp` nlHsString progname'
@@ -82,6 +114,12 @@ debugExecution entry args = do
               `gopt_set` Opt_ImplicitImportQualified
           )
 
+    findUnitIdOfEntryFile :: GhcMonad m => FilePath -> m GHC.ModSummary
+    findUnitIdOfEntryFile fp = do
+      modSums <- getAllLoadedModules
+      case List.find ((Just fp ==) . fmap normalise . GHC.ml_hs_file . GHC.ms_location ) modSums of
+        Nothing -> error $ "findUnitIdOfEntryFile: no unit id found for: " ++ fp
+        Just summary -> pure summary
 
 -- | Resume execution of the stopped debuggee program
 doContinue :: Debugger EvalResult
