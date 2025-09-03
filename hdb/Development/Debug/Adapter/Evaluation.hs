@@ -77,7 +77,7 @@ handleEvalResult stepping er = case er of
     sendTerminatedEvent defaultTerminatedEvent
     sendExitedEvent (ExitedEvent 43)
   EvalCompleted{resultVal, resultType} -> do
-    Output.stderr (T.pack $ "Evaluation returned: " ++ resultVal ++ " :: " ++ resultType)
+    Output.console (T.pack $ "Evaluation returned: " ++ resultVal ++ " :: " ++ resultType)
     sendTerminatedEvent defaultTerminatedEvent
     sendExitedEvent (ExitedEvent 0)
   EvalException{resultVal, resultType} -> do
