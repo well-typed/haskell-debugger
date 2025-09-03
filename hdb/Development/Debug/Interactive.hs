@@ -105,13 +105,19 @@ printResponse = \case
   DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
   DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
   DidContinue er -> outputStrLn $ show er
-  DidStep er -> outputStrLn $ show er
+  DidStep er -> printEvalResult er
   DidExec er -> outputStrLn $ show er
   GotStacktrace stackframes -> outputStrLn $ show stackframes
   GotScopes scopeinfos -> outputStrLn $ show scopeinfos
   GotVariables vis -> outputStrLn $ show vis -- (Either VarInfo [VarInfo])
   Aborted str -> outputStrLn ("Aborted: " ++ str)
   Initialised -> pure ()
+
+printEvalResult :: EvalResult -> InteractiveDM ()
+printEvalResult EvalStopped{breakId} = do
+  out <- lift . lift $ execute GetScopes
+  printResponse out
+printEvalResult er = outputStrLn $ show er
 
 --------------------------------------------------------------------------------
 -- Command parser
