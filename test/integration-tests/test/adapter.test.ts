@@ -401,8 +401,6 @@ describe("Debug Adapter Tests", function () {
             assertIsString(s_labVar, '"label"');
         })
     })
-
-
     describe("Stepping out (step-out)", function () {
 
         let step_out_broken = ghc_version < "9.15.20250731" // hasn't been merged yet, but let's use this bound; will probably only be in GHC 9.14.2
@@ -465,6 +463,59 @@ describe("Debug Adapter Tests", function () {
             await dc.stepOutRequest({threadId: 0});
 
         })
+    })
+    describe("Stdout tests", function () {
+      it("basic output and stderr", async () => {
+
+        let config = mkConfig({
+              projectRoot: "/data/T45",
+              entryFile: "Main.hs",
+              entryPoint: "main",
+              entryArgs: [], // no args
+              extraGhcArgs: []
+            })
+
+        const expected = (line) => ({ path: config.projectRoot + "/" + config.entryFile, line: line });
+
+        // Capture output events
+        const outputEvents = [];
+        dc.on("output", (event) => {
+          outputEvents.push(event.body);
+        });
+
+        // Hit breakpoint at line 3 before program runs through
+        await dc.hitBreakpoint(config, { path: config.entryFile, line: 3 }, expected(3), expected(3));
+
+        // Print line
+        await dc.nextRequest({ threadId: 0 });
+
+        // Reach crash line
+        await dc.nextRequest({ threadId: 0 });
+
+        // Crash it
+        await dc.nextRequest({ threadId: 0 });
+
+        await dc.waitForEvent("terminated");
+
+        // Now assert the collected output
+        const allOutput = outputEvents.map((o) => o.output).join("");
+
+        // stdout should include the first message
+        assert.ok(
+          allOutput.includes("Going to read args"),
+          "Expected stdout message not found"
+        );
+
+        // stderr should include an error from getArgs
+        const stderrEvents = outputEvents.filter((e) => e.category === "stderr");
+        const stderrText = stderrEvents.map((e) => e.output).join("");
+
+        assert.ok(
+          stderrText.length > 0,
+          "Expected stderr output from getArgs failure"
+        );
+
+      })
     })
 })
 
