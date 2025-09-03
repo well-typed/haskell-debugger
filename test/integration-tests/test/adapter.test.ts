@@ -511,7 +511,7 @@ describe("Debug Adapter Tests", function () {
         const stderrText = stderrEvents.map((e) => e.output).join("");
 
         assert.ok(
-          stderrText.length > 0,
+          stderrText.includes("Uncaught exception"),
           "Expected stderr output from getArgs failure"
         );
 
