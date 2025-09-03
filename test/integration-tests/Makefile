@@ -14,4 +14,4 @@ test: node_modules
 	# PATH=$(dir $(GHC)):$(dir $(DEBUGGER)):$$PATH ./node_modules/.bin/mocha -f 'allow arbitrarily deep'
 	# nix-shell -p nodejs --run 'PATH=$(dir $(GHC)):$(dir $(DEBUGGER)):$$PATH ./node_modules/.bin/mocha'
 	@echo "NODE: $(node)"
-	nix develop --command bash -c "PATH=$(dir $(GHC)):$(dir $(DEBUGGER)):$(dir $(node)):$$PATH npm run test"
+	PATH=$(dir $(GHC)):$(dir $(DEBUGGER)):$(dir $(node)):$$PATH npm run test
