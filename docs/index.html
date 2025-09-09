@@ -172,7 +172,7 @@
         <p><a href="#installation">Installation</a></p>
         <p><a href="#configuration">Configuration</a></p>
         <p><a href="#talks">Talks</a></p>
-        <p><a href="https://github.com/well-typed/ghc-debugger">Source</a></p>
+        <p><a href="https://github.com/well-typed/haskell-debugger">Source</a></p>
     </nav>
 
     <section style="flex-direction: row">
@@ -211,24 +211,25 @@
                 Installation Guide
             </h2>
             <p>
-                The executable <strong><code>ghc-debug-adapter</code></strong> is a standalone application which uses
+                The executable <strong><code>haskell-debugger:hdb</code></strong> is a standalone application which uses
                 the GHC library to implement the <a href="https://microsoft.github.io/debug-adapter-protocol/" style="color:#fffff9">Debug Adapter Protocol</a> (DAP)
                 for Haskell.
             </p>
             <p>
                 Any editor which supports DAP can be configured to step-through
-                Haskell code by using the <strong><code>ghc-debug-adapter</code></strong> tool.
+                Haskell code by using the <strong><code>hdb</code></strong> tool.
                 This includes VSCode, Vim and Emacs.
             </p>
             <p>
             First, the executable must be made available in <code>PATH</code>. It can be downloaded and installed from hackage with:
             </p>
             <div>
-            <pre style="margin: 1em 0;" class="dark"><code>cabal install ghc-debugger:ghc-debug-adapter --program-suffix="-$(ghc --numeric-version)"</code></pre>
+            <!-- <pre style="margin: 1em 0;" class="dark"><code>cabal install haskell-debugger:hdb --program-suffix="-$(ghc --numeric-version)"</code></pre> -->
+            <pre style="margin: 1em 0;" class="dark"><code>cabal install haskell-debugger:hdb</code></pre>
             </div>
-            <p style="margin-top:0em; padding-top: 0em;"><em><code>ghc-debug-adapter</code> is only supported from GHC 9.14 onwards.</em></p>
+            <p style="margin-top:0em; padding-top: 0em;"><em><code>hdb</code> is only supported from GHC 9.14 onwards.</em></p>
             <p style="margin-top:2em">
-            Second, your editor must be taught how to launch <code>ghc-debug-adapter</code>:
+            Second, your editor must be taught how to launch <code>hdb</code>:
             </p>
             <table style="max-width: 50em" class="dark">
             <colgroup>
@@ -244,7 +245,7 @@
             <tbody>
             <tr>
             <td>VSCode</td>
-            <td>Install the <a href="#">GHC Debugger VSCode extension</a>, select the debugger tab, and click the "Create launch.json" button followed by the green "Run" button.</td>
+            <td>Install the <a href="https://marketplace.visualstudio.com/items?itemName=Well-Typed.haskell-debugger-extension">Haskell Debugger VSCode extension</a>, select the debugger tab, and click the "Create launch.json" button followed by the green "Run" button.</td>
             </tr>
             <tr>
             <td>Nvim</td>
@@ -252,7 +253,7 @@
             </tr>
             <tr>
             <td>Emacs</td>
-            <td>Install a DAP plugin and submit the instructions in a PR to ghc-debugger</td>
+            <td>Install and configure a DAP client plugin. Do submit the instructions in a PR</td>
             </tr>
             </tbody>
             </table>
