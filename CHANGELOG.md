@@ -1,5 +1,9 @@
 # Revision history for haskell-debugger
 
+## 0.7.0.0 -- 2025-09-10
+
+* Fix line buffering of debuggee output (thus, stepping through a print line, will indeed print it to the console now).
+
 ## 0.6.0.0 -- 2025-09-10
 
 * Improve unit handling and fix running when `main` functions exist across different units
