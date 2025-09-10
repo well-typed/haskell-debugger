@@ -1,5 +1,16 @@
 # Revision history for haskell-debugger
 
+## 0.6.0.0 -- 2025-09-10
+
+* Improve unit handling and fix running when `main` functions exist across different units
+    * Add interactive home unit id
+    * The entry file determines which of the `main`s to run.
+* Add proper option parsing
+* Add preview version of `hdb cli` interactive mode, as an alternative to DAP server
+    * Experimental and incomplete
+* Fix: output uncaught exceptions to stderr
+* Fix: output eval completed result to console
+
 ## 0.5.0.0 -- 2025-08-26
 
 * Compatibility with GHC 9.14
