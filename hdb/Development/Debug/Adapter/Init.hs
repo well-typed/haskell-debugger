@@ -128,7 +128,7 @@ initDebugger l LaunchArgs{__sessionId, projectRoot, entryFile = entryFile, entry
       -- read from until we read an EOF.
       (readDebuggerOutput, writeDebuggerOutput) <- liftIO P.createPipe
       liftIO $ do
-        hSetBuffering readDebuggerOutput NoBuffering
+        hSetBuffering readDebuggerOutput LineBuffering
         hSetBuffering writeDebuggerOutput NoBuffering
         -- GHC output uses utf8
         hSetEncoding readDebuggerOutput utf8
