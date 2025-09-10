@@ -223,7 +223,7 @@
                 Installation Guide
             </h2>
             <p>
-                The executable <strong><code>haskell-debugger:hdb</code></strong> is a standalone application which uses
+                The haskell-debugger executable <strong><code>hdb</code></strong> is a standalone application which uses
                 the GHC library to implement the <a href="https://microsoft.github.io/debug-adapter-protocol/" style="color:#fffff9">Debug Adapter Protocol</a> (DAP)
                 for Haskell.
             </p>
@@ -237,7 +237,7 @@
             </p>
             <div>
             <!-- <pre style="margin: 1em 0;" class="dark"><code>cabal install haskell-debugger:hdb --program-suffix="-$(ghc --numeric-version)"</code></pre> -->
-            <pre style="margin: 1em 0;" class="dark"><code>cabal install haskell-debugger:hdb</code></pre>
+            <pre style="margin: 1em 0;" class="dark"><code>cabal install haskell-debugger --allow-newer=base,time,containers,ghc</code></pre>
             </div>
             <p style="margin-top:0em; padding-top: 0em;"><em><code>hdb</code> is only supported from GHC 9.14 onwards.</em></p>
             <p style="margin-top:2em">
