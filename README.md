@@ -1,4 +1,4 @@
-# GHC Debugger
+# Haskell Debugger
 
 Status: **Work In Progress**
 
@@ -16,7 +16,7 @@ first major release is ready.
 > `hdb` is only supported by the latest nightly GHC version.
 > The first release it will be compatible with is GHC 9.14.
 
-To install and use the GHC debugger, you need the executable `hdb`
+To install and use the debugger, you need the executable `hdb`
 and the VSCode extension `haskell-debugger-extension`.
 
 Since `hdb` implements the [Debug Adapter Protocol
