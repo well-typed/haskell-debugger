@@ -245,7 +245,7 @@ debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{.
       hPutStrLn stderr m
       putMVar replies (Aborted m)
 
--- | Reads from the read end of the handle to which the GHC debugger writes compiler messages.
+-- | Reads from the read end of the handle to which the debugger writes compiler messages.
 -- Writes the compiler messages to the client console
 handleDebuggerOutput :: Handle
                      -> (DebugAdaptorCont () -> IO ())

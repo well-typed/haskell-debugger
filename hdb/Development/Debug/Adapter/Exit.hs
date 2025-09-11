@@ -10,8 +10,8 @@
 -- * One of the threads launched by registerNewDebugSession crash
 --
 -- == 2. The haskell-debugger process
--- * GHC debugger crashes while initializing (e.g. while compiling or when discovering flags)
--- * GHC debugger crashes while executing a request
+-- * The debugger crashes while initializing (e.g. while compiling or when discovering flags)
+-- * The debugger crashes while executing a request
 --
 -- == 3. The debuggee loaded in haskell-debugger and runs
 -- * The debuggee terminates successfully
