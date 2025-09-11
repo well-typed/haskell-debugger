@@ -20,7 +20,7 @@ import Language.Haskell.Syntax.Module.Name
 -- Commands
 --------------------------------------------------------------------------------
 
--- | The commands sent to ghc debugger
+-- | The commands sent to the debugger
 data Command
 
   -- | Set a breakpoint on a given function, or module by line number
