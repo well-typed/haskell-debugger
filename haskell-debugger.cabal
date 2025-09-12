@@ -104,7 +104,9 @@ executable hdb
                       Development.Debug.Adapter.Exit,
                       Development.Debug.Adapter.Handles,
                       Development.Debug.Adapter,
-                      Development.Debug.Interactive
+                      Development.Debug.Interactive,
+                      Paths_haskell_debugger
+    autogen-modules:  Paths_haskell_debugger
     build-depends:
         base, ghc,
         exceptions, aeson, bytestring,
