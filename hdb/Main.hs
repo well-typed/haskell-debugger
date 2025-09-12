@@ -3,6 +3,7 @@ module Main where
 
 import System.Environment
 import Data.Maybe
+import Data.Version
 import Text.Read
 
 import DAP
@@ -26,6 +27,8 @@ import qualified Data.Text.IO as T
 import GHC.IO.Handle.FD
 import Options.Applicative hiding (command)
 import qualified Options.Applicative
+
+import qualified Paths_haskell_debugger as P
 
 -- | The options `hdb` is invoked in the command line with
 data HdbOptions
@@ -90,9 +93,13 @@ hdbOptionsParser = hsubparser
   )
   <|> cliParser  -- Default to CLI mode if no subcommand
 
+-- | Parser for --version flag
+versioner :: Parser (a -> a)
+versioner = simpleVersioner $ "Haskell Debugger, version " ++ showVersion P.version
+
 -- | Main parser info
 hdbParserInfo :: ParserInfo HdbOptions
-hdbParserInfo = info (hdbOptionsParser <**> helper)
+hdbParserInfo = info (hdbOptionsParser <**> versioner <**> helper)
   ( fullDesc
  <> header "Haskell debugger supporting both CLI and DAP modes" )
 
