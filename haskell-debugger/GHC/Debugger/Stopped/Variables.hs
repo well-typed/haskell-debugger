@@ -83,7 +83,7 @@ termToVarInfo key term0 = do
     checkFn _ = False
     isFn = checkFn ty
 
-    isThunk = if not $ isFn then
+    isThunk = if not isFn then
       case term0 of
         Suspension{} -> True
         _ -> False
@@ -105,7 +105,10 @@ termToVarInfo key term0 = do
          _                         -> t
   varName <- display key
   varType <- display ty
-  varValue <- display =<< GHCD.showTerm (termHead term)
+  -- Pass type as value for functions since actual value is useless
+  varValue <- if isFn
+    then pure $ "<fn> :: " ++ varType
+    else display =<< GHCD.showTerm (termHead term)
   -- liftIO $ print (varName, varType, varValue, GHCI.isFullyEvaluatedTerm term)
 
   -- The VarReference allows user to expand variable structure and inspect its value.
