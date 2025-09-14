@@ -260,11 +260,12 @@ class GHCConfigurationProvider implements vscode.DebugConfigurationProvider {
 		// if launch.json is missing or empty
 		if (!config.type && !config.request && !config.name) {
 			const editor = vscode.window.activeTextEditor;
-			if (editor && editor.document.languageId === 'markdown') {
+			if (editor && editor.document.languageId === 'haskell') {
 				config.type = 'haskell-debugger';
 				config.name = 'Launch';
 				config.request = 'launch';
 				config.entryFile = '${file}';
+				config.projectRoot = '${workspaceFolder}';
 				config.entryPoint = 'main';
 				config.entryArgs = [];
 				config.extraGhcArgs = [];
