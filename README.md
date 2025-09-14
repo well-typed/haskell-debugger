@@ -12,6 +12,9 @@ first major release is ready.
 
 # Installation
 
+Please find up to date installation instructions on the
+[project homepage](https://well-typed.github.io/haskell-debugger/)!
+
 > [!WARNING]
 > `hdb` is only supported by the latest nightly GHC version.
 > The first release it will be compatible with is GHC 9.14.
