@@ -90,7 +90,6 @@ termToVarInfo key term0 = do
       | isBoringTy ty = t
       | otherwise     = case t of
          Term{}                    -> t{subTerms = []}
-         NewtypeWrap{wrapped_term} -> t{wrapped_term = termHead wrapped_term}
          _                         -> t
   varName <- display key
   varType <- display ty
