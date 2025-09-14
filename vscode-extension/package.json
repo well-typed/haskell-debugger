@@ -175,7 +175,7 @@
               "request": "launch",
               "name": "Haskell Debugger",
               "projectRoot": "^\"\\${workspaceFolder}\"",
-              "entryFile": "app/Main.hs",
+              "entryFile": "^\"\\${file}\"",
               "entryPoint": "main",
               "entryArgs": [],
               "extraGhcArgs": []
