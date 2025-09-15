@@ -12,4 +12,5 @@ fi
 sed -i.bkp -E "s/(^version:\s*)[0-9\.]*(\s*$)/\1$NEW_VERSION.0\2/" haskell-debugger.cabal
 sed -i.bkp -E "s/(^\s*version = \").*(\"\;$)/\1$NEW_VERSION\2/" vscode-extension/default.nix
 sed -i.bkp -E "s/(^\s*\"version\":\s*\").*(\"\,$)/\1$NEW_VERSION\2/" vscode-extension/package.json
+sed -i.bkp -E "s/(^\s*extensionFile:\s*).*$/\1\${{ runner.temp }}\/extension\/haskell-debugger-extension-$NEW_VERSION.vsix/" .github/workflows/release.yaml
 

@@ -66,6 +66,14 @@ jobs:
           name: Haskell Debugger Docs
           path: ${{ runner.temp }}/docs/
 
+      # Publish VSCode extension to marketplace
+      - name: Publish to Visual Studio Marketplace
+        uses: HaaLeo/publish-vscode-extension@v2
+        with:
+          pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
+          registryUrl: https://marketplace.visualstudio.com
+          extensionFile: ${{ runner.temp }}/extension/haskell-debugger-extension-0.7.0.vsix
+
       # Publish a new hackage release of the haskell-debugger
       - name: Hackage Release
         uses: haskell-actions/hackage-publish@v1
