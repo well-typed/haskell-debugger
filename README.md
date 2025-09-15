@@ -16,46 +16,36 @@ Please find up to date installation instructions on the
 [project homepage](https://well-typed.github.io/haskell-debugger/)!
 
 > [!WARNING]
-> `hdb` is only supported by the latest nightly GHC version.
+> `hdb` can currently be compiled with the 9.14 alpha pre-releases or with a nightly version
 > The first release it will be compatible with is GHC 9.14.
 
 To install and use the debugger, you need the executable `hdb`
-and the VSCode extension `haskell-debugger-extension`.
+and the VSCode extension [Haskell Debugger](https://marketplace.visualstudio.com/items?itemName=Well-Typed.haskell-debugger-extension).
 
 Since `hdb` implements the [Debug Adapter Protocol
 (DAP)](https://microsoft.github.io/debug-adapter-protocol/), it also supports
 debugging with tools such as vim, neovim, or emacs -- as long as a DAP client is
 installed and the `launch` arguments for `hdb` configured.
 
-To build, install, and run `hdb` you currently need a nightly
-version of GHC in PATH. You can get one using
-[GHCup](https://ghcup.readthedocs.io/en/latest/guide/), or [building from source](https://gitlab.haskell.org/ghc/ghc/-/wikis/building/preparation):
+To run the debugger, the same version of GHC which compiled it needs to be in
+PATH. Make sure the DAP client knows this. For instance, to launch VSCode with a specific GHC use:
 ```
-ghcup config add-release-channel https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
-ghcup install ghc latest-nightly 
-PATH=$(dirname $(ghcup whereis ghc latest-nightly)):$PATH cabal install haskell-debugger:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc
+PATH=/path/to/ghc-dir:$PATH code /path/to/proj
 ```
-
-To run the debugger, the same nightly version of GHC needs to be in PATH. Make
-sure the DAP client knows this. For instance, to launch VSCode use:
-```
-PATH=$(dirname $(ghcup whereis ghc latest-nightly)):$PATH code /path/to/proj
-```
-Currently, to install the debugger extension, download the `.vsix` file from the
-GitHub release artifacts and drag and drop it to the extensions side panel. In
-the future we will release it on the marketplace.
 
 # Usage
 
 To use the debugger in VSCode, select the debugger tab, select Haskell Debugger,
 and create a `launch.json` file by clicking the debugger settings icon (next to
-the green run button).
+the green run button). Now, it is also supported to just Run a file which
+contains a `main` function.
 
 The `launch.json` file contains some settings about the debugger session here.
 Namely:
 
 | Setting | Description |
 | --- | --- |
+| `projectRoot`  | the full path to the project root. this is typically `${workspaceFolder}`, a value which is interpolated by the editor with the actual path                                           |
 | `entryFile`    | the relative path from the project root to the file with the entry point for execution                                                                                                |
 | `entryPoint`   | the name of the function that is called to start execution                                                                                                                            |
 | `entryArgs`    | the arguments passed to the `entryPoint`. If the `entryPoint` is `main`, these arguments are passed as environment arguments (as in `getArgs`) rather than direct function arguments. |
@@ -65,8 +55,6 @@ Change them accordingly.
 
 To run the debugger, simply hit the green run button.
 See the Features section below for what is currently supported.
-
-Note: Listing global variables is only supported in GHC versions newer than May 6, 2025
 
 # Related Work
 
@@ -139,7 +127,6 @@ nix-build
 
 ```
 cd test/integration-tests
-nix-shell
 make GHC=/path/to/recent/ghc \
      DEBUGGER=$(cd ../.. && cabal list-bin -w /path/to/recent/ghc exe:hdb)
 ```
