@@ -461,6 +461,32 @@ describe("Debug Adapter Tests", function () {
             const s_labVar = await forceLazy(xChild.get("lab"));
             assertIsString(s_labVar, '"label"');
         })
+
+        it('newtypes not broken (issue #55)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/T55",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 40 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 40 }, expected, expected);
+
+            let locals = await fetchLocalVars();
+            const y2Var = await forceLazy(locals.get('y2'));
+            assert.strictEqual(y2Var.value, "Y2 (MyIntX (X _))")
+            const y2Child = await expandVar(y2Var);
+            const y2_1_Var = await y2Child.get('_1'); // No force
+            assert.strictEqual(y2_1_Var.value, 'MyIntX (X _)');
+            const y2_1_Child = await expandVar(y2_1_Var);
+            const y2_1_1_Var = await y2_1_Child.get("_1");
+            assert.strictEqual(y2_1_1_Var.value, 'X');
+            const y2_1_1_Child = await expandVar(y2_1_1_Var);
+            const y2_1_1_1_Var = await forceLazy(y2_1_1_Child.get("_1"));
+            assert.strictEqual(y2_1_1_1_Var.value, 'MyInt 42');
+        })
     })
     describe("Stepping out (step-out)", function () {
 
