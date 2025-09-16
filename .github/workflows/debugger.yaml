@@ -1,4 +1,4 @@
-on: [push, workflow_call, pull_request]
+on: [workflow_call, pull_request]
 
 name: Debugger CI
 jobs:
