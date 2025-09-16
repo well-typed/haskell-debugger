@@ -171,22 +171,24 @@ describe("Debug Adapter Tests", function () {
                       dc.assertStoppedLocation('exception', expected)
                   ]);
               });
-
-              // TODO: Break on a different module
-
-              // TODO: Step in, step next, ...
-              // TODO: Resume and hit next breakpoint
-              // ...
           })
         })
     }
 
     const fetchLocalVars = async () => {
+        return fetchScopeVars("Locals")
+    }
+
+    const fetchModuleVars = async () => {
+        return fetchScopeVars("Module")
+    }
+
+    const fetchScopeVars = async (scopeName) => {
         const stResp = await dc.stackTraceRequest({ threadId: 0 });
         const sf0 = stResp.body.stackFrames[0];
         const scResp = await dc.scopesRequest({ frameId: sf0.id });
-        const localsScope = scResp.body.scopes.find(scope => scope.name == "Locals")!!;
-        const variablesResp = await dc.variablesRequest({ variablesReference: localsScope.variablesReference });
+        const someScope = scResp.body.scopes.find(scope => scope.name == scopeName)!!;
+        const variablesResp = await dc.variablesRequest({ variablesReference: someScope.variablesReference });
         const variables = variablesResp.body.variables;
         return {
             all: variables,
@@ -462,7 +464,7 @@ describe("Debug Adapter Tests", function () {
             assertIsString(s_labVar, '"label"');
         })
 
-        it('newtypes not broken (issue #55)', async () => {
+        it('newtype vars not broken (issue #55)', async () => {
             let config = mkConfig({
                   projectRoot: "/data/T55",
                   entryFile: "Main.hs",
@@ -486,6 +488,23 @@ describe("Debug Adapter Tests", function () {
             const y2_1_1_Child = await expandVar(y2_1_1_Var);
             const y2_1_1_1_Var = await forceLazy(y2_1_1_Child.get("_1"));
             assert.strictEqual(y2_1_1_1_Var.value, 'MyInt 42');
+        })
+
+        it('dont crash on inspect newtype con (issue #64)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/T64",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 4 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 4 }, expected, expected);
+
+            let moduleVars = await fetchModuleVars();
+            const myintCon = await moduleVars.get("MyIntCon")
+            assert.strictEqual(myintCon.value, "Data constructor ‘MyIntCon’")
         })
     })
     describe("Stepping out (step-out)", function () {
