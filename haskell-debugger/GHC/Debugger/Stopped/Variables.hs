@@ -8,6 +8,8 @@ import Control.Monad.Reader
 
 import GHC
 import GHC.Types.FieldLabel
+import GHC.Types.Id.Info
+import GHC.Types.Var
 import GHC.Runtime.Eval
 import GHC.Core.DataCon
 import GHC.Core.TyCo.Rep
@@ -24,10 +26,17 @@ import GHC.Debugger.Utils
 -- | 'TyThing' to 'VarInfo'. The 'Bool' argument indicates whether to force the
 -- value of the thing (as in @True = :force@, @False = :print@)
 tyThingToVarInfo :: TyThing -> Debugger VarInfo
-tyThingToVarInfo = \case
-  t@(AConLike c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
-  t@(ATyCon c)   -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
-  t@(ACoAxiom c) -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
+tyThingToVarInfo t = case t of
+  AConLike c -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
+  ATyCon c   -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
+  ACoAxiom c -> VarInfo <$> display c <*> display t <*> display t <*> pure False <*> pure NoVariables
+  AnId i
+    | DataConWrapId data_con <- idDetails i
+    -- Newtype cons don't have a runtime representation, so we can't obtain
+    -- terms! Simply print the newtype cons like we do data cons.
+    -- See Note [Newtype workers]
+    , isNewTyCon (dataConTyCon data_con)
+    -> VarInfo <$> display data_con <*> display t <*> display t <*> pure False <*> pure NoVariables
   AnId i -> do
     let key = FromId i
     term <- obtainTerm key
