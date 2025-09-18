@@ -125,53 +125,46 @@ describe("Debug Adapter Tests", function () {
 
     const basicTests = (launchCfg) => {
 
-        // The most basic functionality we test on various different
-        // configurations (such as Cabal vs without project vs Stack)
-        // The remaining tests are run only on one config since the set up
-        // starts being more specific (e.g. multiple home units with Cabal)
-        describe("Most basic functionality", function () {
+        describe(launchCfg.name, function () {
 
-          describe(launchCfg.name, function () {
+            it('should run program to the end', () => {
+                return Promise.all([
+                    dc.configurationSequence(),
+                    dc.launch(launchCfg.config),
+                    dc.waitForEvent('exited').then(e => new Promise((resolve, reject) => {
+                        if (e.body.exitCode == 0)
+                            resolve(e)
+                        else
+                            reject(new Error("Expecting ExitCode 1"))
+                    }))
+                ]);
+            });
 
-              it('should run program to the end', () => {
-                  return Promise.all([
-                      dc.configurationSequence(),
-                      dc.launch(launchCfg.config),
-                      dc.waitForEvent('exited').then(e => new Promise((resolve, reject) => {
-                          if (e.body.exitCode == 0)
-                              resolve(e)
-                          else
-                              reject(new Error("Expecting ExitCode 1"))
-                      }))
-                  ]);
-              });
+            it('should stop on a breakpoint', () => {
+                const expected = { path: launchCfg.config.projectRoot + "/" + launchCfg.config.entryFile, line: 6 }
+                return dc.hitBreakpoint(launchCfg.config, { path: launchCfg.config.entryFile, line: 6 }, expected, expected);
+            });
 
-              it('should stop on a breakpoint', () => {
-                  const expected = { path: launchCfg.config.projectRoot + "/" + launchCfg.config.entryFile, line: 6 }
-                  return dc.hitBreakpoint(launchCfg.config, { path: launchCfg.config.entryFile, line: 6 }, expected, expected);
-              });
+            it('should stop on an exception', () => {
 
-              it('should stop on an exception', () => {
+                // const expected = { path: launchCfg.config.projectRoot + "/" + launchCfg.config.entryFile, line: 10 }
+                // Currently, no information is provided when stopped at an exception:
+                const expected = { }
+                return Promise.all([
 
-                  // const expected = { path: launchCfg.config.projectRoot + "/" + launchCfg.config.entryFile, line: 10 }
-                  // Currently, no information is provided when stopped at an exception:
-                  const expected = { }
-                  return Promise.all([
+                    dc.waitForEvent('initialized').then(event => {
+                        return dc.setExceptionBreakpointsRequest({
+                            filters: [ 'break-on-exception' ]
+                        });
+                    }).then(response => {
+                        return dc.configurationDoneRequest();
+                    }),
 
-                      dc.waitForEvent('initialized').then(event => {
-                          return dc.setExceptionBreakpointsRequest({
-                              filters: [ 'break-on-exception' ]
-                          });
-                      }).then(response => {
-                          return dc.configurationDoneRequest();
-                      }),
+                    dc.launch(launchCfg.config),
 
-                      dc.launch(launchCfg.config),
-
-                      dc.assertStoppedLocation('exception', expected)
-                  ]);
-              });
-          })
+                    dc.assertStoppedLocation('exception', expected)
+                ]);
+            });
         })
     }
 
@@ -233,7 +226,41 @@ describe("Debug Adapter Tests", function () {
         assert.strictEqual(v.variablesReference, 0, `Variable ${v.name} should not be expandable (because it is a String)`);
     }
 
-    simpleLaunchConfigs.forEach(basicTests);
+    // The most basic functionality we test on various different
+    // configurations (such as Cabal vs without project vs Stack)
+    // The remaining tests are run only on one config since the set up
+    // starts being more specific (e.g. multiple home units with Cabal)
+    describe("Most basic functionality", function () {
+        simpleLaunchConfigs.forEach(basicTests);
+
+        describe("Other basic tests", function () {
+            it('report error on missing "entryFile"', () => {
+                let config = mkConfig({
+                      projectRoot: "/data/T71",
+                    })
+
+                const expected = { path: config.projectRoot + "/" + config.entryFile, line: 1 }
+                // 'Launch' the debugger using this config and expect the response to the launch request to be a ResponseError with message "Missing \"entryFile\""
+                return dc.launch(config).then(
+                        () => Promise.reject(new Error("Expecting launch to fail")),
+                        (err) => {
+                            assert.strictEqual(err.message, 'Missing "entryFile" key in debugger configuration');
+                        }
+                    )
+            })
+
+            it('minimal configuration with just entryFile', async () => {
+                let config = mkConfig({
+                      projectRoot: "/data/T71",
+                      entryFile: "Main.hs",
+                    })
+
+                const expected = { path: config.projectRoot + "/" + config.entryFile, line: 2 }
+                return dc.hitBreakpoint(config, { path: config.entryFile, line: 2 }, expected, expected)
+            })
+        })
+
+    })
 
     describe("Multiple main function tests", function () {
         const multiMainConfig = mkConfig({
