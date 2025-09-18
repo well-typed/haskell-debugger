@@ -4,6 +4,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- | TODO: This module should be called Launch.
 module Development.Debug.Adapter.Init where
@@ -11,8 +12,11 @@ module Development.Debug.Adapter.Init where
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified System.Process as P
+import Control.Monad.Except
+import Control.Monad.Trans
 import Data.Function
 import Data.Functor
+import Data.Maybe
 import Data.Version (Version(..), showVersion, makeVersion)
 import Control.Monad.IO.Class
 import System.IO
@@ -62,16 +66,16 @@ data LaunchArgs
   = LaunchArgs
   { __sessionId :: Maybe String
     -- ^ SessionID, set by VSCode client
-  , projectRoot :: FilePath
+  , projectRoot :: Maybe FilePath
     -- ^ Absolute path to the project root
-  , entryFile :: FilePath
+  , entryFile :: Maybe FilePath
     -- ^ The file with the entry point e.g. @app/Main.hs@
-  , entryPoint :: String
+  , entryPoint :: Maybe String
     -- ^ Either @main@ or a function name
-  , entryArgs :: [String]
+  , entryArgs :: Maybe [String]
     -- ^ The arguments to either set as environment arguments when @entryPoint = "main"@
     -- or function arguments otherwise.
-  , extraGhcArgs :: [String]
+  , extraGhcArgs :: Maybe [String]
     -- ^ Additional arguments to pass to the GHC invocation inferred by hie-bios for this project
   } deriving stock (Show, Eq, Generic)
     deriving anyclass FromJSON
@@ -80,39 +84,53 @@ data LaunchArgs
 -- * Launch Debugger
 --------------------------------------------------------------------------------
 
+-- | Exception type for when initialization fails
+newtype InitFailed = InitFailed String deriving Show
+
 -- | Initialize debugger
 --
--- Returns @True@ if successful.
-initDebugger :: Recorder (WithSeverity InitLog) -> LaunchArgs -> DebugAdaptor Bool
-initDebugger l LaunchArgs{__sessionId, projectRoot, entryFile = entryFile, entryPoint, entryArgs, extraGhcArgs} = do
+-- Returns @()@ if successful, throws @InitFailed@ otherwise
+initDebugger :: Recorder (WithSeverity InitLog) -> LaunchArgs -> ExceptT InitFailed DebugAdaptor ()
+initDebugger l LaunchArgs{ __sessionId
+                         , projectRoot = givenRoot
+                         , entryFile = entryFileMaybe
+                         , entryPoint = fromMaybe "main" -> entryPoint
+                         , entryArgs  = fromMaybe [] -> entryArgs
+                         , extraGhcArgs = fromMaybe [] -> extraGhcArgs
+                         } = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
+
+  entryFile <- case entryFileMaybe of
+    Nothing -> throwError $ InitFailed "Missing \"entryFile\" key in debugger configuration"
+    Just ef -> pure ef
+
+  projectRoot <- maybe (liftIO getCurrentDirectory) pure givenRoot
+
   let hieBiosLogger = cmapWithSev FlagsLog l
   cradle <- liftIO (hieBiosCradle hieBiosLogger projectRoot entryFile) >>=
     \ case
-      Left e ->
-        exitWithMsg e
-
+      Left e  -> throwError $ InitFailed e
       Right c -> pure c
 
-  Output.console $ T.pack "Checking GHC version against debugger version..."
+  lift $ Output.console $ T.pack "Checking GHC version against debugger version..."
   -- GHC is found in PATH (by hie-bios as well).
   actualVersion <- liftIO (hieBiosRuntimeGhcVersion hieBiosLogger cradle) >>=
     \ case
-      Left e ->
-        exitWithMsg e
+      Left e  -> throwError $ InitFailed e
       Right c -> pure c
   -- Compare the GLASGOW_HASKELL version (e.g. 913) with the actualVersion (e.g. 9.13.1):
   when (compileTimeGhcWithoutPatchVersion /= forgetPatchVersion actualVersion) $ do
-    exitWithMsg $ "Aborting...! The GHC version must be the same which " ++
-                    "ghc-debug-adapter was compiled against (" ++
-                      showVersion compileTimeGhcWithoutPatchVersion++
-                        "). Instead, got " ++ (showVersion actualVersion) ++ "."
+    throwError $ InitFailed $
+      "Aborting...! The GHC version must be the same which " ++
+        "ghc-debug-adapter was compiled against (" ++
+          showVersion compileTimeGhcWithoutPatchVersion++
+            "). Instead, got " ++ (showVersion actualVersion) ++ "."
 
-  Output.console $ T.pack "Discovering session flags with hie-bios..."
+  lift $ Output.console $ T.pack "Discovering session flags with hie-bios..."
   mflags <- liftIO (hieBiosFlags hieBiosLogger cradle projectRoot entryFile)
   case mflags of
-    Left e -> exitWithMsg e
+    Left e -> throwError $ InitFailed e
     Right flags -> do
 
       let nextFreshBreakpointId = 0
@@ -138,7 +156,7 @@ initDebugger l LaunchArgs{__sessionId, projectRoot, entryFile = entryFile, entry
       finished_init <- liftIO $ newEmptyMVar
 
       let absEntryFile = normalise $ projectRoot </> entryFile
-      registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{entryFile=absEntryFile,..}
+      lift $ registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{entryFile=absEntryFile,..}
         [ debuggerThread l finished_init writeDebuggerOutput projectRoot flags extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
         , handleDebuggerOutput readDebuggerOutput
         , stdoutCaptureThread
@@ -147,14 +165,13 @@ initDebugger l LaunchArgs{__sessionId, projectRoot, entryFile = entryFile, entry
 
       -- Do not return until the initialization is finished
       liftIO (takeMVar finished_init) >>= \case
-        Right () -> return True
+        Right () -> pure ()
         Left e   -> do
           -- The process terminates cleanly with an error code (probably exit failure = 1)
           -- This can happen if compilation fails and the compiler exits cleanly.
           --
           -- Instead of signalInitialized, respond with error and exit.
-          exitCleanupWithMsg readDebuggerOutput e
-          return False
+          throwError $ InitFailed e
 
 -- | This thread captures stdout from the debugger and sends it to the client.
 -- NOTE, redirecting the stdout handle is a process-global operation. So this thread

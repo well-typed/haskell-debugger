@@ -5,6 +5,8 @@ import System.Environment
 import Data.Maybe
 import Data.Version
 import Text.Read
+import Control.Monad.Except
+import Control.Monad.IO.Class
 
 import DAP
 
@@ -209,14 +211,19 @@ talk l = \ case
     sendInitializeResponse
 --------------------------------------------------------------------------------
   CommandLaunch -> do
-    success <- initDebugger (cmapWithSev InitLog l) =<< getArguments
-    if success then do
-      sendLaunchResponse   -- ack
-      sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
-    else
-      sendError ErrorMessageCancelled Nothing
+    launch_args <- getArguments
+    merror <- runExceptT $ initDebugger (cmapWithSev InitLog l) launch_args
+    case merror of
+      Right () -> do
+        sendLaunchResponse   -- ack
+        sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
+      Left (InitFailed err) -> do
+        sendErrorResponse (ErrorMessage (T.pack err)) Nothing
+        exitCleanly
 --------------------------------------------------------------------------------
-  CommandAttach -> undefined
+  CommandAttach -> do
+    sendErrorResponse (ErrorMessage (T.pack "hdb does not support \"attach\" mode yet")) Nothing
+    exitCleanly
 --------------------------------------------------------------------------------
   CommandBreakpointLocations       -> commandBreakpointLocations
   CommandSetBreakpoints            -> commandSetBreakpoints

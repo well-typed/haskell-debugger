@@ -71,7 +71,7 @@ exitCleanupWithMsg
   -- killing the output thread with @destroyDebugSession@)
   -> String
   -- ^ Error message, logged with notification
-  -> DebugAdaptor ()
+  -> DebugAdaptor a
 exitCleanupWithMsg final_handle msg = do
   destroyDebugSession -- kill all session threads (including the output thread)
   do                  -- flush buffer and get all pending output from GHC
