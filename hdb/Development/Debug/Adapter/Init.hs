@@ -130,7 +130,7 @@ initDebugger l LaunchArgs{ __sessionId
   lift $ Output.console $ T.pack "Discovering session flags with hie-bios..."
   mflags <- liftIO (hieBiosFlags hieBiosLogger cradle projectRoot entryFile)
   case mflags of
-    Left e -> throwError $ InitFailed e
+    Left e -> lift $ exitWithMsg e
     Right flags -> do
 
       let nextFreshBreakpointId = 0
@@ -171,7 +171,7 @@ initDebugger l LaunchArgs{ __sessionId
           -- This can happen if compilation fails and the compiler exits cleanly.
           --
           -- Instead of signalInitialized, respond with error and exit.
-          throwError $ InitFailed e
+          lift $ exitCleanupWithMsg readDebuggerOutput e
 
 -- | This thread captures stdout from the debugger and sends it to the client.
 -- NOTE, redirecting the stdout handle is a process-global operation. So this thread
