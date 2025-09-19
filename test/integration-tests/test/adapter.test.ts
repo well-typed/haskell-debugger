@@ -258,26 +258,6 @@ describe("Debug Adapter Tests", function () {
                 const expected = { path: config.projectRoot + "/" + config.entryFile, line: 2 }
                 return dc.hitBreakpoint(config, { path: config.entryFile, line: 2 }, expected, expected)
             })
-
-            it.only('output to console build error', () => {
-                let config = mkConfig({
-                      projectRoot: "/data/T77",
-                      entryFile: "app/Main.hs",
-                    })
-
-                let outputEvents = [];
-                dc.on("output", (event) => {
-                  outputEvents.push(event.body);
-                });
-                const expected = { path: config.projectRoot + "/" + config.entryFile, line: 1 }
-                // 'Launch' the debugger using this config and expect the response to the launch request to be a ResponseError with message "Missing \"entryFile\""
-                return dc.launch(config).then(
-                        () => {
-                            const allOutput = outputEvents.map((o) => o.output).join("");
-                            assert.ok(allOutput.includes("conflict: T77 => base==4.20.1.0"), "Expecting build failure because of bad base constraints to be in debugger output");
-                        }
-                    )
-            })
         })
 
     })
