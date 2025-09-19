@@ -196,12 +196,8 @@ getVariables vk = do
         case GHC.resumeBreakpointId r of
           Nothing -> return []
           Just ibi -> do
-#if MIN_VERSION_ghc(9,14,2)
             curr_modl <- liftIO $ bi_tick_mod . getBreakSourceId ibi <$>
                           readIModBreaks (hsc_HUG hsc_env) ibi
-#else
-            let curr_modl = ibi_tick_mod ibi
-#endif
             things <- typeEnvElts <$> getTopEnv curr_modl
             mapM (\tt -> do
               nameStr <- display (getName tt)
@@ -212,12 +208,8 @@ getVariables vk = do
         case GHC.resumeBreakpointId r of
           Nothing -> return []
           Just ibi -> do
-#if MIN_VERSION_ghc(9,14,2)
             curr_modl <- liftIO $ bi_tick_mod . getBreakSourceId ibi <$>
                           readIModBreaks (hsc_HUG hsc_env) ibi
-#else
-            let curr_modl = ibi_tick_mod ibi
-#endif
             names <- map greName . globalRdrEnvElts <$> getTopImported curr_modl
             mapM (\n-> do
               nameStr <- display n

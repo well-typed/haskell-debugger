@@ -24,11 +24,7 @@ data DebugAdaptorState = DAS
       { syncRequests :: MVar D.Command
       , syncResponses :: MVar D.Response
       , nextFreshBreakpointId :: !BreakpointId
-#if MIN_VERSION_ghc(9,14,2)
       , breakpointMap :: Map.Map GHC.InternalBreakpointId BreakpointSet
-#else
-      , breakpointMap :: Map.Map GHC.BreakpointId BreakpointSet
-#endif
       , entryFile :: FilePath
       , entryPoint :: String
       , entryArgs :: [String]

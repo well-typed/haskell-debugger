@@ -116,7 +116,6 @@ registerBreakFound b =
     BreakFoundNoLoc _ch -> pure [ DAP.defaultBreakpoint { DAP.breakpointVerified = True } ]
     BreakFound _ch iid ss -> do
       source <- fileToSource ss.file
-#if MIN_VERSION_ghc(9,14,2)
       bids <- mapM registerNewBreakpoint iid
       pure $ map (\bid -> DAP.defaultBreakpoint
         { DAP.breakpointVerified = True
@@ -127,25 +126,9 @@ registerBreakFound b =
         , DAP.breakpointEndColumn = Just ss.endCol
         , DAP.breakpointId = Just bid
         }) bids
-#else
-      bid <- registerNewBreakpoint iid
-      pure [ DAP.defaultBreakpoint
-        { DAP.breakpointVerified = True
-        , DAP.breakpointSource = Just source
-        , DAP.breakpointLine = Just ss.startLine
-        , DAP.breakpointEndLine = Just ss.endLine
-        , DAP.breakpointColumn = Just ss.startCol
-        , DAP.breakpointEndColumn = Just ss.endCol
-        , DAP.breakpointId = Just bid
-        } ]
-#endif
 
 -- | Adds new BreakpointId for a givent StgPoint
-#if MIN_VERSION_ghc(9,14,2)
 registerNewBreakpoint :: GHC.InternalBreakpointId -> DebugAdaptor BreakpointId
-#else
-registerNewBreakpoint :: GHC.BreakpointId -> DebugAdaptor BreakpointId
-#endif
 registerNewBreakpoint breakpoint = do
   bkpId <- getFreshBreakpointId
   updateDebugSession $ \das@DAS{..} -> das {breakpointMap = Map.insertWith mappend breakpoint (IS.singleton bkpId) breakpointMap}

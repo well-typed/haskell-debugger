@@ -27,7 +27,6 @@ import GHC.Driver.Monad as GHC
 import GHC.Driver.Env as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
 import qualified GHC.Unit.Module.ModSummary as GHC
-import GHC.ByteCode.Breakpoints
 import GHC.Types.Name.Occurrence (mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig)
 import GHC.Utils.Outputable as GHC
@@ -196,11 +195,7 @@ handleExecResult = \case
       -- TODO: force the exception to display string with Backtrace?
       return EvalStopped{breakId = Nothing}
     ExecBreak {breakNames = _, breakPointId} ->
-#if MIN_VERSION_ghc(9,14,2)
       return EvalStopped{breakId = breakPointId}
-#else
-      return EvalStopped{breakId = toBreakpointId <$> breakPointId}
-#endif
 
 -- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
 inspectName :: Name -> Debugger (Maybe VarInfo)

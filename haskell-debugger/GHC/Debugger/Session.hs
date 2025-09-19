@@ -29,7 +29,6 @@ import Control.Monad.IO.Class
 import qualified Crypto.Hash.SHA1                    as H
 import qualified Data.ByteString.Base16              as B16
 import qualified Data.ByteString.Char8               as B
-import Data.Function
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Data.List as L
