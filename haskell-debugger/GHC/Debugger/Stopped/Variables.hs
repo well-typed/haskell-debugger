@@ -116,7 +116,9 @@ termToVarInfo key term0 = do
   -- Pass type as value for functions since actual value is useless
   varValue <- if isFn
     then pure $ "<fn> :: " ++ varType
-    else display =<< GHCD.showTerm (termHead term)
+    else do
+      _ <- onDebugInstance term ty
+      display =<< GHCD.showTerm (termHead term)
   -- liftIO $ print (varName, varType, varValue, GHCI.isFullyEvaluatedTerm term)
 
   -- The VarReference allows user to expand variable structure and inspect its value.
