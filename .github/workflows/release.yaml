@@ -13,6 +13,9 @@ on:
         default: true
         type: boolean
 
+permissions:
+  contents: write
+
 jobs:
   build-haskell-debugger:
     uses: ./.github/workflows/debugger.yaml
