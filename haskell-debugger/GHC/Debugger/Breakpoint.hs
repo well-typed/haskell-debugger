@@ -10,7 +10,6 @@ import Data.IORef
 import Data.Bits (xor)
 
 import GHC
-import GHC.Types.Name.Occurrence (sizeOccEnv)
 import GHC.ByteCode.Breakpoints
 import GHC.Utils.Error (logOutput)
 import GHC.Driver.DynFlags as GHC
@@ -76,19 +75,11 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
         Just (bix, spn) -> do
           let bid = BreakpointId { bi_tick_mod = ms_mod modl
                                  , bi_tick_index = bix }
-#if MIN_VERSION_ghc(9,14,2)
           (changed, ibis) <- registerBreakpoint bid bp_status ModuleBreakpointKind
-#else
-          changed <- registerBreakpoint bid bp_status ModuleBreakpointKind
-#endif
           return $ BreakFound
             { changed = changed
             , sourceSpan = realSrcSpanToSourceSpan spn
-#if MIN_VERSION_ghc(9,14,2)
             , breakId = ibis
-#else
-            , breakId = bid
-#endif
             }
 setBreakpoint FunctionBreak{function} bp_status = do
   logger <- getLogger
@@ -99,19 +90,11 @@ setBreakpoint FunctionBreak{function} bp_status = do
           applyBreak (bix, spn) = do
             let bid = BreakpointId { bi_tick_mod = modl
                                    , bi_tick_index = bix }
-#if MIN_VERSION_ghc(9,14,2)
             (changed, ibis) <- registerBreakpoint bid bp_status FunctionBreakpointKind
-#else
-            changed <- registerBreakpoint bid bp_status FunctionBreakpointKind
-#endif
             return $ BreakFound
               { changed = changed
               , sourceSpan = realSrcSpanToSourceSpan spn
-#if MIN_VERSION_ghc(9,14,2)
               , breakId = ibis
-#else
-              , breakId = bid
-#endif
               }
       case maybe [] (findBreakForBind fun_str . imodBreaks_modBreaks) modBreaks of
         []  -> do

@@ -6,7 +6,6 @@ import Data.Maybe
 import Data.Version
 import Text.Read
 import Control.Monad.Except
-import Control.Monad.IO.Class
 
 import DAP
 

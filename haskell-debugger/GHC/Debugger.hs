@@ -5,7 +5,6 @@ module GHC.Debugger where
 
 import System.Exit
 import Control.Monad.IO.Class
-import GHC.Types.Name.Occurrence (sizeOccEnv)
 
 import GHC.Debugger.Breakpoint
 import GHC.Debugger.Evaluation

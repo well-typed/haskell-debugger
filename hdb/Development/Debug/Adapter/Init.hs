@@ -18,7 +18,6 @@ import Data.Function
 import Data.Functor
 import Data.Maybe
 import Data.Version (Version(..), showVersion, makeVersion)
-import Control.Monad.IO.Class
 import System.IO
 import GHC.IO.Encoding
 import Control.Monad.Catch
