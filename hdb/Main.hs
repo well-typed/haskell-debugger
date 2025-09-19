@@ -198,6 +198,7 @@ data MainLog
 instance Pretty MainLog where
   pretty = \ case
     InitLog msg -> pretty msg
+    InteractiveLog msg -> pretty msg
 
 -- | Main function where requests are received and Events + Responses are returned.
 -- The core logic of communicating between the client <-> adaptor <-> debugger
