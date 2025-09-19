@@ -11,11 +11,14 @@
 {-# LANGUAGE ViewPatterns #-}
 module GHC.Debugger.Evaluation where
 
+import GHC.Utils.Trace
+import GHC.Utils.Outputable
 import Control.Monad.IO.Class
 import Control.Monad.Catch
 import qualified Data.List as List
 import Data.Maybe
 import System.FilePath
+import System.Directory
 import qualified Prettyprinter as Pretty
 
 import GHC
@@ -115,8 +118,9 @@ debugExecution recorder entryFile entry args = do
 
     findUnitIdOfEntryFile :: GhcMonad m => FilePath -> m GHC.ModSummary
     findUnitIdOfEntryFile fp = do
+      afp <- normalise <$> liftIO (makeAbsolute fp)
       modSums <- getAllLoadedModules
-      case List.find ((Just fp ==) . fmap normalise . GHC.ml_hs_file . GHC.ms_location ) modSums of
+      case List.find ((Just afp ==) . fmap normalise . GHC.ml_hs_file . GHC.ms_location ) modSums of
         Nothing -> error $ "findUnitIdOfEntryFile: no unit id found for: " ++ fp
         Just summary -> pure summary
 
