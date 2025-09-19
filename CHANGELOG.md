@@ -1,8 +1,18 @@
 # Revision history for haskell-debugger
 
+## 0.8.0.0 -- 2025-09-19
+
+* Allow defaults for all settings except `entryFile` and return a proper error in that case
+* Fix bug that crashed debugger when attempting to load newtype constructor closure
+* Fix bug that broke displaying newtype variables
+* (Vscode) Allow the debugger to be run without a launch.json file
+* Don't display functions as a forceable thunk, instead just the type
+* Add `--version` flag
+
 ## 0.7.0.0 -- 2025-09-10
 
 * Fix line buffering of debuggee output (thus, stepping through a print line, will indeed print it to the console now).
+    * In fact, this was only caused by not building with `--enable-executable-dynamic`
 
 ## 0.6.0.0 -- 2025-09-10
 
