@@ -143,4 +143,14 @@ test-suite haskell-debugger-test
     main-is:          Main.hs
     build-depends:
         base >=4.14,
-        haskell-debugger
+        haskell-debugger,
+        bytestring, text,
+        containers,
+        filepath,
+        process,
+        temporary >= 1.3,
+        tasty >= 1.5.3,
+        tasty-golden >= 2.3.5,
+        regex >= 1.1
+    build-tool-depends: haskell-debugger:hdb
+    ghc-options: -threaded
