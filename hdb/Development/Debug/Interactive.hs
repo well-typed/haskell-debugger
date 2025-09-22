@@ -45,7 +45,7 @@ runIDM entryPoint entryFile entryArgs extraGhcArgs act = do
   l           <- handleLogger stdout
   let
     loggerWithSev = cmap renderPrettyWithSeverity (fromCologAction l)
-  let hieBiosLogger = cmapWithSev FlagsLog loggerWithSev
+    hieBiosLogger = cmapWithSev FlagsLog loggerWithSev
   cradle <- hieBiosCradle hieBiosLogger projectRoot entryFile >>=
     \case
       Left e -> exitWithMsg e
