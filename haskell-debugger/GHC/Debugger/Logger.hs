@@ -22,6 +22,9 @@ module GHC.Debugger.Logger (
   cmap,
   cmapIO,
   cmapWithSev,
+  -- * Verbosity
+  Verbosity(..),
+  applyVerbosity,
 
   -- * Pretty printing of logs
   renderPrettyWithSeverity,
@@ -39,7 +42,7 @@ import GHC.Stack
 import Control.Monad.IO.Class
 import Control.Monad ((>=>))
 
-import Colog.Core (Severity(..), WithSeverity(..))
+import Colog.Core (Severity(..), WithSeverity(..), filterBySeverity)
 import qualified Colog.Core as Colog
 import Data.Functor.Contravariant (Contravariant (contramap))
 import Data.Text (Text)
@@ -66,8 +69,16 @@ instance Monoid (Recorder msg) where
     Recorder
       { logger_ = \_ -> pure () }
 
+-- | Logging verbosity, where all Severities matching or exceeding the threshold are printed
+newtype Verbosity = Verbosity { threshold :: Severity }
+
+-- | Make this logger never report messages whose severity is below the given verbosity severity.
+applyVerbosity :: Verbosity -> Recorder (WithSeverity a) -> Recorder (WithSeverity a)
+applyVerbosity Verbosity{threshold} rc
+  = fromCologAction $ filterBySeverity threshold getSeverity (toCologAction rc)
+
 logWith :: (HasCallStack, MonadIO m) => Recorder (WithSeverity msg) -> Severity -> msg -> m ()
-logWith (Recorder logger_) sev msg = logger_ $ WithSeverity msg sev
+logWith Recorder{logger_} sev msg = logger_ $ WithSeverity msg sev
 
 cmap :: (a -> b) -> Recorder b -> Recorder a
 cmap = contramap

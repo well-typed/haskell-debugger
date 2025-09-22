@@ -36,6 +36,7 @@ data HdbOptions
   -- | @server --port <port>@
   = HdbDAPServer
     { port :: Int
+    , verbosity :: Verbosity
     }
   -- | @[--entry-point=<entryPoint>] [--extra-ghc-args="<args>"] [<entryFile>] -- [<entryArgs>]@
   | HdbCLI
@@ -43,6 +44,7 @@ data HdbOptions
     , entryFile :: FilePath
     , entryArgs :: [String]
     , extraGhcArgs :: [String]
+    , verbosity :: Verbosity
     }
 
 --------------------------------------------------------------------------------
@@ -57,6 +59,7 @@ serverParser = HdbDAPServer
      <> short 'p'
      <> metavar "PORT"
      <> help "DAP server port" )
+  <*> verbosityParser
 
 -- | Parser for HdbCLI options
 cliParser :: Parser HdbOptions
@@ -81,6 +84,8 @@ cliParser = HdbCLI
      <> metavar "GHC_ARGS"
      <> value []
      <> help "Additional flags to pass to the ghc invocation that loads the program for debugging" )
+  <*> verbosityParser
+
 
 -- | Combined parser for HdbOptions
 hdbOptionsParser :: Parser HdbOptions
@@ -97,6 +102,24 @@ hdbOptionsParser = hsubparser
 -- | Parser for --version flag
 versioner :: Parser (a -> a)
 versioner = simpleVersioner $ "Haskell Debugger, version " ++ showVersion P.version
+
+-- | Parser for --verbosity 0
+verbosityParser :: Parser Verbosity
+verbosityParser = option verb
+    ( long "verbosity"
+   <> short 'v'
+   <> metavar "VERBOSITY"
+   <> value (Verbosity Debug) -- By default, everything
+   <> help "Logger verbosity in [0..3] interval, where 0 is silent and 3 is debug"
+    )
+  where
+    verb = Verbosity <$> (verbNum =<< auto)
+    verbNum n = case n :: Int of
+      0 -> pure Error
+      1 -> pure Warning
+      2 -> pure Info
+      3 -> pure Debug
+      _ -> readerAbort (ErrorMsg "Verbosity must be a value in [0..3]")
 
 -- | Main parser info
 hdbParserInfo :: ParserInfo HdbOptions
@@ -130,7 +153,8 @@ main = do
           timeStampLogger = cmapIO renderWithTimestamp (fromCologAction l)
           loggerWithSev :: Recorder (WithSeverity MainLog)
           loggerWithSev = cmap renderPrettyWithSeverity timeStampLogger
-        runDAPServerWithLogger (toCologAction $ cmap DAP.renderDAPLog timeStampLogger) config (talk loggerWithSev)
+          loggerFinal = applyVerbosity hdbOpts.verbosity loggerWithSev
+        runDAPServerWithLogger (toCologAction $ cmap DAP.renderDAPLog timeStampLogger) config (talk loggerFinal)
     HdbCLI{..} -> do
       l <- handleLogger stdout
       let
@@ -138,8 +162,9 @@ main = do
         timeStampLogger = cmapIO renderWithTimestamp (fromCologAction l)
         loggerWithSev :: Recorder (WithSeverity MainLog)
         loggerWithSev = cmap renderPrettyWithSeverity timeStampLogger
+        loggerFinal = applyVerbosity hdbOpts.verbosity loggerWithSev
       runIDM entryPoint entryFile entryArgs extraGhcArgs $
-        debugInteractive (cmapWithSev InteractiveLog loggerWithSev)
+        debugInteractive (cmapWithSev InteractiveLog loggerFinal)
 
 
 -- | Fetch config from environment, fallback to sane defaults
