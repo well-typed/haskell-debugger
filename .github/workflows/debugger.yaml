@@ -80,6 +80,7 @@ jobs:
 
       - name: Build and Run integration tests
         run: |
+          echo "Running DAP Integration Testsuite now..."
           (cd ${{ runner.temp }}/dist && tar xzf *.tar.gz && rm *.tar.gz && cd haskell-debugger-* && cabal build exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
           export DEBUGGER=$(cd ${{ runner.temp }}/dist/haskell-debugger-* && cabal list-bin exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
           echo "DEBUGGER: $DEBUGGER"
@@ -87,4 +88,8 @@ jobs:
           make clean
           make node_modules
           make test
+
+          echo "Running Haskell Testsuite now..."
+          cd ../..
+          cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell
 

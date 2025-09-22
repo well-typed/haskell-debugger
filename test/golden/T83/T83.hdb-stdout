@@ -1,0 +1,7 @@
+[INFO] Determined Cradle: Cradle{ cradleRootDir = "/private/var/folders/_j/l1f15qm555z4qzvjjg6ftp_c0000gn/T/hdb-test-41ce6b6e3242e355/T83", cradleOptsProg = CradleAction: Default}
+[DEBUG] ghc --print-libdir
+[INFO] invoking build tool to determine build flags (this may take some time depending on the cache)
+[1 of 2] Compiling Main             ( /private/var/folders/_j/l1f15qm555z4qzvjjg6ftp_c0000gn/T/hdb-test-41ce6b6e3242e355/T83/Main.hs, interpreted )[main]
+(hdb) Heli
+EvalCompleted {resultVal = "()", resultType = "()"}
+(hdb) Exiting...
