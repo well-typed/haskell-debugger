@@ -62,6 +62,15 @@ jobs:
         with:
           submodules: recursive
 
+      # Cabal store cache (main speed-up)
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cabal/store
+          key: ${{ runner.os }}-ghc-${{ matrix.version }}-cabal-${{ hashFiles('**/*.cabal', 'cabal.project*') }}
+          restore-keys: |
+            ${{ runner.os }}-ghc-${{ matrix.version }}-cabal-
+
       - uses: haskell-actions/setup@v2
         with:
           ghc-version: ${{ matrix.version }}
@@ -106,6 +115,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # Cabal store cache (main speed-up)
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cabal/store
+          key: ${{ runner.os }}-ghc-${{ matrix.version }}-cabal-${{ hashFiles('**/*.cabal', 'cabal.project*') }}
+          restore-keys: |
+            ${{ runner.os }}-ghc-${{ matrix.version }}-cabal-
 
       - uses: haskell-actions/setup@v2
         with:
