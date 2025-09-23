@@ -76,10 +76,23 @@ goldenVsStringComparing
   -- ^ action that returns a string
   -> TestTree
   -- ^ the test verifies that the returned string is the same as the golden file contents
-goldenVsStringComparing name ref act =
-  goldenTest name (readFileStrict ref) act cmpNormalising upd
+goldenVsStringComparing name ref act = do
+
+  -- Normalise the output. The test file should already be saved normalised.
+  goldenTest name (LT.decodeUtf8 <$> readFileStrict ref) normalisingAct cmpNormalising upd
+
   where
-  upd = createDirectoriesAndWriteFile ref
+  upd = createDirectoriesAndWriteFile ref . LT.encodeUtf8
+
+  -- Normalise the action producing the output
+  normalisingAct = do
+    tmpDir <- getCanonicalTemporaryDirectory
+    replaceRE <- compileSearchReplace (tmpDir ++ ".*" ++ takeBaseName (takeDirectory ref) {- the folder in which the test is run, inside the canonical temp dir-})
+                                      "<TEMPORARY-DIRECTORY>"
+
+    let normalising (LT.decodeUtf8 -> txt) = txt *=~/ replaceRE
+
+    normalising <$> act
 
   readFileStrict :: FilePath -> IO LBS.ByteString
   readFileStrict path = do
@@ -95,34 +108,24 @@ goldenVsStringComparing name ref act =
 --------------------------------------------------------------------------------
 
   -- | Compare the golden test against the actual output after normalisation
-  cmpNormalising :: LBS.ByteString -> LBS.ByteString -> IO (Maybe String)
+  cmpNormalising :: LT.Text -> LT.Text -> IO (Maybe String)
   cmpNormalising x y = do
 
-    tmpDir <- getCanonicalTemporaryDirectory
-    replaceRE <- compileSearchReplace (tmpDir ++ ".*" ++ takeBaseName (takeDirectory ref) {- the folder in which the test is run, inside the canonical temp dir-})
-                                      "<TEMPORARY-DIRECTORY>"
-
     let
-      msg = printf "Test output was different from '%s'. It was:\n" ref <> (LT.unpack (normalising y))
+      msg = printf "Test output was different from '%s'. It was:\n" ref <> (LT.unpack y)
 
-      normalising (LT.decodeUtf8 -> txt) =
-        txt *=~/ replaceRE
-
-      x' = normalising x
-      y' = normalising y
-
-    if x' == y'
+    if x == y
       then return Nothing
       else do
         -- Call diff to show the difference
         withSystemTempFile "x.txt" $ \xf xH -> do
           withSystemTempFile "y.txt" $ \yf yH -> do
-            LT.hPutStr yH y'
-            LT.hPutStr xH x'
+            LT.hPutStr xH x
+            LT.hPutStr yH y
             hFlush xH
             hFlush yH
             hClose xH
             hClose yH
-            (exitCode, out, err) <- P.readProcessWithExitCode "diff" ["-u", xf, yf] ""
+            (_exitCode, out, err) <- P.readProcessWithExitCode "diff" ["-u", xf, yf] ""
             return $ Just $ msg ++ "\nDiff output:\n" ++ out ++ err
 
