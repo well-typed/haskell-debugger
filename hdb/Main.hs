@@ -59,7 +59,7 @@ serverParser = HdbDAPServer
      <> short 'p'
      <> metavar "PORT"
      <> help "DAP server port" )
-  <*> verbosityParser
+  <*> verbosityParser (Verbosity Debug)
 
 -- | Parser for HdbCLI options
 cliParser :: Parser HdbOptions
@@ -84,7 +84,7 @@ cliParser = HdbCLI
      <> metavar "GHC_ARGS"
      <> value []
      <> help "Additional flags to pass to the ghc invocation that loads the program for debugging" )
-  <*> verbosityParser
+  <*> verbosityParser (Verbosity Warning)
 
 
 -- | Combined parser for HdbOptions
@@ -104,12 +104,16 @@ versioner :: Parser (a -> a)
 versioner = simpleVersioner $ "Haskell Debugger, version " ++ showVersion P.version
 
 -- | Parser for --verbosity 0
-verbosityParser :: Parser Verbosity
-verbosityParser = option verb
+--
+-- The default verbosity differs by mode (#86):
+-- - DAP server mode: DEBUG
+-- - CLI mode: WARNING
+verbosityParser :: Verbosity -> Parser Verbosity
+verbosityParser vdef = option verb
     ( long "verbosity"
    <> short 'v'
    <> metavar "VERBOSITY"
-   <> value (Verbosity Debug) -- By default, everything
+   <> value vdef
    <> help "Logger verbosity in [0..3] interval, where 0 is silent and 3 is debug"
     )
   where
