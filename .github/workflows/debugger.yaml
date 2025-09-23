@@ -1,4 +1,9 @@
-on: [workflow_call, pull_request]
+on:
+  push:
+    branches:
+      - master
+  pull_request: {}
+  workflow_call: {}
 
 name: Debugger CI
 jobs:
