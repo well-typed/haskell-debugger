@@ -1,0 +1,1 @@
+hdb cli x/Main.hs < T61.hdb-stdin
