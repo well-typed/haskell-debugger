@@ -6,6 +6,7 @@ import System.Exit
 import System.Directory
 import System.Console.Haskeline
 import System.Console.Haskeline.Completion
+import System.FilePath
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.RWS
@@ -59,7 +60,8 @@ runIDM entryPoint entryFile entryArgs extraGhcArgs act = do
             , supportsANSIHyperlinks = False
             }
       let finalGhcInvocation = ghcInvocation ++ extraGhcArgs
-      runDebugger stdout rootDir componentDir libdir units finalGhcInvocation entryFile defaultRunConf $
+      let absEntryFile = normalise $ projectRoot </> entryFile
+      runDebugger stdout rootDir componentDir libdir units finalGhcInvocation absEntryFile defaultRunConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
                    (entryFile, entryPoint, entryArgs) Nothing
