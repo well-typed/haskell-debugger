@@ -5,11 +5,13 @@ import Text.RE.TDFA.Text.Lazy
 import Text.Printf
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Encoding as LT
+import qualified Data.Text.Lazy.IO as LT
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified System.Process as P
 import System.FilePath
 import System.IO.Temp
 import System.Exit
+import System.IO
 import Control.Exception
 
 import Test.Tasty
@@ -106,5 +108,21 @@ goldenVsStringComparing name ref act =
       normalising (LT.decodeUtf8 -> txt) =
         txt *=~/ replaceRE
 
-    return $ if normalising x == normalising y then Nothing else Just msg
+      x' = normalising x
+      y' = normalising y
+
+    if x' == y'
+      then return Nothing
+      else do
+        -- Call diff to show the difference
+        withSystemTempFile "x.txt" $ \xf xH -> do
+          withSystemTempFile "y.txt" $ \yf yH -> do
+            LT.hPutStr yH y'
+            LT.hPutStr xH x'
+            hFlush xH
+            hFlush yH
+            hClose xH
+            hClose yH
+            (exitCode, out, err) <- P.readProcessWithExitCode "diff" ["-u", xf, yf] ""
+            return $ Just $ msg ++ "\nDiff output:\n" ++ out ++ err
 
