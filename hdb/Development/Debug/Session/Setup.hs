@@ -82,7 +82,10 @@ hieBiosSetup logger projectRoot entryFile = do
   _version <- hieBiosRuntimeGhcVersion logger cradle
 
   logT "Discovering session flags with hie-bios..."
-  hieBiosFlags logger cradle projectRoot entryFile     & liftIO
+  r <- hieBiosFlags logger cradle projectRoot entryFile     & liftIO
+
+  logT "Session setup with hie-bios was successful."
+  return r
 
   where
     logT = logWith logger Info . LogSetupMsg . T.pack

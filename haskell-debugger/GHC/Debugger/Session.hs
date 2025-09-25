@@ -86,7 +86,9 @@ parseHomeUnitArguments cfp compRoot units theOpts dflags rootDir = do
         -- If we don't end up with a target for the current file in the end, then
         -- we will report it as an error for that file
         let abs_fp = rootDir </> cfp
-        let special_target = mkSimpleTarget df abs_fp
+        -- Canonicalize! Why? Because the targets we get from the cradle are normalised and if we don't normalise the "special target" then they aren't deduplicated properly.
+        canon_fp <- liftIO $ Directory.canonicalizePath abs_fp
+        let special_target = mkSimpleTarget df canon_fp
         pure $ (df, special_target : targets) NonEmpty.:| []
     where
       initMulti unitArgFiles =
