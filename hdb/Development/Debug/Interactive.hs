@@ -7,14 +7,14 @@ import System.Directory
 import System.Console.Haskeline
 import System.Console.Haskeline.Completion
 import System.FilePath
+import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.RWS
 import Options.Applicative
 import Options.Applicative.BashCompletion
 
-import Development.Debug.Adapter.Flags  -- use different namespace for common things
-import Development.Debug.Adapter.Handles
+import Development.Debug.Session.Setup
 
 import GHC.Debugger.Logger
 import GHC.Debugger.Interface.Messages
@@ -35,39 +35,39 @@ instance Pretty InteractiveLog where
     FlagsLog msg -> pretty msg
 
 -- | Run it
-runIDM :: String   -- ^ entryPoint
+runIDM :: Recorder (WithSeverity InteractiveLog)
+       -> String   -- ^ entryPoint
        -> FilePath -- ^ entryFile
        -> [String] -- ^ entryArgs
        -> [String] -- ^ extraGhcArgs
        -> InteractiveDM a
        -> IO a
-runIDM entryPoint entryFile entryArgs extraGhcArgs act = do
+runIDM logger entryPoint entryFile entryArgs extraGhcArgs act = do
   projectRoot <- getCurrentDirectory
-  l           <- handleLogger stdout
-  let
-    loggerWithSev = cmap renderPrettyWithSeverity (fromCologAction l)
-    hieBiosLogger = cmapWithSev FlagsLog loggerWithSev
-  cradle <- hieBiosCradle hieBiosLogger projectRoot entryFile >>=
-    \case
-      Left e -> exitWithMsg e
-      Right c -> pure c
-  mflags <- hieBiosFlags hieBiosLogger cradle projectRoot entryFile
-  case mflags of
-    Left e -> exitWithMsg e
-    Right HieBiosFlags{..} -> do
+
+  let hieBiosLogger = cmapWithSev FlagsLog logger
+  runExceptT (hieBiosSetup hieBiosLogger projectRoot entryFile) >>= \case
+    Left e               -> exitWithMsg e
+    Right (Left e)       -> exitWithMsg e
+    Right (Right flags)
+      | HieBiosFlags{..} <- flags
+                         -> do
+
       let defaultRunConf = RunDebuggerSettings
-            { supportsANSIStyling = True
+            { supportsANSIStyling = True -- todo: check!!
             , supportsANSIHyperlinks = False
             }
+
       let finalGhcInvocation = ghcInvocation ++ extraGhcArgs
       let absEntryFile = normalise $ projectRoot </> entryFile
+
       runDebugger stdout rootDir componentDir libdir units finalGhcInvocation absEntryFile defaultRunConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
                    (entryFile, entryPoint, entryArgs) Nothing
   where
-    exitWithMsg str = do
-      putStrLn str
+    exitWithMsg txt = do
+      putStrLn txt
       exitWith (ExitFailure 33)
 
   --   completeF = completeWordWithPrev Nothing filenameWordBreakChars $

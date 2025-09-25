@@ -146,29 +146,25 @@ defaultStdoutForwardingAction line = do
 main :: IO ()
 main = do
   hdbOpts <- parseHdbOptions
+  let
+    timeStampLogger  = cmapIO renderWithTimestamp . fromCologAction
+    loggerWithSev    = cmap renderPrettyWithSeverity
+    loggerFinal opts = applyVerbosity opts.verbosity . loggerWithSev . timeStampLogger
   case hdbOpts of
     HdbDAPServer{port} -> do
       config <- getConfig port
       withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
         hSetBuffering realStdout LineBuffering
         l <- handleLogger realStdout
-        let
-          timeStampLogger :: Recorder T.Text
-          timeStampLogger = cmapIO renderWithTimestamp (fromCologAction l)
-          loggerWithSev :: Recorder (WithSeverity MainLog)
-          loggerWithSev = cmap renderPrettyWithSeverity timeStampLogger
-          loggerFinal = applyVerbosity hdbOpts.verbosity loggerWithSev
-        runDAPServerWithLogger (toCologAction $ cmap DAP.renderDAPLog timeStampLogger) config (talk loggerFinal)
+        let dapLogger = cmap DAP.renderDAPLog $ timeStampLogger l
+        let runLogger = loggerFinal hdbOpts l
+        runDAPServerWithLogger (toCologAction dapLogger) config $
+          talk runLogger
     HdbCLI{..} -> do
-      l <- handleLogger stdout
-      let
-        timeStampLogger :: Recorder T.Text
-        timeStampLogger = cmapIO renderWithTimestamp (fromCologAction l)
-        loggerWithSev :: Recorder (WithSeverity MainLog)
-        loggerWithSev = cmap renderPrettyWithSeverity timeStampLogger
-        loggerFinal = applyVerbosity hdbOpts.verbosity loggerWithSev
-      runIDM entryPoint entryFile entryArgs extraGhcArgs $
-        debugInteractive (cmapWithSev InteractiveLog loggerFinal)
+        l <- handleLogger stdout
+        let runLogger = cmapWithSev InteractiveLog $ loggerFinal hdbOpts l
+        runIDM runLogger entryPoint entryFile entryArgs extraGhcArgs $
+          debugInteractive runLogger
 
 
 -- | Fetch config from environment, fallback to sane defaults

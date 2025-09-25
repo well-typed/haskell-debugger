@@ -3,7 +3,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module Development.Debug.Adapter.Flags where
+module Development.Debug.Session.Setup
+  (
+  -- * Setting up a hie-bios session
+    HieBiosFlags(..)
+  , hieBiosSetup
+
+  -- * Logging
+  , FlagsLog(..)
+  ) where
 
 import Control.Applicative ((<|>))
 import Control.Exception (handleJust)
@@ -23,6 +31,8 @@ import System.IO.Error
 import Text.ParserCombinators.ReadP (readP_to_S)
 import Prettyprinter
 
+import qualified Data.Text as T
+
 import qualified HIE.Bios as HIE
 import qualified HIE.Bios.Config as Config
 import qualified HIE.Bios.Cradle as HIE
@@ -37,11 +47,13 @@ import GHC.Debugger.Logger
 data FlagsLog
   = HieBiosLog HIE.Log
   | LogCradle (HIE.Cradle Void)
+  | LogSetupMsg T.Text
 
 instance Pretty FlagsLog where
   pretty = \ case
     HieBiosLog msg -> pretty msg
     LogCradle crdl -> "Determined Cradle:" <+> viaShow crdl
+    LogSetupMsg txt -> pretty txt
 
 -- | Flags inferred by @hie-bios@ to invoke GHC
 data HieBiosFlags = HieBiosFlags
@@ -56,6 +68,26 @@ data HieBiosFlags = HieBiosFlags
       -- root of the cradle, but in some sub-directory.
       }
 
+-- | Prepare a GHC session using hie-bios from scratch
+hieBiosSetup :: Recorder (WithSeverity FlagsLog)
+             -> FilePath -- ^ project root
+             -> FilePath -- ^ entry file
+             -> ExceptT String IO (Either String HieBiosFlags)
+hieBiosSetup logger projectRoot entryFile = do
+
+  cradle <- hieBiosCradle logger projectRoot entryFile & ExceptT
+
+  -- GHC is found in PATH (by hie-bios as well).
+  logT "Checking GHC version against debugger version..."
+  _version <- hieBiosRuntimeGhcVersion logger cradle
+
+  logT "Discovering session flags with hie-bios..."
+  hieBiosFlags logger cradle projectRoot entryFile     & liftIO
+
+  where
+    logT = logWith logger Info . LogSetupMsg . T.pack
+
+-- | Try implicit-hie and the builtin search to come up with a @'HIE.Cradle'@
 hieBiosCradle :: Recorder (WithSeverity FlagsLog) {-^ Logger -}
               -> FilePath {-^ Project root -}
               -> FilePath {-^ Entry file relative to root -}
@@ -70,14 +102,27 @@ hieBiosCradle logger root relTarget = runExceptT $ do
   where
     hieBiosLogger = toCologAction $ cmapWithSev HieBiosLog logger
 
+-- | Fetch the runtime GHC version, according to hie-bios, and check it is the
+-- same as the compile time GHC version
 hieBiosRuntimeGhcVersion :: Recorder (WithSeverity FlagsLog)
                          -> HIE.Cradle Void
-                         -> IO (Either String Version)
-hieBiosRuntimeGhcVersion _logger cradle = runExceptT $ do
+                         -> ExceptT String IO Version
+hieBiosRuntimeGhcVersion _logger cradle = do
   out <- liftIO (HIE.getRuntimeGhcVersion cradle) >>= unwrapCradleResult "Failed to get runtime GHC version"
+
   case versionMaybe out of
     Nothing -> throwError $ "Failed to parse GHC version: " <> out
-    Just ver -> pure ver
+    Just actualVersion -> do
+
+      -- Compare the GLASGOW_HASKELL version (e.g. 913) with the actualVersion (e.g. 9.13.1):
+      when (compileTimeGhcWithoutPatchVersion /= forgetPatchVersion actualVersion) $ do
+        throwError $
+          "Aborting...! The GHC version must be the same which " ++
+            "ghc-debug-adapter was compiled against (" ++
+              showVersion compileTimeGhcWithoutPatchVersion++
+                "). Instead, got " ++ (showVersion actualVersion) ++ "."
+
+      pure actualVersion
 
 -- | Make 'HieBiosFlags' from the given target file
 hieBiosFlags :: Recorder (WithSeverity FlagsLog) {-^ Logger -}
@@ -279,3 +324,18 @@ findFile p dir = do
   where
     getFiles = filter p <$> getDirectoryContents dir
     doesPredFileExist file = doesFileExist $ dir </> file
+
+--------------------------------------------------------------------------------
+
+compileTimeGhcWithoutPatchVersion :: Version
+compileTimeGhcWithoutPatchVersion =
+  let
+    versionNumber = __GLASGOW_HASKELL__ :: Int
+    (major, minor) = divMod versionNumber 100
+  in
+    makeVersion [major, minor]
+
+forgetPatchVersion :: Version -> Version
+forgetPatchVersion v = case versionBranch v of
+  (major:minor:_patches) -> makeVersion [major, minor]
+  _ -> v
