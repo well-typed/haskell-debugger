@@ -11,7 +11,6 @@
 {-# LANGUAGE ViewPatterns #-}
 module GHC.Debugger.Evaluation where
 
-import GHC.Utils.Trace
 import GHC.Utils.Outputable
 import Control.Monad.IO.Class
 import Control.Monad.Catch
