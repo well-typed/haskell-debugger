@@ -225,6 +225,10 @@ cmdParser entryFile entryPoint entryArgs = hsubparser
     ( info (DoEval . unwords <$> many (argument str ( metavar "EXPRESSION"
      <> help "Expression to evaluate in the current context" )))
       ( progDesc "Evaluate an expression in the current context" ) )
+  <>
+    Options.Applicative.command "exit"
+    ( info (pure TerminateProcess)
+      ( progDesc "Terminate and exit the debugger session" ) )
   )
 
 -- | Main parser info
