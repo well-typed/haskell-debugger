@@ -285,7 +285,7 @@ describe("Debug Adapter Tests", function () {
             ]);
         });
         it("should stop at break-point", () => {
-            const expected = { path: multiMainConfig.projectRoot + "/./" + multiMainConfig.entryFile, line: 6 };
+            const expected = { path: multiMainConfig.projectRoot + "/" + multiMainConfig.entryFile, line: 6 };
             return dc.hitBreakpoint(multiMainConfig, { path: multiMainConfig.entryFile, line: 6 }, expected, expected);
         });
 
@@ -347,7 +347,7 @@ describe("Debug Adapter Tests", function () {
       });
 
       it("should stop at break-point in the same home unit", () => {
-        const expected = { path: mhuConfig.projectRoot + "/./" + mhuConfig.entryFile, line: 8 };
+        const expected = { path: mhuConfig.projectRoot + "/" + mhuConfig.entryFile, line: 8 };
         return dc.hitBreakpoint(mhuConfig, { path: mhuConfig.entryFile, line: 8 }, expected, expected);
       });
 

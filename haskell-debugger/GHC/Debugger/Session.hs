@@ -97,10 +97,11 @@ parseHomeUnitArguments cfp compRoot units theOpts dflags rootDir = do
           initOne args
       initOne this_opts = do
         (dflags', targets') <- addCmdOpts this_opts dflags
-        let targets = HIE.makeTargetsAbsolute root targets'
-            root = case workingDirectory dflags' of
+        let root = case workingDirectory dflags' of
               Nothing   -> compRoot
               Just wdir -> compRoot </> wdir
+        root_canon <- liftIO $ Directory.canonicalizePath root
+        let targets = HIE.makeTargetsAbsolute root_canon targets'
         cacheDirs <- liftIO $ getCacheDirs (takeFileName root) this_opts
         let dflags'' =
               setWorkingDirectory root $
