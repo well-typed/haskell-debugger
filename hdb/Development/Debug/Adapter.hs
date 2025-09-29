@@ -1,7 +1,9 @@
 module Development.Debug.Adapter where
 
 import Control.Concurrent.MVar
+import Control.Concurrent.Chan
 import qualified Data.IntSet as IS
+import qualified Data.ByteString as BS
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import System.FilePath
@@ -29,6 +31,12 @@ data DebugAdaptorState = DAS
       , entryPoint :: String
       , entryArgs :: [String]
       , projectRoot :: FilePath
+      , syncProxyIn :: Chan BS.ByteString
+        -- ^ Read input to the debuggee from the proxy
+      , syncProxyOut :: Chan BS.ByteString
+        -- ^ Write output from the debuggee to the proxy
+      , syncProxyErr :: Chan BS.ByteString
+        -- ^ Write stderr from the debuggee to the proxy
       }
 
 type BreakpointId = Int

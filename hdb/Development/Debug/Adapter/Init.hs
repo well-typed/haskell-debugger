@@ -9,8 +9,12 @@
 -- | TODO: This module should be called Launch.
 module Development.Debug.Adapter.Init where
 
+import GHC.IO.Handle
+import System.Process
+import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import qualified Data.Text.Encoding as T
 import qualified System.Process as P
 import Control.Monad.Except
 import Control.Monad.Trans
@@ -88,8 +92,9 @@ newtype InitFailed = InitFailed String deriving Show
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
-initDebugger :: Recorder (WithSeverity InitLog) -> LaunchArgs -> ExceptT InitFailed DebugAdaptor ()
-initDebugger l LaunchArgs{ __sessionId
+initDebugger :: Recorder (WithSeverity InitLog) -> Bool -> LaunchArgs -> ExceptT InitFailed DebugAdaptor ()
+initDebugger l supportsRunInTerminal
+               LaunchArgs{ __sessionId
                          , projectRoot = givenRoot
                          , entryFile = entryFileMaybe
                          , entryPoint = fromMaybe "main" -> entryPoint
@@ -98,6 +103,9 @@ initDebugger l LaunchArgs{ __sessionId
                          } = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
+  syncProxyIn   <- liftIO newChan
+  syncProxyOut  <- liftIO newChan
+  syncProxyErr  <- liftIO newChan
 
   entryFile <- case entryFileMaybe of
     Nothing -> throwError $ InitFailed "Missing \"entryFile\" key in debugger configuration"
@@ -134,10 +142,12 @@ initDebugger l LaunchArgs{ __sessionId
 
       let absEntryFile = normalise $ projectRoot </> entryFile
       lift $ registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{entryFile=absEntryFile,..}
-        [ debuggerThread l finished_init writeDebuggerOutput projectRoot flags extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
+        [ debuggerThread l finished_init writeDebuggerOutput projectRoot flags
+            extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
         , handleDebuggerOutput readDebuggerOutput
-        , stdoutCaptureThread
-        , stderrCaptureThread
+        , stdinForwardThread  supportsRunInTerminal syncProxyIn
+        , stdoutCaptureThread supportsRunInTerminal syncProxyOut
+        , stderrCaptureThread supportsRunInTerminal syncProxyErr
         ]
 
       -- Do not return until the initialization is finished
@@ -150,24 +160,49 @@ initDebugger l LaunchArgs{ __sessionId
           -- Instead of signalInitialized, respond with error and exit.
           lift $ exitCleanupWithMsg readDebuggerOutput e
 
--- | This thread captures stdout from the debugger and sends it to the client.
+-- | This thread captures stdout from the debuggee and sends it to the client.
 -- NOTE, redirecting the stdout handle is a process-global operation. So this thread
--- will capture ANY stdout the debugger emits. Therefore you should never directly
+-- will capture ANY stdout the debuggee emits. Therefore you should never directly
 -- write to stdout, but always write to the appropiate handle.
-stdoutCaptureThread :: (DebugAdaptorCont () -> IO ()) -> IO ()
-stdoutCaptureThread withAdaptor = do
+stdoutCaptureThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
+stdoutCaptureThread runInTerminal syncOut withAdaptor = do
   withInterceptedStdout $ \_ interceptedStdout -> do
     forever $ do
       line <- liftIO $ T.hGetLine interceptedStdout
-      withAdaptor $ Output.stdout line
+      if runInTerminal then
+        writeChan syncOut $ T.encodeUtf8 (line <> T.pack "\n")
+      else
+        -- Else, output to Debug Console
+        withAdaptor $ Output.stdout line
 
 -- | Like 'stdoutCaptureThread' but for stderr
-stderrCaptureThread :: (DebugAdaptorCont () -> IO ()) -> IO ()
-stderrCaptureThread withAdaptor = do
+stderrCaptureThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
+stderrCaptureThread runInTerminal syncErr withAdaptor = do
   withInterceptedStderr $ \_ interceptedStderr -> do
     forever $ do
       line <- liftIO $ T.hGetLine interceptedStderr
-      withAdaptor $ Output.stderr line
+      if runInTerminal then
+        writeChan syncErr $ T.encodeUtf8 (line <> "\n")
+      else
+        -- Else, output to Debug Console
+        withAdaptor $ Output.stderr line
+
+stdinForwardThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
+stdinForwardThread runInTerminal syncIn _withAdaptor = do
+  when runInTerminal $ do
+    -- We need to hijack stdin to write to it
+
+    -- 1. Create a new pipe from writeEnd->readEnd
+    (readEnd, writeEnd) <- createPipe
+
+    -- 2. Substitute the read-end of the pipe by stdin
+    _ <- hDuplicateTo readEnd stdin
+    hClose readEnd -- we'll never need to read from readEnd
+
+    forever $ do
+      i <- readChan syncIn
+      -- 3. Write to write-end of the pipe
+      BS.hPut writeEnd i >> hFlush writeEnd
 
 -- | The main debugger thread launches a GHC.Debugger session.
 --

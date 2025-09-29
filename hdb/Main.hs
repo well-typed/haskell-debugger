@@ -3,7 +3,11 @@ module Main where
 
 import System.Environment
 import Data.Maybe
+import Data.Aeson
+import Data.IORef
 import Text.Read
+import Control.Monad
+import Control.Monad.IO.Class
 import Control.Monad.Except
 
 import DAP
@@ -16,6 +20,7 @@ import Development.Debug.Adapter.Evaluation
 import Development.Debug.Adapter.Exit
 import Development.Debug.Adapter.Handles
 import GHC.Debugger.Logger
+import Prettyprinter
 
 import System.IO (hSetBuffering, BufferMode(LineBuffering))
 import qualified DAP.Log as DAP
@@ -26,6 +31,7 @@ import GHC.IO.Handle.FD
 import Development.Debug.Options (HdbOptions(..))
 import Development.Debug.Options.Parser (parseHdbOptions)
 import Development.Debug.Adapter
+import Development.Debug.Adapter.Proxy
 import Development.Debug.Interactive
 
 --------------------------------------------------------------------------------
@@ -49,14 +55,18 @@ main = do
         l <- handleLogger realStdout
         let dapLogger = cmap DAP.renderDAPLog $ timeStampLogger l
         let runLogger = loggerFinal hdbOpts l
-        runDAPServerWithLogger (toCologAction dapLogger) config $
-          talk runLogger
+        init_var <- liftIO (newIORef False{-not supported by default-})
+        runDAPServerWithLogger (toCologAction dapLogger) config $ \cmd -> do
+          talk runLogger init_var cmd
     HdbCLI{..} -> do
         l <- handleLogger stdout
         let runLogger = cmapWithSev InteractiveLog $ loggerFinal hdbOpts l
         runIDM runLogger entryPoint entryFile entryArgs extraGhcArgs $
           debugInteractive runLogger
-
+    HdbProxy{port} -> do
+        l <- handleLogger stdout
+        let runLogger = cmapWithSev RunProxyClientLog $ loggerFinal hdbOpts l
+        runInTerminalHdbProxy runLogger port
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: Int -> IO ServerConfig
@@ -109,30 +119,53 @@ getConfig port = do
 
 data MainLog
   = InitLog InitLog
+  | LaunchLog T.Text
   | InteractiveLog InteractiveLog
+  | RunProxyServerLog ProxyLog
+  | RunProxyClientLog ProxyLog
 
 instance Pretty MainLog where
   pretty = \ case
     InitLog msg -> pretty msg
+    LaunchLog msg -> pretty msg
     InteractiveLog msg -> pretty msg
+    RunProxyServerLog msg -> pretty ("Proxy Server:" :: String) <+> pretty msg
+    RunProxyClientLog msg -> pretty ("Proxy Client:" :: String) <+> pretty msg
 
 -- | Main function where requests are received and Events + Responses are returned.
 -- The core logic of communicating between the client <-> adaptor <-> debugger
 -- is implemented in this function.
-talk :: Recorder (WithSeverity MainLog) -> Command -> DebugAdaptor ()
+talk :: Recorder (WithSeverity MainLog)
+     -> IORef Bool
+     -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l = \ case
+talk l support_rit_var = \ case
   CommandInitialize -> do
-    -- InitializeRequestArguments{..} <- getArguments
+    InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
+    liftIO $ writeIORef support_rit_var supportsRunInTerminalRequest
     sendInitializeResponse
+
 --------------------------------------------------------------------------------
   CommandLaunch -> do
     launch_args <- getArguments
-    merror <- runExceptT $ initDebugger (cmapWithSev InitLog l) launch_args
+
+    supportsRunInTerminalRequest <- liftIO $ readIORef support_rit_var
+
+    merror <- runExceptT $ initDebugger (cmapWithSev InitLog l) supportsRunInTerminalRequest launch_args
     case merror of
       Right () -> do
         sendLaunchResponse   -- ack
         sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
+
+        -- Run the proxy in a separate terminal to accept stdin / forward stdout
+        -- if it is supported
+        when supportsRunInTerminalRequest $ do
+          -- Run proxy thread, server side, and
+          -- send the 'runInTerminal' request
+          serverSideHdbProxy (cmapWithSev RunProxyServerLog l)
+
+        logWith l Info $ LaunchLog $ T.pack "Debugger launched successfully."
+
       Left (InitFailed err) -> do
         sendErrorResponse (ErrorMessage (T.pack err)) Nothing
         exitCleanly
@@ -169,13 +202,22 @@ talk l = \ case
 ----------------------------------------------------------------------------
   CommandEvaluate   -> commandEvaluate
 ----------------------------------------------------------------------------
-  CommandTerminate  -> commandTerminate
+  CommandTerminate  ->
+    -- TODO: ALSO MUST KILL THE PROXY!; STORE PID from runInTerminalResponse (CustomCommand below)
+    commandTerminate
   CommandDisconnect -> commandDisconnect
 ----------------------------------------------------------------------------
   CommandModules -> sendModulesResponse (ModulesResponse [] Nothing)
   CommandSource -> undefined
   CommandPause -> undefined
   (CustomCommand "mycustomcommand") -> undefined
+  (CustomCommand "runInTerminal") -> do
+    -- Ignore result of runInTerminal (reverse request) response.
+    -- If it fails, we simply continue without that functionality.
+    pure ()
+  other -> do
+    sendErrorResponse (ErrorMessage (T.pack ("Unsupported command: " <> show other))) Nothing
+    exitCleanly
 ----------------------------------------------------------------------------
 -- talk cmd = logInfo $ BL8.pack ("GOT cmd " <> show cmd)
 ----------------------------------------------------------------------------
