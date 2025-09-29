@@ -1,8 +1,7 @@
 -- | Options parser using optparse-applicative for the debugger options in
 -- 'Development.Debug.Options'
 module Development.Debug.Options.Parser
-  (
-    -- * Command line options parsing
+  ( -- * Command line options parsing
     parseHdbOptions
   ) where
 
@@ -19,7 +18,7 @@ import Development.Debug.Options
 -- Options parser
 --------------------------------------------------------------------------------
 
--- | Parser for HdbDAPServer options
+-- | Parser for 'HdbDAPServer' options
 serverParser :: Parser HdbOptions
 serverParser = HdbDAPServer
   <$> option auto
@@ -29,7 +28,7 @@ serverParser = HdbDAPServer
      <> help "DAP server port" )
   <*> verbosityParser (Verbosity Debug)
 
--- | Parser for HdbCLI options
+-- | Parser for 'HdbCLI' options
 cliParser :: Parser HdbOptions
 cliParser = HdbCLI
   <$> strOption
@@ -54,6 +53,15 @@ cliParser = HdbCLI
      <> help "Additional flags to pass to the ghc invocation that loads the program for debugging" )
   <*> verbosityParser (Verbosity Warning)
 
+-- | Parser for 'HdbProxy' options
+proxyParser :: Parser HdbOptions
+proxyParser = HdbProxy
+  <$> option auto
+      ( long "port"
+     <> short 'p'
+     <> metavar "PORT"
+     <> help "proxy port to which the debugger connects" )
+  <*> verbosityParser (Verbosity Warning)
 
 -- | Combined parser for HdbOptions
 hdbOptionsParser :: Parser HdbOptions
@@ -64,6 +72,9 @@ hdbOptionsParser = hsubparser
  <> Options.Applicative.command "cli"
     ( info cliParser
       ( progDesc "Debug a Haskell program in CLI mode" ) )
+ <> Options.Applicative.command "proxy"
+    ( info proxyParser
+      ( progDesc "Internal mode used by the DAP server to proxy the stdin/stdout to the DAP client's terminal" ) )
   )
   <|> cliParser  -- Default to CLI mode if no subcommand
 
