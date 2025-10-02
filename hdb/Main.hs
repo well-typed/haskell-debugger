@@ -2,6 +2,7 @@
 module Main where
 
 import System.Environment
+import System.Process
 import Data.Maybe
 import Data.Aeson
 import Data.IORef
@@ -56,8 +57,10 @@ main = do
         let dapLogger = cmap DAP.renderDAPLog $ timeStampLogger l
         let runLogger = loggerFinal hdbOpts l
         init_var <- liftIO (newIORef False{-not supported by default-})
-        runDAPServerWithLogger (toCologAction dapLogger) config $ \cmd -> do
-          talk runLogger init_var cmd
+        pid_var  <- liftIO (newIORef Nothing)
+        runDAPServerWithLogger (toCologAction dapLogger) config
+          (talk runLogger init_var pid_var)
+          (ack runLogger pid_var)
     HdbCLI{..} -> do
         l <- handleLogger stdout
         let runLogger = cmapWithSev InteractiveLog $ loggerFinal hdbOpts l
@@ -137,9 +140,12 @@ instance Pretty MainLog where
 -- is implemented in this function.
 talk :: Recorder (WithSeverity MainLog)
      -> IORef Bool
+     -- ^ Whether the client supports runInTerminal
+     -> IORef (Maybe Int)
+     -- ^ The PID of the runInTerminal proxy process
      -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l support_rit_var = \ case
+talk l support_rit_var pid_var = \ case
   CommandInitialize -> do
     InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
     liftIO $ writeIORef support_rit_var supportsRunInTerminalRequest
@@ -202,8 +208,12 @@ talk l support_rit_var = \ case
 ----------------------------------------------------------------------------
   CommandEvaluate   -> commandEvaluate
 ----------------------------------------------------------------------------
-  CommandTerminate  ->
-    -- TODO: ALSO MUST KILL THE PROXY!; STORE PID from runInTerminalResponse (CustomCommand below)
+  CommandTerminate  -> do
+    mpid <- liftIO $ readIORef pid_var
+    case mpid of
+      Nothing -> pure ()
+      Just pid -> do
+        callCommand ("kill " ++ show pid)
     commandTerminate
   CommandDisconnect -> commandDisconnect
 ----------------------------------------------------------------------------
@@ -221,3 +231,20 @@ talk l support_rit_var = \ case
 ----------------------------------------------------------------------------
 -- talk cmd = logInfo $ BL8.pack ("GOT cmd " <> show cmd)
 ----------------------------------------------------------------------------
+
+-- | Receive reverse request responses (such as runInTerminal response)
+ack :: Recorder (WithSeverity MainLog)
+    -> IORef (Maybe Int)
+    -- ^ Reference to PID of runInTerminal proxy process running
+    -> ReverseRequestResponse -> DebugAdaptorCont ()
+ack l ref rrr = case rrr.reverseRequestCommand of
+  ReverseCommandRunInTerminal -> do
+    when rrr.success $ do
+      RunInTerminalResponse{..} <- getReverseRequestResponseBody rrr
+      liftIO $ case runInTerminalResponseProcessId of
+        Just i -> writeIORef ref (Just i)
+        Nothing -> case runInTerminalResponseProcessId of
+          Just i -> writeIORef ref (Just i)
+          Nothing -> pure ()
+  _ -> pure ()
+

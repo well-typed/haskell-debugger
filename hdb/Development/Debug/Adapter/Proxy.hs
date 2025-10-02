@@ -128,7 +128,7 @@ runInTerminalHdbProxy l port = do
         ) $ \(e::IOException) -> return () -- connection dropped, just exit.
 
     ) $ \(e::IOException) -> do
-      hPutStrLn stderr "Failed to connect to debugger server proxy -- did the debuggee compile and started running successfully?"
+      hPutStrLn stderr "Failed to connect to debugger server proxy -- did the debuggee compile and start running successfully?"
 
 -- | Send a 'runInTerminal' reverse request to the DAP client
 -- with the @hdb proxy@ invocation
