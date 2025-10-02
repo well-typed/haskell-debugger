@@ -209,11 +209,6 @@ talk l support_rit_var pid_var = \ case
   CommandEvaluate   -> commandEvaluate
 ----------------------------------------------------------------------------
   CommandTerminate  -> do
-    mpid <- liftIO $ readIORef pid_var
-    case mpid of
-      Nothing -> pure ()
-      Just pid -> do
-        callCommand ("kill " ++ show pid)
     commandTerminate
   CommandDisconnect -> commandDisconnect
 ----------------------------------------------------------------------------
@@ -240,11 +235,6 @@ ack :: Recorder (WithSeverity MainLog)
 ack l ref rrr = case rrr.reverseRequestCommand of
   ReverseCommandRunInTerminal -> do
     when rrr.success $ do
-      RunInTerminalResponse{..} <- getReverseRequestResponseBody rrr
-      liftIO $ case runInTerminalResponseProcessId of
-        Just i -> writeIORef ref (Just i)
-        Nothing -> case runInTerminalResponseProcessId of
-          Just i -> writeIORef ref (Just i)
-          Nothing -> pure ()
+      logWith l Info $ LaunchLog $ T.pack "RunInTerminal was successful"
   _ -> pure ()
 
