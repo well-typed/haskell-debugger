@@ -10,6 +10,7 @@ module Development.Debug.Adapter.Proxy
 import DAP
 
 import System.IO
+import System.Exit (exitSuccess)
 import System.Environment
 import System.FilePath
 import Control.Exception.Base
@@ -82,11 +83,13 @@ serverSideHdbProxy l = do
       -- Read stdin from socket and write to chan
       let loop = do
             bs <- NBS.recv scket 4096
-            logWith l Debug $ ProxyLog $ T.pack $ "Read from socket: " ++ BS8.unpack bs
             if BS8.null bs
               then do
-                logWith l Debug $ ProxyLog $ T.pack "Connection closed."
-              else writeChan dbIn bs >> loop
+                logWith l Debug $ ProxyLog $ T.pack "Connection to client was closed."
+                close scket
+              else do
+                logWith l Debug $ ProxyLog $ T.pack $ "Read from socket: " ++ BS8.unpack bs
+                writeChan dbIn bs >> loop
        in ignoreIOException loop
 
   sendRunProxyInTerminal port
@@ -124,7 +127,12 @@ runInTerminalHdbProxy l port = do
       -- Forward stdout from sock
       catch (forever $ do
         msg <- NBS.recv sock 4096
-        BS8.hPut stdout msg >> hFlush stdout
+        if BS8.null msg
+          then do
+            logWith l Info $ ProxyLog $ T.pack "Exiting..."
+            close sock
+            exitSuccess
+          else BS8.hPut stdout msg >> hFlush stdout
         ) $ \(e::IOException) -> return () -- connection dropped, just exit.
 
     ) $ \(e::IOException) -> do
