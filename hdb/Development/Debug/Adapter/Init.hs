@@ -169,11 +169,11 @@ stdoutCaptureThread runInTerminal syncOut withAdaptor = do
   withInterceptedStdout $ \_ interceptedStdout -> do
     forever $ do
       line <- liftIO $ T.hGetLine interceptedStdout
-      if runInTerminal then
+      when runInTerminal $
         writeChan syncOut $ T.encodeUtf8 (line <> T.pack "\n")
-      else
-        -- Else, output to Debug Console
-        withAdaptor $ Output.stdout line
+
+      -- Always output to Debug Console
+      withAdaptor $ Output.stdout line
 
 -- | Like 'stdoutCaptureThread' but for stderr
 stderrCaptureThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
@@ -181,11 +181,11 @@ stderrCaptureThread runInTerminal syncErr withAdaptor = do
   withInterceptedStderr $ \_ interceptedStderr -> do
     forever $ do
       line <- liftIO $ T.hGetLine interceptedStderr
-      if runInTerminal then
+      when runInTerminal $
         writeChan syncErr $ T.encodeUtf8 (line <> "\n")
-      else
-        -- Else, output to Debug Console
-        withAdaptor $ Output.stderr line
+
+      -- Always output to Debug Console
+      withAdaptor $ Output.stderr line
 
 stdinForwardThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
 stdinForwardThread runInTerminal syncIn _withAdaptor = do
