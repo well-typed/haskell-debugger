@@ -119,8 +119,9 @@ debugExecution recorder entryFile entry args = do
     findUnitIdOfEntryFile fp = do
       afp <- normalise <$> liftIO (makeAbsolute fp)
       modSums <- getAllLoadedModules
-      case List.find ((Just afp ==) . fmap normalise . GHC.ml_hs_file . GHC.ms_location ) modSums of
-        Nothing -> error $ "findUnitIdOfEntryFile: no unit id found for: " ++ fp
+      let normalisedModLoc = fmap normalise . GHC.ml_hs_file . GHC.ms_location
+      case List.find ((Just afp ==) . normalisedModLoc) modSums of
+        Nothing -> error $ "findUnitIdOfEntryFile: no unit id found for: " ++ fp ++ "\nCandidates were:\n" ++ unlines (map (show . normalisedModLoc) modSums)
         Just summary -> pure summary
 
 -- | Resume execution of the stopped debuggee program

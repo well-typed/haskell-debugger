@@ -18,12 +18,21 @@ import Test.Tasty
 import Test.Tasty.Golden as G
 import Test.Tasty.Golden.Advanced as G
 
+import Test.DAP.RunInTerminal
+import Test.Utils
+
 main :: IO ()
 main = do
   goldens <- mapM (mkGoldenTest False) =<< findByExtension [".hdb-test"] "test/golden"
   defaultMain $
     testGroup "Tests"
-      goldens
+      [ testGroup "Golden tests" goldens
+      , testGroup "Unit tests" unitTests
+      ]
+
+unitTests =
+  [ runInTerminalTests
+  ]
 
 -- | Receives as an argument the path to the @*.hdb-test@ which contains the
 -- shell invocation for running 
@@ -43,25 +52,6 @@ mkGoldenTest keepTmpDirs path = do
           ExitSuccess   -> LBS.hGetContents hout
           ExitFailure c -> error $ "Test script in " ++ test_dir ++ " failed with exit code: " ++ show c
         
--- | Copy the contents of a test directory (with a `*.hdb-test` in the root) to
--- a temporary location and return the path to the new location.
-withHermeticDir :: Bool               -- ^ Whether to keep the temp dir around for inspection
-                -> FilePath           -- ^ Test dir
-                -> (FilePath -> IO r) -- ^ Continuation receives hermetic test dir (in temporary dir)
-                -> IO r
-withHermeticDir keep src k = do
-  withTmpDir "hdb-test" $ \dest -> do
-    P.callCommand $ "cp -r " ++ src ++ " " ++ dest
-    k (dest </> takeBaseName src)
-  where
-    withTmpDir | keep      = withPersistentSystemTempDirectory
-               | otherwise = withSystemTempDirectory
-
-    withPersistentSystemTempDirectory :: String -> (FilePath -> IO r) -> IO r
-    withPersistentSystemTempDirectory template k' = do
-      dir <- flip createTempDirectory template =<< getCanonicalTemporaryDirectory
-      k' dir
-
 --------------------------------------------------------------------------------
 -- Tasty Golden Advanced wrapper
 --------------------------------------------------------------------------------
