@@ -2,9 +2,13 @@
 module Main where
 
 import System.Environment
+import System.Process
 import Data.Maybe
-import Data.Version
+import Data.Aeson
+import Data.IORef
 import Text.Read
+import Control.Monad
+import Control.Monad.IO.Class
 import Control.Monad.Except
 
 import DAP
@@ -17,125 +21,19 @@ import Development.Debug.Adapter.Evaluation
 import Development.Debug.Adapter.Exit
 import Development.Debug.Adapter.Handles
 import GHC.Debugger.Logger
-import Development.Debug.Adapter
-
-import Development.Debug.Interactive
+import Prettyprinter
 
 import System.IO (hSetBuffering, BufferMode(LineBuffering))
 import qualified DAP.Log as DAP
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import GHC.IO.Handle.FD
-import Options.Applicative hiding (command)
-import qualified Options.Applicative
 
-import qualified Paths_haskell_debugger as P
-
--- | The options `hdb` is invoked in the command line with
-data HdbOptions
-  -- | @server --port <port>@
-  = HdbDAPServer
-    { port :: Int
-    , verbosity :: Verbosity
-    }
-  -- | @[--entry-point=<entryPoint>] [--extra-ghc-args="<args>"] [<entryFile>] -- [<entryArgs>]@
-  | HdbCLI
-    { entryPoint :: String
-    , entryFile :: FilePath
-    , entryArgs :: [String]
-    , extraGhcArgs :: [String]
-    , verbosity :: Verbosity
-    }
-
---------------------------------------------------------------------------------
--- Options parser
---------------------------------------------------------------------------------
-
--- | Parser for HdbDAPServer options
-serverParser :: Parser HdbOptions
-serverParser = HdbDAPServer
-  <$> option auto
-      ( long "port"
-     <> short 'p'
-     <> metavar "PORT"
-     <> help "DAP server port" )
-  <*> verbosityParser (Verbosity Debug)
-
--- | Parser for HdbCLI options
-cliParser :: Parser HdbOptions
-cliParser = HdbCLI
-  <$> strOption
-      ( long "entry-point"
-     <> short 'e'
-     <> metavar "ENTRY_POINT"
-     <> value "main"
-     <> help "The name of the function that is called to start execution (default: main)" )
-  <*> argument str
-      ( metavar "ENTRY_FILE"
-     <> help "The relative path from the project root to the file with the entry point for execution" )
-  <*> many
-        ( argument str
-          ( metavar "ENTRY_ARGS..."
-         <> help "The arguments passed to the entryPoint. If the entryPoint is main, these arguments are passed as environment arguments (as in getArgs) rather than direct function arguments."
-          )
-        )
-  <*> option (words <$> str)
-      ( long "extra-ghc-args"
-     <> metavar "GHC_ARGS"
-     <> value []
-     <> help "Additional flags to pass to the ghc invocation that loads the program for debugging" )
-  <*> verbosityParser (Verbosity Warning)
-
-
--- | Combined parser for HdbOptions
-hdbOptionsParser :: Parser HdbOptions
-hdbOptionsParser = hsubparser
-  ( Options.Applicative.command "server"
-    ( info serverParser
-      ( progDesc "Start the Haskell debugger in DAP server mode" ) )
- <> Options.Applicative.command "cli"
-    ( info cliParser
-      ( progDesc "Debug a Haskell program in CLI mode" ) )
-  )
-  <|> cliParser  -- Default to CLI mode if no subcommand
-
--- | Parser for --version flag
-versioner :: Parser (a -> a)
-versioner = simpleVersioner $ "Haskell Debugger, version " ++ showVersion P.version
-
--- | Parser for --verbosity 0
---
--- The default verbosity differs by mode (#86):
--- - DAP server mode: DEBUG
--- - CLI mode: WARNING
-verbosityParser :: Verbosity -> Parser Verbosity
-verbosityParser vdef = option verb
-    ( long "verbosity"
-   <> short 'v'
-   <> metavar "VERBOSITY"
-   <> value vdef
-   <> help "Logger verbosity in [0..3] interval, where 0 is silent and 3 is debug"
-    )
-  where
-    verb = Verbosity <$> (verbNum =<< auto)
-    verbNum n = case n :: Int of
-      0 -> pure Error
-      1 -> pure Warning
-      2 -> pure Info
-      3 -> pure Debug
-      _ -> readerAbort (ErrorMsg "Verbosity must be a value in [0..3]")
-
--- | Main parser info
-hdbParserInfo :: ParserInfo HdbOptions
-hdbParserInfo = info (hdbOptionsParser <**> versioner <**> helper)
-  ( fullDesc
- <> header "Haskell debugger supporting both CLI and DAP modes" )
-
--- | Parse command line arguments
-parseHdbOptions :: IO HdbOptions
-parseHdbOptions = customExecParser
-  defaultPrefs{prefShowHelpOnError = True, prefShowHelpOnEmpty = True}
-  hdbParserInfo
+import Development.Debug.Options (HdbOptions(..))
+import Development.Debug.Options.Parser (parseHdbOptions)
+import Development.Debug.Adapter
+import Development.Debug.Adapter.Proxy
+import Development.Debug.Interactive
 
 --------------------------------------------------------------------------------
 
@@ -158,14 +56,20 @@ main = do
         l <- handleLogger realStdout
         let dapLogger = cmap DAP.renderDAPLog $ timeStampLogger l
         let runLogger = loggerFinal hdbOpts l
-        runDAPServerWithLogger (toCologAction dapLogger) config $
-          talk runLogger
+        init_var <- liftIO (newIORef False{-not supported by default-})
+        pid_var  <- liftIO (newIORef Nothing)
+        runDAPServerWithLogger (toCologAction dapLogger) config
+          (talk runLogger init_var pid_var)
+          (ack runLogger pid_var)
     HdbCLI{..} -> do
         l <- handleLogger stdout
         let runLogger = cmapWithSev InteractiveLog $ loggerFinal hdbOpts l
         runIDM runLogger entryPoint entryFile entryArgs extraGhcArgs $
           debugInteractive runLogger
-
+    HdbProxy{port} -> do
+        l <- handleLogger stdout
+        let runLogger = cmapWithSev RunProxyClientLog $ loggerFinal hdbOpts l
+        runInTerminalHdbProxy runLogger port
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: Int -> IO ServerConfig
@@ -218,30 +122,56 @@ getConfig port = do
 
 data MainLog
   = InitLog InitLog
+  | LaunchLog T.Text
   | InteractiveLog InteractiveLog
+  | RunProxyServerLog ProxyLog
+  | RunProxyClientLog ProxyLog
 
 instance Pretty MainLog where
   pretty = \ case
     InitLog msg -> pretty msg
+    LaunchLog msg -> pretty msg
     InteractiveLog msg -> pretty msg
+    RunProxyServerLog msg -> pretty ("Proxy Server:" :: String) <+> pretty msg
+    RunProxyClientLog msg -> pretty ("Proxy Client:" :: String) <+> pretty msg
 
 -- | Main function where requests are received and Events + Responses are returned.
 -- The core logic of communicating between the client <-> adaptor <-> debugger
 -- is implemented in this function.
-talk :: Recorder (WithSeverity MainLog) -> Command -> DebugAdaptor ()
+talk :: Recorder (WithSeverity MainLog)
+     -> IORef Bool
+     -- ^ Whether the client supports runInTerminal
+     -> IORef (Maybe Int)
+     -- ^ The PID of the runInTerminal proxy process
+     -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l = \ case
+talk l support_rit_var pid_var = \ case
   CommandInitialize -> do
-    -- InitializeRequestArguments{..} <- getArguments
+    InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
+    liftIO $ writeIORef support_rit_var supportsRunInTerminalRequest
     sendInitializeResponse
+
 --------------------------------------------------------------------------------
   CommandLaunch -> do
     launch_args <- getArguments
-    merror <- runExceptT $ initDebugger (cmapWithSev InitLog l) launch_args
+
+    supportsRunInTerminalRequest <- liftIO $ readIORef support_rit_var
+
+    merror <- runExceptT $ initDebugger (cmapWithSev InitLog l) supportsRunInTerminalRequest launch_args
     case merror of
       Right () -> do
         sendLaunchResponse   -- ack
         sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
+
+        -- Run the proxy in a separate terminal to accept stdin / forward stdout
+        -- if it is supported
+        when supportsRunInTerminalRequest $ do
+          -- Run proxy thread, server side, and
+          -- send the 'runInTerminal' request
+          serverSideHdbProxy (cmapWithSev RunProxyServerLog l)
+
+        logWith l Info $ LaunchLog $ T.pack "Debugger launched successfully."
+
       Left (InitFailed err) -> do
         sendErrorResponse (ErrorMessage (T.pack err)) Nothing
         exitCleanly
@@ -278,13 +208,33 @@ talk l = \ case
 ----------------------------------------------------------------------------
   CommandEvaluate   -> commandEvaluate
 ----------------------------------------------------------------------------
-  CommandTerminate  -> commandTerminate
+  CommandTerminate  -> do
+    commandTerminate
   CommandDisconnect -> commandDisconnect
 ----------------------------------------------------------------------------
   CommandModules -> sendModulesResponse (ModulesResponse [] Nothing)
   CommandSource -> undefined
   CommandPause -> undefined
   (CustomCommand "mycustomcommand") -> undefined
+  (CustomCommand "runInTerminal") -> do
+    -- Ignore result of runInTerminal (reverse request) response.
+    -- If it fails, we simply continue without that functionality.
+    pure ()
+  other -> do
+    sendErrorResponse (ErrorMessage (T.pack ("Unsupported command: " <> show other))) Nothing
+    exitCleanly
 ----------------------------------------------------------------------------
 -- talk cmd = logInfo $ BL8.pack ("GOT cmd " <> show cmd)
 ----------------------------------------------------------------------------
+
+-- | Receive reverse request responses (such as runInTerminal response)
+ack :: Recorder (WithSeverity MainLog)
+    -> IORef (Maybe Int)
+    -- ^ Reference to PID of runInTerminal proxy process running
+    -> ReverseRequestResponse -> DebugAdaptorCont ()
+ack l ref rrr = case rrr.reverseRequestCommand of
+  ReverseCommandRunInTerminal -> do
+    when rrr.success $ do
+      logWith l Info $ LaunchLog $ T.pack "RunInTerminal was successful"
+  _ -> pure ()
+

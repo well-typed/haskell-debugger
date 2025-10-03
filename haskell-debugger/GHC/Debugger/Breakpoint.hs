@@ -84,7 +84,10 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
 setBreakpoint FunctionBreak{function} bp_status = do
   logger <- getLogger
   resolveFunctionBreakpoint function >>= \case
-    Left e -> error (showPprUnsafe e)
+    Left e -> do
+      liftIO $ logOutput logger $ text $
+        "Failed to resolve function breakpoint " ++ function ++ ".\n" ++ showPprUnsafe e ++ "\nIgnoring..."
+      return BreakNotFound
     Right (modl, mod_info, fun_str) -> do
       let modBreaks = GHC.modInfoModBreaks mod_info
           applyBreak (bix, spn) = do
