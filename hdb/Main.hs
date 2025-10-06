@@ -214,7 +214,7 @@ talk l support_rit_var pid_var = \ case
 ----------------------------------------------------------------------------
   CommandModules -> sendModulesResponse (ModulesResponse [] Nothing)
   CommandSource -> undefined
-  CommandPause -> undefined
+  CommandPause -> pure () -- TODO
   (CustomCommand "mycustomcommand") -> undefined
   (CustomCommand "runInTerminal") -> do
     -- Ignore result of runInTerminal (reverse request) response.
