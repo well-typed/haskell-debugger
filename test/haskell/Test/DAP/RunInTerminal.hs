@@ -69,19 +69,19 @@ runInTerminal1 = do
         { adapterID = "haskell-debugger"
         , clientID = Just "mock-client"
         , clientName = Just "Mock Client"
-        , columnsStartAt1 = True
-        , linesStartAt1 = True
+        , columnsStartAt1 = Just True
+        , linesStartAt1 = Just True
         , locale = Just "en"
         , pathFormat = Just Path
-        , supportsArgsCanBeInterpretedByShell = True
-        , supportsInvalidatedEvent = True
-        , supportsMemoryEvent = True
-        , supportsMemoryReferences = True
-        , supportsProgressReporting = True
-        , supportsRunInTerminalRequest = True
-        , supportsStartDebuggingRequest = True
-        , supportsVariablePaging = True
-        , supportsVariableType = True
+        , supportsArgsCanBeInterpretedByShell = Nothing
+        , supportsInvalidatedEvent = Nothing
+        , supportsMemoryEvent = Nothing
+        , supportsMemoryReferences = Nothing
+        , supportsProgressReporting = Nothing
+        , supportsRunInTerminalRequest = Just True
+        , supportsStartDebuggingRequest = Nothing
+        , supportsVariablePaging = Nothing
+        , supportsVariableType = Nothing
         }
 
       -- Recv initalize response
