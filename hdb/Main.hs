@@ -148,7 +148,7 @@ talk :: Recorder (WithSeverity MainLog)
 talk l support_rit_var pid_var = \ case
   CommandInitialize -> do
     InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
-    liftIO $ writeIORef support_rit_var supportsRunInTerminalRequest
+    liftIO $ writeIORef support_rit_var (fromMaybe False supportsRunInTerminalRequest)
     sendInitializeResponse
 
 --------------------------------------------------------------------------------
