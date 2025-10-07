@@ -7,6 +7,7 @@ import Data.Maybe
 import Data.Aeson
 import Data.IORef
 import Text.Read
+import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Except
@@ -58,8 +59,9 @@ main = do
         let runLogger = loggerFinal hdbOpts l
         init_var <- liftIO (newIORef False{-not supported by default-})
         pid_var  <- liftIO (newIORef Nothing)
+        ccon_var <- liftIO newEmptyMVar
         runDAPServerWithLogger (toCologAction dapLogger) config
-          (talk runLogger init_var pid_var)
+          (talk runLogger init_var pid_var ccon_var)
           (ack runLogger pid_var)
     HdbCLI{..} -> do
         l <- handleLogger stdout
@@ -143,13 +145,21 @@ talk :: Recorder (WithSeverity MainLog)
      -- ^ Whether the client supports runInTerminal
      -> IORef (Maybe Int)
      -- ^ The PID of the runInTerminal proxy process
+     -> MVar ()
+     -- ^ A var to block on waiting for the proxy client to connect, if a proxy
+     -- connection is expected. See #95.
      -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l support_rit_var pid_var = \ case
+talk l support_rit_var pid_var client_proxy_signal = \ case
   CommandInitialize -> do
     InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
-    liftIO $ writeIORef support_rit_var (fromMaybe False supportsRunInTerminalRequest)
+    let runInTerminal = fromMaybe False supportsRunInTerminalRequest
+    liftIO $ writeIORef support_rit_var runInTerminal
     sendInitializeResponse
+
+    -- If runInTerminal is not supported by the client, signal readiness right away
+    when (not runInTerminal) $
+      liftIO $ putMVar client_proxy_signal ()
 
 --------------------------------------------------------------------------------
   CommandLaunch -> do
@@ -168,7 +178,7 @@ talk l support_rit_var pid_var = \ case
         when supportsRunInTerminalRequest $ do
           -- Run proxy thread, server side, and
           -- send the 'runInTerminal' request
-          serverSideHdbProxy (cmapWithSev RunProxyServerLog l)
+          serverSideHdbProxy (cmapWithSev RunProxyServerLog l) client_proxy_signal
 
         logWith l Info $ LaunchLog $ T.pack "Debugger launched successfully."
 
@@ -192,6 +202,9 @@ talk l support_rit_var pid_var = \ case
   CommandConfigurationDone -> do
     sendConfigurationDoneResponse
     -- now that it has been configured, start executing until it halts, then send an event
+
+    -- wait for the proxy client to connect before starting the execution (#95)
+    () <- liftIO $ takeMVar client_proxy_signal
     startExecution >>= handleEvalResult False
 ----------------------------------------------------------------------------
   CommandThreads    -> commandThreads
