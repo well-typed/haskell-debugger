@@ -47,8 +47,9 @@ newtype ProxyLog = ProxyLog T.Text
 -- 2.1 Read stdin from the socket and push it to a Chan
 -- 2.1 Read from a stdout Chan and write to the socket
 serverSideHdbProxy :: Recorder (WithSeverity ProxyLog)
+                   -> MVar ()
                    -> DebugAdaptor ()
-serverSideHdbProxy l = do
+serverSideHdbProxy l client_conn_signal = do
   DAS { syncProxyIn = dbIn
       , syncProxyOut = dbOut
       , syncProxyErr = dbErr } <- getDebugSession
@@ -65,6 +66,7 @@ serverSideHdbProxy l = do
     runTCPServerWithSocket sock $ \scket -> do
 
       logWith l Info $ ProxyLog $ T.pack $ "Connected to client on port " ++ show port ++ "...!"
+      putMVar client_conn_signal () -- signal ready (see #95)
 
       -- -- Read stdout from chan and write to socket
       _ <- forkIO $ ignoreIOException $ do
