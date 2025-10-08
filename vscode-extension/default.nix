@@ -5,10 +5,10 @@ pkgs.buildNpmPackage {
     version = "0.8.0";
     src = ./.;
 
-    npmDepsHash = "sha256-Sp5CCtw5kC82gjWL7x7aZ48+geJ/R+LJFMw8RkqsH6c=";
+    npmDepsHash = "sha256-rvPlvEsFygi/EYh0vcOBDAC4Sf5nzJIfaN8HjdsVXE0=";
 
     nativeBuildInputs = [
-      pkgs.nodejs pkgs.vsce pkgs.cacert pkgs.nodePackages.rimraf
+      pkgs.nodejs pkgs.vsce pkgs.cacert
       pkgs.esbuild pkgs.pkg-config
     ];
 
