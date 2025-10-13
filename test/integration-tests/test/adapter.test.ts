@@ -435,8 +435,7 @@ describe("Debug Adapter Tests", function () {
             }
 
             // Finally, we should be at the OK constructor
-            const focusF = await forceLazy(focus);
-            assert.strictEqual(focusF.value, 'OK');
+            assert.strictEqual(focus.value, 'OK');
         })
 
         it('strings that are fields of the expanded vars and are not thunks are fully evaluated (issue #11)', async () => {
@@ -453,7 +452,6 @@ describe("Debug Adapter Tests", function () {
             await dc.hitBreakpoint(config, { path: config.entryFile, line: 5 }, expected, expected)
 
             // Force only the 2nd "hello" and check the third is already there.
-            // It relies on repeat seemingly only re-using every other thunk?!!?
             // (Mimics reproducer in #11)
             let locals = await fetchLocalVars();
             const xVar = await forceLazy(locals.get('x'));
@@ -461,7 +459,7 @@ describe("Debug Adapter Tests", function () {
             const _2Var = await xChild.get('_2'); // NOTE: Doesn't need to be forced because of this seemingly weird `repeat` behavior where it looks like every other binding is shared but the others are not
             const _2Child = await expandVar(_2Var);
             const _2_1Var = await forceLazy(_2Child.get('_1'));
-            const _2_2Var = await forceLazy(_2Child.get('_2'));
+            const _2_2Var = await _2Child.get('_2');
             const _2_2Child = await expandVar(_2_2Var);
             const _2_2_1Var = await _2_2Child.get('_1') // NOTE: doesn't need to be forced as above
             assertIsString(_2_2_1Var, '"hello"');
@@ -532,6 +530,40 @@ describe("Debug Adapter Tests", function () {
             let moduleVars = await fetchModuleVars();
             const myintCon = await moduleVars.get("MyIntCon")
             assert.strictEqual(myintCon.value, "Data constructor ‘MyIntCon’")
+        })
+
+        it('expand iteratively s.t. forced structure appears as forced (issue #97)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/T97",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 12 }
+
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 12 }, expected, expected)
+
+            let locals = await fetchLocalVars();
+            const xVar = await locals.get('y');
+            // NOTE: This tests that we don't have to force a single variable
+            // as we expand because the data should be fully forced at this
+            // point.
+            const xChild = await expandVar(xVar);
+            const _1Var = await xChild.get('_1');
+            const _1Child = await expandVar(_1Var);
+            const _1_1Var = await _1Child.get('_1');
+            assert.strictEqual(_1_1Var.value, 'T97'); // just check
+            const _1_1Child = await expandVar(_1_1Var);
+            const _1_1_1Var = await _1_1Child.get('_1');
+            const _1_1_1Child = await expandVar(_1_1_1Var);
+            const _1_1_1_1Var = await _1_1_1Child.get('_1');
+            const _1_1_1_1Child = await expandVar(_1_1_1_1Var);
+            const _1_1_1_1_1Var = await _1_1_1_1Child.get('_1');
+            const _1_1_1_1_1Child = await expandVar(_1_1_1_1_1Var);
+            const _1_1_1_1_1_1Var = await _1_1_1_1_1Child.get('_1');
+            assertIsString(_1_1_1_1_1_1Var, '"hello"');
         })
     })
     describe("Stepping out (step-out)", function () {
