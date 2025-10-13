@@ -1,5 +1,19 @@
 # Revision history for haskell-debugger
 
+## 0.9.0.0 -- 2025-10-13
+
+### Main changes
+
+* Run a proxy program with `runInTerminal` to allow stdin via the terminal process, if the client supports it.
+
+### Bug fixes
+
+* Fix bug where build failures were reported in a pop-up rather than stderr
+* Fix crashes panicking with `findUnitIdOfEntryFile`
+* Fix cli bug by use absolute entryFile path
+* Fix bug caused by not canonicalizing special target and root
+* Fix in variable expansion (expand `Term`s iteratively as the user expands the tree)
+
 ## 0.8.0.0 -- 2025-09-19
 
 * Allow defaults for all settings except `entryFile` and return a proper error in that case
