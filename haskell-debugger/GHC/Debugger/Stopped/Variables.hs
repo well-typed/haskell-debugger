@@ -43,6 +43,9 @@ tyThingToVarInfo t = case t of
     termToVarInfo key term
 
 -- | Construct the VarInfos of the fields ('VarFields') of the given 'TermKey'/'Term'
+--
+-- This is used to come up with terms for the fields of an already `seq`ed
+-- variable which was expanded.
 termVarFields :: TermKey -> Term -> Debugger VarFields
 termVarFields top_key top_term =
 

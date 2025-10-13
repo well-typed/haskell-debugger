@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs, LambdaCase, NamedFieldPuns #-}
+{-# LANGUAGE OrPatterns, GADTs, LambdaCase, NamedFieldPuns #-}
 module GHC.Debugger.Runtime where
 
 import Data.IORef
@@ -9,6 +9,7 @@ import GHC
 import GHC.Types.FieldLabel
 import GHC.Tc.Utils.TcType
 import GHC.Runtime.Eval
+import GHC.Runtime.Heap.Inspect
 
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Runtime.Term.Cache
@@ -21,8 +22,9 @@ import GHC.Debugger.Monad
 -- scratch and stored in the cache.
 obtainTerm :: TermKey -> Debugger Term
 obtainTerm key = do
-  tc_ref <- asks termCache
-  tc     <- liftIO $ readIORef tc_ref
+  hsc_env <- getSession
+  tc_ref  <- asks termCache
+  tc      <- liftIO $ readIORef tc_ref
   case lookupTermCache key tc of
     -- cache miss: reconstruct, then store.
     Nothing ->
@@ -37,17 +39,8 @@ obtainTerm key = do
         getTerm = \case
           FromId i -> GHC.obtainTermFromId (depth i) False{-don't force-} i
           FromPath k pf -> do
-            term <- getTerm k >>= \case
-              -- When the key points to a Suspension, the real thing should
-              -- already be forced. It's just that the shallow depth meant we
-              -- returned a Suspension nonetheless while recursing in `getTerm`.
-              t@Suspension{} -> do
-                t' <- seqTerm t
-                -- update term cache with intermediate values?
-                -- insertTermCache k t'
-                return t'
-              t -> return t
-            return $ case term of
+            term <- getTerm k
+            liftIO $ expandTerm hsc_env $ case term of
               Term{dc=Right dc, subTerms} -> case pf of
                 PositionalIndex ix -> subTerms !! (ix-1)
                 LabeledField fl    ->
@@ -59,11 +52,24 @@ obtainTerm key = do
               _ -> error "Unexpected term for the given TermKey"
        in do
         term <- getTerm key
-        liftIO $ writeIORef tc_ref (insertTermCache key term tc)
+        liftIO $ modifyIORef tc_ref (insertTermCache key term)
         return term
 
     -- cache hit
     Just hit -> return hit
+
+-- | Before returning a 'Term' we want to expand its heap representation up to the 'defaultDepth'
+--
+-- For 'Id's, this is done by 'GHC.obtainTermFromId'. For other 'TermKey's this
+-- function should be used
+expandTerm :: HscEnv -> Term -> IO Term
+expandTerm hsc_env term = case term of
+  Term{val, ty} -> cvObtainTerm hsc_env defaultDepth False ty val
+  (NewtypeWrap{}; RefWrap{}) -> do
+    -- TODO: we don't do anything clever here yet
+    return term
+  -- For other terms there's no point in trying to expand
+  (Suspension{}; Prim{}) -> return term
 
 -- | A boring type is one for which we don't care about the structure and would
 -- rather see "whole" when being inspected. Strings and literals are a good

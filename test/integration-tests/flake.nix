@@ -2,7 +2,7 @@
   description = "Integration tests for hdb";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable"; # or unstable
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05"; # or unstable
     flake-utils.url = "github:numtide/flake-utils";
   };
 
