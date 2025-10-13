@@ -1,12 +1,6 @@
 # Haskell Debugger
 
-Status: **Work In Progress**
-
-We are working on a first class debugger for Haskell.
-It is still not ready for general consumption!
-
-We will properly announce through the common channels the debugger when the
-first major release is ready.
+We are working on a first class debugger for Haskell!
 
 ![CI badge](https://github.com/well-typed/haskell-debugger/actions/workflows/debugger.yaml/badge.svg) ![Hackage badge](https://img.shields.io/hackage/v/haskell-debugger.svg)
 
@@ -55,6 +49,20 @@ Change them accordingly.
 
 To run the debugger, simply hit the green run button.
 See the Features section below for what is currently supported.
+
+# Multiple home units session
+
+Multiple home units is supported but currently may require a workaround (issue is tracked by [#38](https://github.com/well-typed/haskell-debugger/issues/38)).
+
+If your multiple home units session does not work by default (e.g. if you
+cannot set breakpoints on different units), and you do not have a `hie.yaml`
+file, you may want to try creating a `hie.yaml` file in the root of the
+workspace with:
+```
+cradle:
+    cabal:
+        component: "all"
+```
 
 # Related Work
 
