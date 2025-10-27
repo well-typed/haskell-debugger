@@ -131,9 +131,7 @@ termToVarInfo key term0 = do
   -- We only want to return @SpecificVariable@ (which allows expansion) for
   -- values with sub-fields or thunks.
   varRef <- do
-    if GHCI.isFullyEvaluatedTerm term ||
-       -- Even if it is already evaluated, we do want to display a
-       -- structure as long if it is not a "boring type" (one that does not
+    if -- Display a structure as long it is not a "boring type" (one that does not
        -- provide useful information from being expanded)
        -- (e.g. consider how awkward it is to expand Char# 10 and I# 20)
        (not isThunk && (isBoringTy ty || not (hasDirectSubTerms term)))
