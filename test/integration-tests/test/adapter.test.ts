@@ -565,6 +565,45 @@ describe("Debug Adapter Tests", function () {
             const _1_1_1_1_1_1Var = await _1_1_1_1_1Child.get('_1');
             assertIsString(_1_1_1_1_1_1Var, '"hello"');
         })
+
+        it('inspect mutable variables (#92)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/T92",
+                  entryFile: "T92.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 7 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 7 }, expected, expected);
+
+            async function getMutVarValue() {
+                let locals = await fetchLocalVars();
+                const rVar = await locals.get('r');
+                assert.strictEqual(rVar.value, "IORef (STRef (GHC.Prim.MutVar# _))")
+                const rChild = await expandVar(rVar);
+                const r_1_Var = await rChild.get('_1'); // No force
+                assert.strictEqual(r_1_Var.value, 'STRef');
+                const r_1_Child = await expandVar(r_1_Var);
+                const r_1_1_Var = await r_1_Child.get("_1"); // No force
+                assert.strictEqual(r_1_1_Var.value, 'GHC.Prim.MutVar# _');
+                const r_1_1_Child = await expandVar(r_1_1_Var);
+                const r_1_1_1_Var = await forceLazy(r_1_1_Child.get("_1")); // FORCE REFERENCE!
+                return r_1_1_1_Var
+            }
+
+            const m1 = await getMutVarValue()
+            assert.strictEqual(m1.value, "False")
+            await dc.nextRequest({ threadId: 0 });
+            await dc.nextRequest({ threadId: 0 });
+            await dc.nextRequest({ threadId: 0 });
+            // Now we're at the start of the last line, where the ref should be True
+            // Note how we get it from scratch, the content of the ref must be
+            // forced again (the forceLazy call in getMutVarValue)
+            const m2 = await getMutVarValue()
+            assert.strictEqual(m2.value, "True")
+        })
     })
     describe("Stepping out (step-out)", function () {
 
