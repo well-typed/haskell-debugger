@@ -30,7 +30,7 @@ jobs:
 
       - uses: haskell-actions/setup@v2
         with:
-          ghc-version: 9.14.0.20250908
+          ghc-version: 9.14.0.20251007
           cabal-version: 3.14
           ghcup-release-channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
 
