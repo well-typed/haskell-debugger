@@ -607,8 +607,11 @@ describe("Debug Adapter Tests", function () {
     })
     describe("Stepping out (step-out)", function () {
 
-        let step_out_broken = ghc_version < "9.15.20250731" // hasn't been merged yet, but let's use this bound; will probably only be in GHC 9.14.2
-        let need_opt = step_out_broken
+        // TODO: Add simpler tests which don't rely on optimisations at all.
+        // E.g. just simply stepping out to a case expression
+
+        let step_out_broken = ghc_version < "9.14.0.20251007" // hasn't been merged yet, but let's use this bound; will probably only be in GHC 9.14.2
+        let need_opt = true // Currently we depend on this to work around the fact that >>= is in library code because base is not being interpreted
 
         // Mimics GHC's T26042b
         it('without tail calls', async () => {
@@ -635,7 +638,7 @@ describe("Debug Adapter Tests", function () {
 
             // back to main
             await dc.stepOutRequest({threadId: 0});
-            await dc.assertStoppedLocation('step', expected(step_out_broken ? 6 : 6));
+            await dc.assertStoppedLocation('step', expected(step_out_broken ? 6 : 5));
 
             // exit
             await dc.stepOutRequest({threadId: 0});
