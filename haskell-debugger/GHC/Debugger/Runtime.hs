@@ -49,6 +49,8 @@ obtainTerm key = do
                     Nothing -> error "Couldn't find labeled field in dataConFieldLabels"
               NewtypeWrap{wrapped_term} ->
                 wrapped_term -- regardless of PathFragment
+              RefWrap{wrapped_term} ->
+                wrapped_term -- regardless of PathFragment
               _ -> error "Unexpected term for the given TermKey"
        in do
         term <- getTerm key
