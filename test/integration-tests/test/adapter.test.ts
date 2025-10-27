@@ -604,6 +604,28 @@ describe("Debug Adapter Tests", function () {
             const m2 = await getMutVarValue()
             assert.strictEqual(m2.value, "True")
         })
+
+        it('inspect fully evaluated type (issue #110)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/T110",
+                  entryFile: "T110.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 11 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 11 }, expected, expected);
+
+            let locals = await fetchLocalVars();
+            const tVar = await forceLazy(locals.get('t'));
+            assert.strictEqual(tVar.value, "T")
+            const tChild = await expandVar(tVar); // No force needed, is fully evaluated and can expand
+            const _1Var = await tChild.get('_1');
+            const _2Var = await tChild.get('_2');
+            assert.strictEqual(_1Var.value, '333');
+            assert.strictEqual(_2Var.value, '34');
+        })
     })
     describe("Stepping out (step-out)", function () {
 
