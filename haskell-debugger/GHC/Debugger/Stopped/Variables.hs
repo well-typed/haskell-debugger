@@ -78,6 +78,10 @@ termVarFields top_key top_term =
             wvi <- obtainTerm key >>= termToVarInfo key
             return (LabeledFields [wvi])
           _ -> error "unexpected number of Newtype fields: larger than 1"
+      RefWrap{wrapped_term=_{- don't use directly! go through @obtainTerm@ -}} -> do
+        let key = FromPath top_key (PositionalIndex 1)
+        wvi <- obtainTerm key >>= termToVarInfo key
+        return (IndexedFields [wvi])
       _ -> return NoFields
 
 
