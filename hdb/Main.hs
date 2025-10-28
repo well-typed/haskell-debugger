@@ -79,9 +79,14 @@ getConfig port = do
   let
     hostDefault = "0.0.0.0"
     portDefault = port
-    capabilities = defaultCapabilities
-      { -- Exception breakpoints!
-        exceptionBreakpointFilters            = [ defaultExceptionBreakpointsFilter
+    capabilities = Capabilities
+      { supportsConfigurationDoneRequest      = True
+      , supportsFunctionBreakpoints           = True
+      , supportsConditionalBreakpoints        = False
+      , supportsHitConditionalBreakpoints     = False
+      , supportsEvaluateForHovers             = False
+      -- Exception Breakpoints:
+      , exceptionBreakpointFilters            = [ defaultExceptionBreakpointsFilter
                                                   { exceptionBreakpointsFilterLabel = "All exceptions"
                                                   , exceptionBreakpointsFilterFilter = BREAK_ON_EXCEPTION
                                                   }
@@ -90,27 +95,45 @@ getConfig port = do
                                                   , exceptionBreakpointsFilterFilter = BREAK_ON_ERROR
                                                   }
                                                 ]
-        -- Function breakpoints!
-      , supportsFunctionBreakpoints           = True
-
-      , supportsEvaluateForHovers             = False
-
-      -- display which breakpoints are valid when user intends to set
-      -- breakpoint on given line.
-      , supportsBreakpointLocationsRequest    = True
-      , supportsConfigurationDoneRequest      = True
-      , supportsHitConditionalBreakpoints     = False
+      , supportsStepBack                      = False
+      , supportsSetVariable                   = False
+      , supportsRestartFrame                  = False
+      , supportsGotoTargetsRequest            = False
+      , supportsStepInTargetsRequest          = False
+      , supportsCompletionsRequest            = False
+      , completionTriggerCharacters           = []
       , supportsModulesRequest                = False
       , additionalModuleColumns               = [ defaultColumnDescriptor
                                                   { columnDescriptorAttributeName = "Extra"
                                                   , columnDescriptorLabel = "Label"
                                                   }
                                                 ]
-      , supportsValueFormattingOptions        = True
-      , supportTerminateDebuggee              = True
-      , supportsLoadedSourcesRequest          = False
+      , supportedChecksumAlgorithms           = []
+      , supportsRestartRequest                = False
       , supportsExceptionOptions              = True
+      , supportsValueFormattingOptions        = True
+      , supportsExceptionInfoRequest          = False
+      , supportTerminateDebuggee              = True
+      , supportSuspendDebuggee                = False
+      , supportsDelayedStackTraceLoading      = False
+      , supportsLoadedSourcesRequest          = False
+      , supportsLogPoints                     = False
+      , supportsTerminateThreadsRequest       = False
+      , supportsSetExpression                 = False
+      , supportsTerminateRequest              = False
+      , supportsDataBreakpoints               = False
+      , supportsReadMemoryRequest             = False
+      , supportsWriteMemoryRequest            = False
+      , supportsDisassembleRequest            = False
+      , supportsCancelRequest                 = False
+      -- Display which breakpoints are valid when user intends to set
+      -- breakpoint on given line:
+      , supportsBreakpointLocationsRequest    = True
+      , supportsClipboardContext              = False
+      , supportsSteppingGranularity           = False
+      , supportsInstructionBreakpoints        = False
       , supportsExceptionFilterOptions        = False
+      , supportsSingleThreadExecutionRequests = False
       }
   ServerConfig
     <$> do fromMaybe hostDefault <$> lookupEnv "DAP_HOST"
