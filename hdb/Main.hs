@@ -82,8 +82,8 @@ getConfig port = do
     capabilities = Capabilities
       { supportsConfigurationDoneRequest      = True
       , supportsFunctionBreakpoints           = True
-      , supportsConditionalBreakpoints        = False
-      , supportsHitConditionalBreakpoints     = False
+      , supportsConditionalBreakpoints        = True
+      , supportsHitConditionalBreakpoints     = True
       , supportsEvaluateForHovers             = False
       -- Exception Breakpoints:
       , exceptionBreakpointFilters            = [ defaultExceptionBreakpointsFilter
