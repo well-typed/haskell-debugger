@@ -50,6 +50,7 @@ library
     import:           warnings
     exposed-modules:  GHC.Debugger,
                       GHC.Debugger.Breakpoint,
+                      GHC.Debugger.Breakpoint.Map,
                       GHC.Debugger.Evaluation,
                       GHC.Debugger.Logger,
                       GHC.Debugger.Stopped,
@@ -88,7 +89,7 @@ library
                       co-log-core >= 0.3.2.5 && < 0.4,
 
     hs-source-dirs:   haskell-debugger
-    default-language: Haskell2010
+    default-language: GHC2021
 
 executable hdb
     import:           warnings
@@ -146,7 +147,7 @@ executable hdb
 
 test-suite haskell-debugger-test
     import:           warnings
-    default-language: Haskell2010
+    default-language: GHC2021
     -- other-extensions:
     type:             exitcode-stdio-1.0
     hs-source-dirs:   test/haskell/

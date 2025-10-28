@@ -4,6 +4,7 @@ module Development.Debug.Adapter.Breakpoints where
 import qualified Data.Text as T
 import qualified Data.Map as Map
 import qualified Data.IntSet as IS
+import Text.Read
 import Control.Monad
 import Data.Maybe
 
@@ -23,7 +24,11 @@ commandBreakpointLocations = do
   file <- fileFromSourcePath breakpointLocationsArgumentsSource
 
   DidGetBreakpoints mspan <-
-    sendSync (GetBreakpointsAt (ModuleBreak file breakpointLocationsArgumentsLine breakpointLocationsArgumentsColumn))
+    sendSync $ GetBreakpointsAt
+      ModuleBreak { path      = file
+                  , lineNum   = breakpointLocationsArgumentsLine
+                  , columnNum = breakpointLocationsArgumentsColumn
+                  }
 
   let locs = case mspan of
         Nothing -> []
@@ -51,7 +56,13 @@ commandSetBreakpoints = do
   -- Set requested ones
   breaks <- forM breaks_wanted $ \bp -> do
     DidSetBreakpoint bf <-
-      sendSync (SetBreakpoint (ModuleBreak file (DAP.sourceBreakpointLine bp) (DAP.sourceBreakpointColumn bp)))
+      sendSync $ SetBreakpoint
+        ModuleBreak { path      = file
+                    , lineNum   = DAP.sourceBreakpointLine bp
+                    , columnNum = DAP.sourceBreakpointColumn bp
+                    }
+        (readMaybe @Int =<< (T.unpack <$> DAP.sourceBreakpointHitCondition bp))
+        (T.unpack <$> DAP.sourceBreakpointCondition bp)
     registerBreakFound bf
 
   sendSetBreakpointsResponse (concat breaks)
@@ -61,7 +72,7 @@ commandSetFunctionBreakpoints :: DebugAdaptor ()
 commandSetFunctionBreakpoints = do
   SetFunctionBreakpointsArguments{..} <- getArguments
   let
-    breaks_wanted = mapMaybe functionBreakpointName setFunctionBreakpointsArgumentsBreakpoints
+    breaks_wanted = setFunctionBreakpointsArgumentsBreakpoints
 
   -- Clear existing function breakpoints
   DidClearBreakpoints <- sendSync ClearFunctionBreakpoints
@@ -69,7 +80,10 @@ commandSetFunctionBreakpoints = do
   -- Set requested ones
   breaks <- forM breaks_wanted $ \bp -> do
     DidSetBreakpoint bf <-
-      sendSync (SetBreakpoint (FunctionBreak (T.unpack bp)))
+      sendSync $ SetBreakpoint
+        FunctionBreak { function  = T.unpack $ fromJust {- not optional -} $ DAP.functionBreakpointName bp }
+        (readMaybe @Int =<< (T.unpack <$> DAP.functionBreakpointHitCondition bp))
+        (T.unpack <$> DAP.functionBreakpointCondition bp)
     registerBreakFound bf
 
   sendSetFunctionBreakpointsResponse (concat breaks)
@@ -87,11 +101,11 @@ commandSetExceptionBreakpoints = do
   let breakOnError      = BREAK_ON_ERROR `elem` setExceptionBreakpointsArgumentsFilters
 
   when breakOnExceptions $ do
-    DidSetBreakpoint _ <- sendSync (SetBreakpoint OnExceptionsBreak)
+    DidSetBreakpoint _ <- sendSync (SetBreakpoint OnExceptionsBreak Nothing Nothing)
     pure ()
 
   when breakOnError $ do
-    DidSetBreakpoint _ <- sendSync (SetBreakpoint OnUncaughtExceptionsBreak)
+    DidSetBreakpoint _ <- sendSync (SetBreakpoint OnUncaughtExceptionsBreak Nothing Nothing)
     pure ()
 
   sendSetExceptionBreakpointsResponse

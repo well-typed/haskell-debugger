@@ -196,7 +196,7 @@ getVariables vk = do
         case GHC.resumeBreakpointId r of
           Nothing -> return []
           Just ibi -> do
-            curr_modl <- liftIO $ bi_tick_mod . getBreakSourceId ibi <$>
+            curr_modl <- liftIO $ getBreakSourceMod ibi <$>
                           readIModBreaks (hsc_HUG hsc_env) ibi
             things <- typeEnvElts <$> getTopEnv curr_modl
             mapM (\tt -> do
@@ -208,7 +208,7 @@ getVariables vk = do
         case GHC.resumeBreakpointId r of
           Nothing -> return []
           Just ibi -> do
-            curr_modl <- liftIO $ bi_tick_mod . getBreakSourceId ibi <$>
+            curr_modl <- liftIO $ getBreakSourceMod ibi <$>
                           readIModBreaks (hsc_HUG hsc_env) ibi
             names <- map greName . globalRdrEnvElts <$> getTopImported curr_modl
             mapM (\n-> do

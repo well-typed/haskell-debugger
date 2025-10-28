@@ -14,6 +14,8 @@ module GHC.Debugger.Evaluation where
 import GHC.Utils.Outputable
 import Control.Monad.IO.Class
 import Control.Monad.Catch
+import Control.Monad.Reader
+import Data.IORef
 import qualified Data.List as List
 import Data.Maybe
 import System.FilePath
@@ -21,6 +23,7 @@ import System.Directory
 import qualified Prettyprinter as Pretty
 
 import GHC
+import GHC.Utils.Trace
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Unit.Types
 import GHC.Data.FastString
@@ -40,6 +43,7 @@ import GHC.Debugger.Monad
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Logger
+import qualified GHC.Debugger.Breakpoint.Map as BM
 
 data EvalLog
   = LogEvalModule GHC.Module
@@ -55,7 +59,6 @@ instance Pretty EvalLog where
 -- | Run a program with debugging enabled
 debugExecution :: Recorder (WithSeverity EvalLog) -> FilePath -> EntryPoint -> [String] {-^ Args -} -> Debugger EvalResult
 debugExecution recorder entryFile entry args = do
-
   -- consider always using :trace like ghci-dap to always have a stacktrace?
   -- better solution could involve profiling stack traces or from IPE info?
   modSummaryOfEntryFile <- findUnitIdOfEntryFile entryFile
@@ -198,8 +201,33 @@ handleExecResult = \case
       -- Stopped at an exception
       -- TODO: force the exception to display string with Backtrace?
       return EvalStopped{breakId = Nothing}
-    ExecBreak {breakNames = _, breakPointId} ->
-      return EvalStopped{breakId = breakPointId}
+    ExecBreak {breakNames = _, breakPointId = Just bid} -> do
+      bm <- liftIO . readIORef =<< asks activeBreakpoints
+      case BM.lookup bid bm of
+        -- todo: BreakpointAfterCountCond is not handled yet.
+        Just (BreakpointWhenCond cond, _) -> do
+          let evalFailedMsg e = "Evaluation of conditional breakpoint expression failed with " ++ e ++ "\nIgnoring..."
+          let resume = GHC.resumeExec GHC.RunToCompletion Nothing >>= handleExecResult
+          doEval cond >>= \case
+            EvalStopped{} -> error "impossible for doEval"
+            EvalCompleted { resultVal, resultType } ->
+              if resultType == "Bool" then do
+                if resultVal == "True" then
+                  return EvalStopped{breakId = Just bid}
+                else
+                  resume
+              else do
+                displayWarnings [evalFailedMsg "\"expression resultType is != Bool\""]
+                resume
+            EvalException { resultVal } -> do
+              displayWarnings [evalFailedMsg resultVal]
+              resume
+            EvalAbortedWith e -> do
+              displayWarnings [evalFailedMsg e]
+              resume
+
+        -- Unconditionally 'EvalStopped' in all other cases
+        _ -> return EvalStopped{breakId = Just bid}
 
 -- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
 inspectName :: Name -> Debugger (Maybe VarInfo)
