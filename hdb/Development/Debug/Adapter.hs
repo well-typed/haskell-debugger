@@ -45,6 +45,7 @@ type BreakpointSet = IS.IntSet
 instance MonadFail DebugAdaptor where
   fail a = error a
   -- TODO: PROPER ERROR HANDLING with termination, possibly delete this instance
+  -- use: exitWithMsg.
 
 --------------------------------------------------------------------------------
 -- * Utilities

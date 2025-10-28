@@ -16,13 +16,14 @@ import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
 import GHC.Driver.Ppr as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
-import GHC.Unit.Module.Env as GHC
 import GHC.Utils.Outputable as GHC
+import GHC.Utils.Trace
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Session
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
+import qualified GHC.Debugger.Breakpoint.Map as BM
 
 --------------------------------------------------------------------------------
 -- * Breakpoints
@@ -37,13 +38,12 @@ clearBreakpoints mfile = do
   -- breakpoints for that module rather than keeping track,
   -- but much less efficient at scale.
   hsc_env <- getSession
+  bpsRef <- asks activeBreakpoints
   bids <- getActiveBreakpoints mfile
   forM_ bids $ \bid -> do
     GHC.setupBreakpoint (hscInterp hsc_env) bid (breakpointStatusInt BreakpointDisabled)
-
-  -- Clear out the state
-  bpsRef <- asks activeBreakpoints
-  liftIO $ writeIORef bpsRef emptyModuleEnv
+    -- Clear out from the state
+    liftIO $ modifyIORef bpsRef (BM.delete bid)
 
 -- | Find a 'BreakpointId' and its span from a module + line + column.
 --
@@ -61,6 +61,9 @@ getBreakpointsAt modl lineNum columnNum = do
 
 -- | Set a breakpoint in this session
 setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger BreakFound
+setBreakpoint bp BreakpointAfterCountCond{} = do
+  displayWarnings ["Setting a hit count condition on a conditional breakpoint is not yet supported. Ignoring breakpoint " ++ show bp]
+  return BreakNotFound
 setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
   mmodl <- getModuleByPath path
   case mmodl of
@@ -124,3 +127,17 @@ setBreakpoint exception_bp bp_status = do
     didChange = gopt opt dflags `xor` breakOn
   setInteractiveDebuggerDynFlags $ dflags `ch_opt` opt
   return (BreakFoundNoLoc didChange)
+
+--------------------------------------------------------------------------------
+-- Utils
+--------------------------------------------------------------------------------
+
+-- | Turn a @hitCount :: Maybe Int@ and @condition :: Maybe Text@ into an enabled @BreakpointStatus@.
+condBreakEnableStatus :: Maybe Int {-^ hitCount -} -> Maybe String {-^ condition -} -> BreakpointStatus
+condBreakEnableStatus hitCount condition = do
+  case (hitCount, condition) of
+    (Nothing, Nothing) -> BreakpointEnabled
+    (Just i,  Nothing) -> BreakpointAfterCount i
+    (Nothing, Just c)  -> BreakpointWhenCond c
+    (Just i,  Just c)  -> BreakpointAfterCountCond i c
+

@@ -23,7 +23,8 @@ execute :: Recorder (WithSeverity DebuggerLog) -> Command -> Debugger Response
 execute recorder = \case
   ClearFunctionBreakpoints -> DidClearBreakpoints <$ clearBreakpoints Nothing
   ClearModBreakpoints fp -> DidClearBreakpoints <$ clearBreakpoints (Just fp)
-  SetBreakpoint bp -> DidSetBreakpoint <$> setBreakpoint bp BreakpointEnabled
+  SetBreakpoint{brk, hitCount, condition} ->
+    DidSetBreakpoint <$> setBreakpoint brk (condBreakEnableStatus hitCount condition)
   DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
   GetBreakpointsAt ModuleBreak{path, lineNum, columnNum} -> do
     mmodl <- getModuleByPath path

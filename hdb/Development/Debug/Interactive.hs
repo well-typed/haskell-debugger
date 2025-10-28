@@ -164,6 +164,20 @@ breakpointParser =
   ( flag' OnUncaughtExceptionsBreak ( long "error" )
   )
 
+conditionalBreakParser :: Parser (Maybe String)
+conditionalBreakParser =
+  optional (option str
+    ( long "condition"
+   <> metavar "CONDITION"
+   <> help "Only stop when CONDITION evaluates to True" ))
+
+hitCountBreakParser :: Parser (Maybe Int)
+hitCountBreakParser =
+  optional (option auto
+    ( long "hit"
+   <> metavar "N:INT"
+   <> help "Ignore first N:INT times this breakpoint is hit" ))
+
 runParser :: FilePath -> String -> [String] -> Parser Command
 runParser entryFile entryPoint entryArgs =
   -- --entry <name> with some args
@@ -194,7 +208,7 @@ runParser entryFile entryPoint entryArgs =
 cmdParser :: FilePath -> String -> [String] -> Parser Command
 cmdParser entryFile entryPoint entryArgs = hsubparser
   ( Options.Applicative.command "break"
-    ( info (SetBreakpoint <$> breakpointParser)
+    ( info (SetBreakpoint <$> breakpointParser <*> hitCountBreakParser <*> conditionalBreakParser)
       ( progDesc "Set a breakpoint" ) )
   <>
     Options.Applicative.command "delete"

@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -22,16 +23,17 @@ import Control.Exception (assert)
 import Control.Monad.Catch
 
 import GHC
+import GHC.Data.Maybe (expectJust)
 import qualified GHCi.BreakArray as BA
 import GHC.Driver.DynFlags as GHC
 import GHC.Unit.Module.ModSummary as GHC
 import GHC.Utils.Outputable as GHC
+import GHC.Utils.Trace as GHC
 import GHC.Utils.Logger as GHC
 import GHC.Types.Unique.Supply as GHC
 import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Heap.Inspect
-import GHC.Unit.Module.Env as GHC
 import GHC.Runtime.Debugger.Breakpoints
 import GHC.Driver.Env
 
@@ -41,12 +43,14 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.IntMap as IM
 
 import Control.Monad.Reader
+import System.Posix.Signals
 
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Session
-import System.Posix.Signals
+import GHC.ByteCode.Breakpoints
+import qualified GHC.Debugger.Breakpoint.Map as BM
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -58,8 +62,8 @@ newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
 --
 -- - Keep track of active breakpoints to easily unset them all.
 data DebuggerState = DebuggerState
-      { activeBreakpoints :: IORef (ModuleEnv (IM.IntMap (BreakpointStatus, BreakpointKind)))
-        -- ^ Maps a 'BreakpointId' in Trie representation to the
+      { activeBreakpoints :: IORef (BM.BreakpointMap (BreakpointStatus, BreakpointKind))
+        -- ^ Maps a 'InternalBreakpointId' in Trie representation (map of Module to map of Int) to the
         -- 'BreakpointStatus' it was activated with.
 
       , varReferences     :: IORef (IM.IntMap TermKey, TermKeyMap Int)
@@ -91,7 +95,14 @@ data BreakpointStatus
       | BreakpointEnabled
       -- | Breakpoint is disabled the first N times and enabled afterwards
       | BreakpointAfterCount Int
-      deriving (Eq, Ord)
+      -- | Breakpoint is enabled when condition evaluates to true
+      | BreakpointWhenCond String
+      -- | Breakpoint is disabled the first N times the condition evaluates to
+      -- true and enabled in the next time it is true
+      | BreakpointAfterCountCond Int String
+      deriving (Eq, Ord, Show)
+
+instance Outputable BreakpointStatus where ppr = text . show
 
 --------------------------------------------------------------------------------
 -- Operations
@@ -183,56 +194,33 @@ debuggerLoggerAction h a b c d = do
 --
 -- Returns @True@ when the breakpoint status is changed.
 registerBreakpoint :: GHC.BreakpointId -> BreakpointStatus -> BreakpointKind -> Debugger (Bool, [GHC.InternalBreakpointId])
-registerBreakpoint bp@GHC.BreakpointId
-                    { GHC.bi_tick_mod = mod
-                    , GHC.bi_tick_index = bid } status kind = do
+registerBreakpoint bp status kind = do
 
   -- Set breakpoint in GHC session
   let breakpoint_count = breakpointStatusInt status
   hsc_env <- GHC.getSession
   internal_break_ids <- getInternalBreaksOf bp
-  forM_ internal_break_ids $ \ibi -> do
+  changed <- forM internal_break_ids $ \ibi -> do
     GHC.setupBreakpoint (hscInterp hsc_env) ibi breakpoint_count
 
-  -- Register breakpoint in Debugger state
-  brksRef <- asks activeBreakpoints
-  oldBrks <- liftIO $ readIORef brksRef
-  let
-    (newBrks, changed) = case status of
-      -- Disabling the breakpoint; using the `Maybe` monad:
-      -- * If we reach the return stmt then the breakpoint is active and we delete it.
-      -- * Any other case, return False and change Nothing
-      BreakpointDisabled -> fromMaybe (oldBrks, False) $ do
-        im <- lookupModuleEnv oldBrks mod
-        _status <- IM.lookup bid im
-        let im'  = IM.delete bid im
-            brks = extendModuleEnv oldBrks mod im'
-        return (brks, True)
+    -- Register breakpoint in Debugger state for every internal breakpoint
+    brksMapRef <- asks activeBreakpoints
+    liftIO $ atomicModifyIORef' brksMapRef $ \brksMap ->
+      case status of
+        -- Disabling the breakpoint:
+        BreakpointDisabled ->
+          (BM.delete ibi brksMap, True{-assume map always contains BP, thus changes on deletion-})
 
-      -- We're enabling the breakpoint:
-      _ -> case lookupModuleEnv oldBrks mod of
-        Nothing ->
-          let im   = IM.singleton bid (status, kind)
-              brks = extendModuleEnv oldBrks mod im
-           in (brks, True)
-        Just im -> case IM.lookup bid im of
-          Nothing ->
-            -- Not yet in IntMap, extend with new Breakpoint
-            let im' = IM.insert bid (status, kind) im
-                brks = extendModuleEnv oldBrks mod im'
-             in (brks, True)
-          Just (status', _kind) ->
-            -- Found in IntMap
-            if status' == status then
-              (oldBrks, False)
-            else
-              let im'  = IM.insert bid (status, kind) im
-                  brks = extendModuleEnv oldBrks mod im'
-               in (brks, True)
+        -- Enabling the breakpoint:
+        _ -> case BM.lookup ibi brksMap of
+          Just (status', _kind)
+            | status' == status
+            -> -- Nothing changed, OK
+               (brksMap, False)
+          _ -> -- Else, insert
+            (BM.insert ibi (status, kind) brksMap, True)
 
-  -- no races since the debugger execution is run in a single thread
-  liftIO $ writeIORef brksRef newBrks
-  return (changed, internal_break_ids)
+  return (any id changed, internal_break_ids)
 
 
 -- | Get a list with all currently active breakpoints on the given module (by path)
@@ -240,31 +228,29 @@ registerBreakpoint bp@GHC.BreakpointId
 -- If the path argument is @Nothing@, get all active function breakpoints instead
 getActiveBreakpoints :: Maybe FilePath -> Debugger [GHC.InternalBreakpointId]
 getActiveBreakpoints mfile = do
-  m <- asks activeBreakpoints >>= liftIO . readIORef
+  bm <- asks activeBreakpoints >>= liftIO . readIORef
   case mfile of
     Just file -> do
       mms <- getModuleByPath file
       case mms of
-        Right ms ->
-          concat <$> mapM getInternalBreaksOf
-            [ GHC.BreakpointId mod bix
-            | (mod, im) <- moduleEnvToList m
-            , mod == ms_mod ms
-            , bix <- IM.keys im
+        Right ms -> do
+          hsc_env    <- getSession
+          imodBreaks <- liftIO $ expectJust <$> readIModBreaksMaybe (hsc_HUG hsc_env) (ms_mod ms)
+          return
+            [ ibi
+            | ibi <- BM.keys bm
+            , getBreakSourceMod ibi imodBreaks == ms_mod ms
             -- assert: status is always > disabled
             ]
         Left e -> do
           displayWarnings [e]
           return []
     Nothing -> do
-      concat <$> mapM getInternalBreaksOf
-        [ GHC.BreakpointId mod bix
-        | (mod, im) <- moduleEnvToList m
-        , (bix, (status, kind)) <- IM.assocs im
-
+      return
+        [ ibi
+        | (ibi, (status, kind)) <- BM.toList bm
         -- Keep only function breakpoints in this case
         , FunctionBreakpointKind == kind
-
         , assert (status > BreakpointDisabled) True
         ]
 
@@ -370,7 +356,6 @@ deepseqTerm t = case t of
                        return t{wrapped_term = wrapped_term'}
   _              -> do seqTerm t
 
-
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
 --
 -- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
@@ -384,9 +369,11 @@ continueToCompletion = do
 -- | Turn a 'BreakpointStatus' into its 'Int' representation for 'BreakArray'
 breakpointStatusInt :: BreakpointStatus -> Int
 breakpointStatusInt = \case
-  BreakpointEnabled      -> BA.breakOn  -- 0
-  BreakpointDisabled     -> BA.breakOff -- -1
-  BreakpointAfterCount n -> n           -- n
+  BreakpointEnabled          -> BA.breakOn  -- 0
+  BreakpointDisabled         -> BA.breakOff -- -1
+  BreakpointAfterCount n     -> n           -- n
+  BreakpointWhenCond{}       -> BA.breakOn  -- always stop, cond evaluated after
+  BreakpointAfterCountCond{} -> BA.breakOn  -- ditto, decrease only when cond is true
 
 -- | Generate a new unique 'Int'
 freshInt :: Debugger Int
@@ -399,7 +386,7 @@ freshInt = do
 
 -- | Initialize a 'DebuggerState'
 initialDebuggerState :: GHC.Ghc DebuggerState
-initialDebuggerState = DebuggerState <$> liftIO (newIORef emptyModuleEnv)
+initialDebuggerState = DebuggerState <$> liftIO (newIORef BM.empty)
                                      <*> liftIO (newIORef mempty)
                                      <*> liftIO (newIORef mempty)
                                      <*> liftIO (newIORef 0)

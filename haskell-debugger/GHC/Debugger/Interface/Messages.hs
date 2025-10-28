@@ -24,7 +24,12 @@ import Language.Haskell.Syntax.Module.Name
 data Command
 
   -- | Set a breakpoint on a given function, or module by line number
-  = SetBreakpoint Breakpoint
+  = SetBreakpoint { brk       :: Breakpoint 
+                  , hitCount  :: Maybe Int
+                  -- ^ Stop after N hits (if @isJust condition@, count down only when @eval condition == True@)
+                  , condition :: Maybe String
+                  -- ^ Stop if condition evalutes to True
+                  }
 
   -- | Delete a breakpoint on a given function, or module by line number
   | DelBreakpoint Breakpoint
@@ -86,7 +91,7 @@ data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnNam
 -- line number. And, globally, for all exceptions, or just uncaught exceptions.
 data Breakpoint
   = ModuleBreak { path :: FilePath, lineNum :: Int, columnNum :: Maybe Int }
-  | FunctionBreak { function :: String }
+  | FunctionBreak { function  :: String }
   | OnExceptionsBreak
   | OnUncaughtExceptionsBreak
   deriving (Show, Generic)
@@ -126,6 +131,8 @@ data BreakpointKind
   -- | Function breakpoints
   | FunctionBreakpointKind
   deriving (Show, Generic, Eq)
+
+instance GHC.Outputable BreakpointKind where ppr = GHC.text . show
 
 -- | Referring to existing scopes
 data ScopeVariablesReference
