@@ -135,7 +135,7 @@ describe("Debug Adapter Tests", function () {
                         if (e.body.exitCode == 0)
                             resolve(e)
                         else
-                            reject(new Error("Expecting ExitCode 1"))
+                            reject(new Error("Expecting ExitCode 0"))
                     }))
                 ]);
             });
@@ -744,6 +744,117 @@ describe("Debug Adapter Tests", function () {
           "Expected stderr output from getArgs failure"
         );
 
+      })
+    })
+
+    describe("Conditional breakpoints (issue #111)", function () {
+      it("Conditional expression breakpoints", async () => {
+        let config = mkConfig({
+              projectRoot: "/data/T111",
+              entryFile: "T111.hs",
+              entryPoint: "main",
+              entryArgs: [],
+              extraGhcArgs: []
+            })
+
+        const expected = { path: config.projectRoot + "/" + config.entryFile, line: 13 }
+
+        await Promise.all([
+            dc.waitForEvent('initialized').then(event => {
+                return dc.setBreakpointsRequest({
+                  lines: [ 13 ],
+                  breakpoints: [ { line: 13, condition: "im IM.! 0 == 2" } ],
+                  source: { path: config.entryFile }
+                });
+            }).then(response => {
+                return dc.configurationDoneRequest();
+            }),
+
+            dc.launch(config),
+
+            dc.assertStoppedLocation('breakpoint', expected)
+        ]);
+
+        // Assert we only stopped when im IM.! 0 == 2 (and not earlier)
+        const variables = await fetchLocalVars()
+        const imVar = variables.get('im');
+
+        assert.strictEqual(imVar.value, 'Bin');
+        const imChild = await expandVar(imVar);
+        const _2Var = await imChild.get("_2");
+        const _3Var = await imChild.get("_3");
+        const _2Child = await expandVar(_2Var)
+        const _3Child = await expandVar(_3Var)
+        const _2_2Var = await _2Child.get("_2")
+        const _3_2Var = await _3Child.get("_2")
+        assert.strictEqual(_2_2Var.value, '2');
+        assert.strictEqual(_3_2Var.value, '4');
+
+        // And doesn't stop again
+        await dc.continueRequest({threadId: 0, singleThread: false});
+
+        await dc.waitForEvent('exited').then(e => new Promise((resolve, reject) => {
+            if (e.body.exitCode == 0)
+                resolve(e)
+            else
+                reject(new Error("Expecting ExitCode 0"))
+        }))
+      })
+
+      it("Hit count breakpoints", async () => {
+        let config = mkConfig({
+              projectRoot: "/data/T111",
+              entryFile: "T111.hs",
+              entryPoint: "main",
+              entryArgs: [],
+              extraGhcArgs: []
+            })
+
+        const expected = { path: config.projectRoot + "/" + config.entryFile, line: 13 }
+        const ignoreCount = 2 // ignore 2 hits and stop at third
+
+        await Promise.all([
+            dc.waitForEvent('initialized').then(event => {
+                return dc.setBreakpointsRequest({
+                  lines: [ 13 ],
+                  breakpoints: [ { line: 13, hitCondition: `${ignoreCount}` } ],
+                  source: { path: config.entryFile }
+                });
+            }).then(response => {
+                return dc.configurationDoneRequest();
+            }),
+
+            dc.launch(config),
+
+            dc.assertStoppedLocation('breakpoint', expected)
+        ]);
+
+        // Assert we only stopped at the 3rd hit
+        const variables = await fetchLocalVars()
+        const imVar = await forceLazy(variables.get('im'));
+
+        assert.strictEqual(imVar.value, 'Bin');
+        const imChild = await expandVar(imVar);
+        const _2Var = await imChild.get("_2");
+        const _3Var = await imChild.get("_3");
+        const _2Child = await expandVar(_2Var)
+        const _3Child = await expandVar(_3Var)
+        const _2_2Var = await _2Child.get("_2")
+        const _3_2Var = await _3Child.get("_2")
+        assert.strictEqual(_2_2Var.value, '2');
+        assert.strictEqual(_3_2Var.value, '4');
+
+        // Unlike conditional expression, we hit the breakpoint every time
+        // after the ignore count, so run this twice
+        await dc.continueRequest({threadId: 0, singleThread: false});
+        await dc.continueRequest({threadId: 0, singleThread: false});
+
+        await dc.waitForEvent('exited').then(e => new Promise((resolve, reject) => {
+            if (e.body.exitCode == 0)
+                resolve(e)
+            else
+                reject(new Error("Expecting ExitCode 0"))
+        }))
       })
     })
 })
