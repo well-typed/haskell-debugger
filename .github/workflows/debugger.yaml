@@ -72,9 +72,9 @@ jobs:
         with:
           path: |
             ~/.cabal/store
-          key: ${{ runner.os }}-ghc-${{ matrix.version }}-cabal-${{ hashFiles('**/*.cabal', 'cabal.project*') }}
+          key: ${{ runner.os }}-integration-ghc-${{ matrix.version }}-cabal-${{ hashFiles('**/*.cabal', 'cabal.project*') }}
           restore-keys: |
-            ${{ runner.os }}-ghc-${{ matrix.version }}-cabal-
+            ${{ runner.os }}-integration-ghc-${{ matrix.version }}-cabal-
 
       - uses: haskell-actions/setup@v2
         with:
