@@ -1,4 +1,5 @@
-{-# LANGUAGE DeriveGeneric,
+{-# LANGUAGE LambdaCase,
+             DeriveGeneric,
              StandaloneDeriving,
              OverloadedStrings,
              DuplicateRecordFields,
@@ -160,6 +161,14 @@ data VariableReference
   | SpecificVariable Int
 
   deriving (Show, Generic, Eq, Ord)
+
+-- | From 'ScopeVariablesReference' to a 'VariableReference' that can be used in @"variable"@ requests
+scopeToVarRef :: ScopeVariablesReference -> VariableReference
+scopeToVarRef = \case
+  LocalVariablesScope -> LocalVariables
+  ModuleVariablesScope -> ModuleVariables
+  GlobalVariablesScope -> GlobalVariables
+
 
 instance Bounded VariableReference where
   minBound = NoVariables

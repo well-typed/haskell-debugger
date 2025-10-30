@@ -66,14 +66,14 @@ lookupModuleIBIs m (BreakpointMap bm) =
 
 keys :: BreakpointMap a -> [InternalBreakpointId]
 keys (BreakpointMap bm) =
-  [ InternalBreakpointId mod bix
-  | (mod, im) <- moduleEnvToList bm
+  [ InternalBreakpointId m bix
+  | (m, im) <- moduleEnvToList bm
   , bix <- IM.keys im
   ]
 
 toList :: BreakpointMap a -> [(InternalBreakpointId, a)]
 toList (BreakpointMap bm) =
-  [ (InternalBreakpointId mod bix, a)
-  | (mod, im) <- moduleEnvToList bm
+  [ (InternalBreakpointId m bix, a)
+  | (m, im)  <- moduleEnvToList bm
   , (bix, a) <- IM.toList im
   ]

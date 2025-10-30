@@ -28,7 +28,6 @@ import qualified GHCi.BreakArray as BA
 import GHC.Driver.DynFlags as GHC
 import GHC.Unit.Module.ModSummary as GHC
 import GHC.Utils.Outputable as GHC
-import GHC.Utils.Trace as GHC
 import GHC.Utils.Logger as GHC
 import GHC.Types.Unique.Supply as GHC
 import GHC.Runtime.Loader as GHC

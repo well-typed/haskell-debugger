@@ -23,7 +23,6 @@ import System.Directory
 import qualified Prettyprinter as Pretty
 
 import GHC
-import GHC.Utils.Trace
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Unit.Types
 import GHC.Data.FastString
