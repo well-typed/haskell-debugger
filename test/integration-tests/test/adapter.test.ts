@@ -204,7 +204,7 @@ describe("Debug Adapter Tests", function () {
         return forcedVar
     }
 
-    const expandVar = async (v) => {
+    const expandVar = async (v : {variablesReference: number, name: string}) => {
         assert.notStrictEqual(v.variablesReference, 0, `Variable ${v.name} should be expandable (because it is a structure)`);
 
         // Expand a structure (similarly to forcing a lazy variable, but because it is not lazy it will fetch the fields)
@@ -855,6 +855,30 @@ describe("Debug Adapter Tests", function () {
             else
                 reject(new Error("Expecting ExitCode 0"))
         }))
+      })
+    })
+    describe("Evaluate", function () {
+      it("Return structured representation for evaluated expressions (issue #116)", async () => {
+        let config = mkConfig({
+              projectRoot: "/data/T116",
+              entryFile: "T116.hs",
+              entryPoint: "main",
+              entryArgs: [],
+              extraGhcArgs: []
+            })
+
+        const expected = { path: config.projectRoot + "/" + config.entryFile, line: 13 }
+
+        await dc.hitBreakpoint(config, { path: config.entryFile, line: 13 }, expected, expected);
+
+        let resp = await dc.evaluateRequest({expression: "IM.delete 0 (IM.insert 0 'a' (IM.insert 1 'b' IM.empty))"} )
+
+        assert.strictEqual(resp.body.result, 'Tip');
+        const respChild = await expandVar({...resp.body, name: resp.body.result})
+        const _1Var = await respChild.get("_1")
+        const _2Var = await respChild.get("_2")
+        assert.strictEqual(_1Var.value, '1');
+        assert.strictEqual(_2Var.value, '\'b\'');
       })
     })
 })
