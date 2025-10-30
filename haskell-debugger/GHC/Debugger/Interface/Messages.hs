@@ -243,7 +243,13 @@ data BreakFound
   deriving (Show, Generic)
 
 data EvalResult
-  = EvalCompleted { resultVal :: String, resultType :: String }
+  = EvalCompleted { resultVal :: String
+                  , resultType :: String
+                  , resultStructureRef :: VariableReference
+                  -- ^ A structured representation of the result of evaluating
+                  -- the expression given as a "virtual" 'VariableReference'
+                  -- that the user can expand as a normal variable.
+                  }
   | EvalException { resultVal :: String, resultType :: String }
   | EvalStopped   { breakId :: Maybe GHC.InternalBreakpointId {-^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)? -} }
   -- | Evaluation failed for some reason other than completed/completed-with-exception/stopped.

@@ -9,5 +9,5 @@
 
 [1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>-tmp]
 (hdb) Hello, Haskell!
-EvalCompleted {resultVal = "()", resultType = "()"}
+EvalCompleted {resultVal = "()", resultType = "()", resultStructureRef = NoVariables}
 (hdb) 

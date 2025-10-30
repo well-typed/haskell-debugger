@@ -1,4 +1,4 @@
 [1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, interpreted )[main]
 (hdb) Heli
-EvalCompleted {resultVal = "()", resultType = "()"}
+EvalCompleted {resultVal = "()", resultType = "()", resultStructureRef = NoVariables}
 (hdb) Exiting...
