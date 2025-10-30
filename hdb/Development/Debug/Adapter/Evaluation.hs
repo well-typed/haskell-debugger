@@ -1,6 +1,7 @@
 {-# LANGUAGE RecordWildCards, OverloadedRecordDot, DuplicateRecordFields #-}
 module Development.Debug.Adapter.Evaluation where
 
+import Control.Monad
 import qualified Data.Text as T
 import qualified Data.Map as M
 import qualified Data.IntSet as IS
@@ -36,31 +37,52 @@ startExecution = do
 -- | Command for evaluation (includes evaluation-on-hover)
 commandEvaluate :: DebugAdaptor ()
 commandEvaluate = do
-  EvaluateArguments {..} <- getArguments
-  DidEval er <- sendSync (DoEval (T.unpack evaluateArgumentsExpression))
-  case er of
-    EvalStopped{} -> error "impossible, execution is resumed automatically for 'DoEval'"
-    EvalAbortedWith e -> do
-      -- Evaluation failed, we report it but don't terminate.
-      sendEvaluateResponse EvaluateResponse
-        { evaluateResponseResult  = T.pack e
-        , evaluateResponseType    = T.pack ""
-        , evaluateResponsePresentationHint    = Nothing
-        , evaluateResponseVariablesReference  = 0
-        , evaluateResponseNamedVariables      = Nothing
-        , evaluateResponseIndexedVariables    = Nothing
-        , evaluateResponseMemoryReference     = Nothing
+  EvaluateArguments {evaluateArgumentsFrameId=_todo, ..} <- getArguments
+  -- TODO: Proper support for threads/stack frames/scopes id.
+  -- Currently: ignore `evaluateArgumentsFrameId` and always use instead:
+
+  let notAVarResp res ty = EvaluateResponse
+        { evaluateResponseResult             = res
+        , evaluateResponseType               = ty
+        , evaluateResponsePresentationHint   = Nothing
+        , evaluateResponseVariablesReference = 0
+        , evaluateResponseNamedVariables     = Nothing
+        , evaluateResponseIndexedVariables   = Nothing
+        , evaluateResponseMemoryReference    = Nothing
         }
-    _ -> do
-      sendEvaluateResponse EvaluateResponse
-        { evaluateResponseResult  = T.pack $ resultVal er
-        , evaluateResponseType    = T.pack $ resultType er
-        , evaluateResponsePresentationHint    = Nothing
-        , evaluateResponseVariablesReference  = 0
-        , evaluateResponseNamedVariables      = Nothing
-        , evaluateResponseIndexedVariables    = Nothing
-        , evaluateResponseMemoryReference     = Nothing
-        }
+
+  -- Only evaluate expression if it is not a variable found in the given `evaluateArgumentsFrameId`
+  let doEvaluate = do
+        DidEval er <- sendSync (DoEval (T.unpack evaluateArgumentsExpression))
+        case er of
+          EvalStopped{} -> error "impossible, execution is resumed automatically for 'DoEval'"
+          EvalAbortedWith e -> do
+            -- Evaluation failed, we report it but don't terminate.
+            sendEvaluateResponse (notAVarResp (T.pack e) (T.pack ""))
+          _ -> do
+            sendEvaluateResponse (notAVarResp (T.pack $ resultVal er) (T.pack $ resultType er))
+
+  -- Shortcut. Single word expression may be variable in scope (#116)
+  case T.words evaluateArgumentsExpression of
+    [possiblyVar] -> do
+      GotScopes scopes <- sendSync (GetScopes {-todo: use evaluateArgumentsFrameId-})
+      foundVars <- forM (filter (not . expensive) scopes) $ \scope -> do
+        GotVariables vars <- sendSync (GetVariables (scopeToVarRef scope.kind))
+        return (either (:[]) id vars)
+      case filter ((==possiblyVar) . T.pack . (.varName)) (concat foundVars) of
+        foundOne:_ -> -- found it!
+          sendEvaluateResponse EvaluateResponse
+            { evaluateResponseResult             = T.pack foundOne.varValue
+            , evaluateResponseType               = T.pack foundOne.varType
+            , evaluateResponsePresentationHint   = Nothing
+            , evaluateResponseVariablesReference = fromEnum foundOne.varRef
+            , evaluateResponseNamedVariables     = Nothing
+            , evaluateResponseIndexedVariables   = Nothing
+            , evaluateResponseMemoryReference    = Nothing
+            }
+        [] -> doEvaluate
+    _ -> doEvaluate
+
 
 --------------------------------------------------------------------------------
 -- * Utils

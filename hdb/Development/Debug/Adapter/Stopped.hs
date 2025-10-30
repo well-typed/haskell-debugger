@@ -153,14 +153,3 @@ varInfoToVariables VarInfo{..} =
         }
     }
 
---------------------------------------------------------------------------------
--- * Utilities
---------------------------------------------------------------------------------
-
--- | From 'ScopeVariablesReference' to a 'VariableReference' that can be used in @"variable"@ requests
-scopeToVarRef :: ScopeVariablesReference -> VariableReference
-scopeToVarRef = \case
-  LocalVariablesScope -> LocalVariables
-  ModuleVariablesScope -> ModuleVariables
-  GlobalVariablesScope -> GlobalVariables
-

@@ -17,7 +17,6 @@ import GHC.Driver.Env
 import GHC.Driver.Ppr as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Utils.Outputable as GHC
-import GHC.Utils.Trace
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Session
