@@ -192,9 +192,10 @@ handleExecResult = \case
     ExecComplete {execResult} -> do
       case execResult of
         Left e -> return (EvalException (show e) "SomeException")
-        Right [] -> return (EvalCompleted "" "") -- Evaluation completed without binding any result.
+        Right [] -> return (EvalCompleted "" "" NoVariables) -- Evaluation completed without binding any result.
         Right (n:_ns) -> inspectName n >>= \case
-          Just VarInfo{varValue, varType} -> return (EvalCompleted varValue varType)
+          Just VarInfo{varValue, varType, varRef} -> do
+            return (EvalCompleted varValue varType varRef)
           Nothing     -> liftIO $ fail "doEval failed"
     ExecBreak {breakNames = _, breakPointId = Nothing} ->
       -- Stopped at an exception

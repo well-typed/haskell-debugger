@@ -1,4 +1,4 @@
 [1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>/x/Main.hs, interpreted )[main]
 (hdb) wrks
-EvalCompleted {resultVal = "()", resultType = "()"}
+EvalCompleted {resultVal = "()", resultType = "()", resultStructureRef = NoVariables}
 (hdb) Exiting...
