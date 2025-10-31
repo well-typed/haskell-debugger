@@ -81,9 +81,12 @@ obtainTerm key = do
 expandTerm :: HscEnv -> Term -> IO Term
 expandTerm hsc_env term = case term of
   Term{val, ty} -> cvObtainTerm hsc_env defaultDepth False ty val
-  (NewtypeWrap{}; RefWrap{}) -> do
-    -- TODO: we don't do anything clever here yet
-    return term
+  RefWrap{wrapped_term} -> do
+    wt' <- expandTerm hsc_env wrapped_term
+    return term{wrapped_term=wt'}
+  NewtypeWrap{wrapped_term} -> do
+    wt' <- expandTerm hsc_env wrapped_term
+    return term{wrapped_term=wt'}
   -- For other terms there's no point in trying to expand
   (Suspension{}; Prim{}) -> return term
 
