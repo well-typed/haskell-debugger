@@ -84,14 +84,6 @@ expandTerm hsc_env term = case term of
   -- For other terms there's no point in trying to expand
   (Suspension{}; Prim{}) -> return term
 
--- | A boring type is one for which we don't care about the structure and would
--- rather see "whole" when being inspected. Strings and literals are a good
--- example, because it's more useful to see the string value than it is to see
--- a linked list of characters where each has to be forced individually.
-isBoringTy :: Type -> Bool
-isBoringTy t = isDoubleTy t || isFloatTy t || isIntTy t || isWordTy t || isStringTy t
-                || isIntegerTy t || isNaturalTy t || isCharTy t
-
 onDebugInstance :: Term -> Type -> Debugger Bool
 onDebugInstance term t = do
   hsc_env <- getSession
