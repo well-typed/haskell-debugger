@@ -43,15 +43,9 @@ obtainTerm key = do
     -- cache miss: reconstruct, then store.
     Nothing ->
       let
-        -- For boring types we want to get the value as it is (by traversing it to
-        -- the end), rather than stopping short and returning a suspension (e.g.
-        -- for the string tail), because boring types are printed whole rather than
-        -- being represented by an expandable structure.
-        depth i = if isBoringTy (GHC.idType i) then maxBound else defaultDepth
-
         -- Recursively get terms until we hit the desired key.
         getTerm = \case
-          FromId i -> GHC.obtainTermFromId (depth i) False{-don't force-} i
+          FromId i -> GHC.obtainTermFromId defaultDepth False{-don't force-} i
           FromPath k pf -> do
             term <- getTerm k
             liftIO $ expandTerm hsc_env $ case term of
