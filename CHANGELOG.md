@@ -1,5 +1,7 @@
 # Revision history for haskell-debugger
 
+## 0.10.0.0 -- Unreleased
+
 ## 0.9.0.0 -- 2025-10-13
 
 ### Main changes
