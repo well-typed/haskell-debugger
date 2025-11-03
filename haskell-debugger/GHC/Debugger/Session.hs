@@ -52,6 +52,12 @@ import qualified GHC.Unit.State                        as State
 import GHC.Driver.Env
 import GHC.Types.SrcLoc
 import Language.Haskell.Syntax.Module.Name
+import GHC.Utils.Trace
+import GHC.Utils.Outputable (ppr, ($$))
+import GHC.Data.FastString
+import qualified Data.Foldable as Foldable
+import qualified GHC.Unit.Home.Graph as HUG
+import Data.Maybe
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -157,13 +163,11 @@ initHomeUnitEnv unitDflags env = do
   -- additionally, set checked dflags so we don't lose fixes
   initial_home_graph <- createUnitEnvFromFlags dflags0 unitDflags
   let home_units = unitEnv_keys initial_home_graph
-  home_unit_graph <- forM initial_home_graph $ \homeUnitEnv -> do
+  init_home_unit_graph <- forM initial_home_graph $ \homeUnitEnv -> do
     let cached_unit_dbs = homeUnitEnv_unit_dbs homeUnitEnv
         dflags = homeUnitEnv_dflags homeUnitEnv
         old_hpt = homeUnitEnv_hpt homeUnitEnv
-
-    (dbs,unit_state,home_unit,mconstants) <- State.initUnits (hsc_logger env) dflags cached_unit_dbs home_units
-
+    (dbs,unit_state,home_unit,mconstants) <- State.initUnits (hsc_logger env) dflags Nothing home_units
     updated_dflags <- GHC.updatePlatformConstants dflags mconstants
     pure HomeUnitEnv
       { homeUnitEnv_units = unit_state
@@ -172,6 +176,24 @@ initHomeUnitEnv unitDflags env = do
       , homeUnitEnv_hpt = old_hpt
       , homeUnitEnv_home_unit = Just home_unit
       }
+
+  let cached_unit_dbs = concat . catMaybes . fmap homeUnitEnv_unit_dbs $ Foldable.toList init_home_unit_graph
+
+  let homeUnitEnv = fromJust $ HUG.unitEnv_lookup_maybe interactiveGhcDebuggerUnitId init_home_unit_graph
+      dflags = homeUnitEnv_dflags homeUnitEnv
+      old_hpt = homeUnitEnv_hpt homeUnitEnv
+  (dbs,unit_state,home_unit,mconstants) <- State.initUnits (hsc_logger env) dflags (Just cached_unit_dbs) home_units
+
+  updated_dflags <- GHC.updatePlatformConstants dflags mconstants
+  let ie = HomeUnitEnv
+       { homeUnitEnv_units = unit_state
+       , homeUnitEnv_unit_dbs = Just dbs
+       , homeUnitEnv_dflags = updated_dflags
+       , homeUnitEnv_hpt = old_hpt
+       , homeUnitEnv_home_unit = Just home_unit
+       }
+
+  let home_unit_graph = HUG.unitEnv_insert interactiveGhcDebuggerUnitId ie init_home_unit_graph
 
   let dflags1 = homeUnitEnv_dflags $ unitEnv_lookup interactiveGhcDebuggerUnitId home_unit_graph
   let unit_env = UnitEnv

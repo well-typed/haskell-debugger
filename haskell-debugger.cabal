@@ -57,6 +57,7 @@ library
                       GHC.Debugger.Stopped.Variables,
                       GHC.Debugger.Utils,
                       GHC.Debugger.Runtime,
+                      GHC.Debugger.Runtime.Instances,
 
                       GHC.Debugger.Runtime.Term.Key,
                       GHC.Debugger.Runtime.Term.Cache,
@@ -68,6 +69,7 @@ library
     default-extensions: CPP
     build-depends:    base > 4.21 && < 5,
                       ghc >= 9.14 && < 9.16, ghci >= 9.14 && < 9.16,
+                      ghc-boot-th >= 9.14 && < 9.16,
                       array >= 0.5.8 && < 0.6,
                       containers >= 0.7 && < 0.9,
                       mtl >= 2.3 && < 3,
@@ -87,6 +89,7 @@ library
                       prettyprinter >= 1.7.1 && < 2,
                       text >= 2.1 && < 2.3,
                       co-log-core >= 0.3.2.5 && < 0.4,
+                      haskell-debugger-view >= 0.1 && < 1.0
 
     hs-source-dirs:   haskell-debugger
     default-language: GHC2021
