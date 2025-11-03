@@ -324,14 +324,13 @@ defaultDepth =  2 -- the depth determines how much of the runtime structure is t
 -- | Evaluate a suspended Term to WHNF.
 --
 -- Used in @'getVariables'@ to reply to a variable introspection request.
-seqTerm :: Term -> Debugger Term
-seqTerm term = do
-  hsc_env <- GHC.getSession
+seqTerm :: HscEnv -> Term -> IO Term
+seqTerm hsc_env term = do
   let
     interp = hscInterp hsc_env
     unit_env = hsc_unit_env hsc_env
   case term of
-    Suspension{val, ty} -> liftIO $ do
+    Suspension{val, ty} -> do
       r <- GHCi.seqHValue interp unit_env val
       () <- fromEvalResult r
       let
@@ -339,21 +338,21 @@ seqTerm term = do
         forceDepth  = defaultDepth
       cvObtainTerm hsc_env forceDepth forceThunks ty val
     NewtypeWrap{wrapped_term} -> do
-      wrapped_term' <- seqTerm wrapped_term
+      wrapped_term' <- seqTerm hsc_env wrapped_term
       return term{wrapped_term=wrapped_term'}
     _ -> return term
 
 -- | Evaluate a Term to NF
-deepseqTerm :: Term -> Debugger Term
-deepseqTerm t = case t of
-  Suspension{}   -> do t' <- seqTerm t
-                       deepseqTerm t'
-  Term{subTerms} -> do subTerms' <- mapM deepseqTerm subTerms
+deepseqTerm :: HscEnv -> Term -> IO Term
+deepseqTerm hsc_env t = case t of
+  Suspension{}   -> do t' <- seqTerm hsc_env t
+                       deepseqTerm hsc_env t'
+  Term{subTerms} -> do subTerms' <- mapM (deepseqTerm hsc_env) subTerms
                        return t{subTerms = subTerms'}
   NewtypeWrap{wrapped_term}
-                 -> do wrapped_term' <- deepseqTerm wrapped_term
+                 -> do wrapped_term' <- deepseqTerm hsc_env wrapped_term
                        return t{wrapped_term = wrapped_term'}
-  _              -> do seqTerm t
+  _              -> do seqTerm hsc_env t
 
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
 --

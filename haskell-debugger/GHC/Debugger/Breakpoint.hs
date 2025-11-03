@@ -118,7 +118,7 @@ setBreakpoint exception_bp bp_status = do
           = Opt_BreakOnError
           | OnExceptionsBreak <- exception_bp
           = Opt_BreakOnException
-  dflags <- GHC.getInteractiveDynFlags
+  dflags <- getInteractiveDebuggerDynFlags
   let
     -- changed if option is ON and bp is OFF (breakpoint disabled), or if
     -- option is OFF and bp is ON (i.e. XOR)

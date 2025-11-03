@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GADTs, DataKinds #-}
 module GHC.Debugger.Runtime.Term.Cache where
 
 import GHC.Runtime.Eval
@@ -38,7 +38,7 @@ insertTermCache = insertTermKeyMap
 --------------------------------------------------------------------------------
 
 -- | Mapping from 'TermKey' to @a@. Backs 'TermCache', but is more general.
-type TermKeyMap a = IdEnv (Map [PathFragment] a)
+type TermKeyMap a = IdEnv (Map [PathFragment True] a)
 
 -- | Lookup a 'TermKey' in a 'TermKeyMap'.
 lookupTermKeyMap :: TermKey -> TermKeyMap a -> Maybe a

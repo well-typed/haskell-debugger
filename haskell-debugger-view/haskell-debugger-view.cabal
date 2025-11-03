@@ -1,0 +1,21 @@
+cabal-version:   3.12
+name:            haskell-debugger-view
+version:         0.1.0.0
+license:         NONE
+author:          Matthew Pickering
+maintainer:      matthewtpickering@gmail.com
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+common warnings
+    ghc-options: -Wall
+
+library
+    import:           warnings
+    exposed-modules:  GHC.Debugger.View.Class
+    build-depends:    base,
+                      containers >= 0.7 && < 0.9,
+                      text >= 2.1 && < 2.3,
+                      bytestring >= 0.12.1 && < 0.13,
+    hs-source-dirs:   src
+    default-language: GHC2021

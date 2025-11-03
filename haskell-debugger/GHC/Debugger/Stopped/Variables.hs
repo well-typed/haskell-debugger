@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
-   TypeApplications, ScopedTypeVariables, BangPatterns #-}
+   TypeApplications, ScopedTypeVariables, BangPatterns, DerivingVia, TypeAbstractions #-}
 module GHC.Debugger.Stopped.Variables where
 
 import Data.IORef
@@ -13,12 +13,16 @@ import GHC.Types.Var
 import GHC.Runtime.Eval
 import GHC.Core.DataCon
 import GHC.Core.TyCo.Rep
-import qualified GHC.Runtime.Debugger as GHCD
+import qualified GHC.Runtime.Debugger     as GHCD
 import qualified GHC.Runtime.Heap.Inspect as GHCI
+
+import GHC.Debugger.View.Class hiding (VarFields)
+import qualified GHC.Debugger.View.Class as VC
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime
+import GHC.Debugger.Runtime.Instances
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Utils
@@ -47,14 +51,20 @@ tyThingToVarInfo t = case t of
 -- This is used to come up with terms for the fields of an already `seq`ed
 -- variable which was expanded.
 termVarFields :: TermKey -> Term -> Debugger VarFields
-termVarFields top_key top_term =
+termVarFields top_key top_term = do
 
-  -- Make 'VarInfo's for the first layer of subTerms only.
-  case top_term of
-      -- Boring types don't get subfields
-      _ | isBoringTy (GHCI.termType top_term) ->
-        return NoFields
+  vcVarFields <- debugFieldsTerm top_term
 
+  case vcVarFields of
+    -- The custom instance case (top_term should always be a @Term@ if @Just@)
+    Just fls -> do
+
+      let keys = map (\(f_name, f_term) -> FromCustomTerm top_key f_name f_term) fls
+      LabeledFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
+
+    -- The general case
+    _ -> case top_term of
+      -- Make 'VarInfo's for the first layer of subTerms only.
       Term{dc=Right dc, subTerms=_{- don't use directly! go through @obtainTerm@ -}} -> do
         case dataConFieldLabels dc of
           -- Not a record type,
@@ -99,51 +109,78 @@ termToVarInfo key term0 = do
     checkFn _ = False
     isFn = checkFn ty
 
-    isThunk = if not isFn then
-      case term0 of
-        Suspension{} -> True
-        _ -> False
-      else False
-
-  term <- if not isThunk && isBoringTy ty
-            then forceTerm key term0 -- make sure that if it's an evaluated boring term then it is /fully/ evaluated.
-            else pure term0
-
-  let
-    -- We scrape the subterms to display as the var's value. The structure is
-    -- displayed in the editor itself by expanding the variable sub-fields
-    termHead t
-      -- But show strings and lits in full
-      | isBoringTy ty = t
-      | otherwise     = case t of
-         Term{}                    -> t{subTerms = []}
-         _                         -> t
   varName <- display key
   varType <- display ty
-  -- Pass type as value for functions since actual value is useless
-  varValue <- if isFn
-    then pure $ "<fn> :: " ++ varType
-    else do
-      _ <- onDebugInstance term ty
-      display =<< GHCD.showTerm (termHead term)
-  -- liftIO $ print (varName, varType, varValue, GHCI.isFullyEvaluatedTerm term)
+  case term0 of
+    -- The simple case: The term is a a thunk...
+    Suspension{} -> do
+      ir <- getVarReference key
+      return VarInfo
+        { varName
+        , varType
+        , varValue = if isFn
+            then "<fn> :: " ++ varType
+            else "_"
+        , varRef = if isFn
+            then NoVariables
+            else SpecificVariable ir -- allows forcing the thunk
+        , isThunk = not isFn
+        }
 
-  -- The VarReference allows user to expand variable structure and inspect its value.
-  -- Here, we do not want to allow expanding a term that is fully evaluated.
-  -- We only want to return @SpecificVariable@ (which allows expansion) for
-  -- values with sub-fields or thunks.
-  varRef <- do
-    if -- Display a structure as long it is not a "boring type" (one that does not
-       -- provide useful information from being expanded)
-       -- (e.g. consider how awkward it is to expand Char# 10 and I# 20)
-       (not isThunk && (isBoringTy ty || not (hasDirectSubTerms term)))
-     then do
-        return NoVariables
-     else do
-        ir <- getVarReference key
-        return (SpecificVariable ir)
+    -- Otherwise, try to apply and decode a custom 'DebugView', or default to
+    -- the inspecting the original term generically
+    _ -> do
 
-  return VarInfo{..}
+      -- Try to apply `DebugView.debugValue`
+      mterm <- debugValueTerm term0
+
+      case mterm of
+        -- Default to generic representation
+        Nothing -> do
+
+          let
+            -- In the general case, scrape the subterms to display as the var's value.
+            -- The structure is displayed in the editor itself by expanding the
+            -- variable sub-fields
+            termHead t = case t of
+               Term{} -> t{subTerms = []}
+               _      -> t
+
+          varValue <- display =<< GHCD.showTerm (termHead term0)
+
+          -- The VarReference allows user to expand variable structure and inspect its value.
+          -- Here, we do not want to allow expanding a term that is fully evaluated.
+          -- We only want to return @SpecificVariable@ (which allows expansion) for
+          -- values with sub-fields or thunks.
+          varRef <- do
+            if hasDirectSubTerms term0
+             then do
+                ir <- getVarReference key
+                return (SpecificVariable ir)
+             else do
+                return NoVariables
+
+          return VarInfo
+            { varName, varType
+            , isThunk = False
+            , varValue, varRef }
+
+        Just VarValue{varExpandable, varValue=value} -> do
+
+          varRef <-
+            if varExpandable
+            then do
+                ir <- getVarReference key
+                return (SpecificVariable ir)
+             else do
+                return NoVariables
+          return VarInfo
+            { varName, varType
+            , isThunk = False
+            , varValue = value
+            , varRef
+            }
+
   where
     hasDirectSubTerms = \case
       Suspension{}   -> False
@@ -152,24 +189,16 @@ termToVarInfo key term0 = do
       RefWrap{}      -> True
       Term{subTerms} -> not $ null subTerms
 
--- | Forces a term to WHNF in the general case, or to NF in the case of 'isBoringTy'.
--- The term is updated at the given key.
+-- | Forces a term to WHNF
+--
+-- The term is updated in the cache at the given key.
 forceTerm :: TermKey -> Term -> Debugger Term
 forceTerm key term = do
-  let ty = GHCI.termType term
-  term' <- if isBoringTy ty
-              -- deepseq boring types like String, because it is more helpful
-              -- to print them whole than their structure.
-              then deepseqTerm term
-              else seqTerm term
+  hsc_env <- getSession
+
+  term' <- liftIO $ seqTerm hsc_env term
+
   -- update cache with the forced term right away instead of invalidating it.
   asks termCache >>= \r -> liftIO $ modifyIORef' r (insertTermCache key term')
   return term'
 
--- | A boring type is one for which we don't care about the structure and would
--- rather see "whole" when being inspected. Strings and literals are a good
--- example, because it's more useful to see the string value than it is to see
--- a linked list of characters where each has to be forced individually.
-isBoringTy :: Type -> Bool
-isBoringTy t = isDoubleTy t || isFloatTy t || isIntTy t || isWordTy t || isStringTy t
-                || isIntegerTy t || isNaturalTy t || isCharTy t

@@ -45,6 +45,8 @@ import GHC.Debugger.Interface.Messages hiding (Command, Response)
 import DAP
 import Development.Debug.Adapter.Handles
 import Development.Debug.Session.Setup
+import GHC.Debugger.Utils hiding ((<>))
+import GHC.Driver.Session
 
 --------------------------------------------------------------------------------
 -- * Logging
@@ -252,7 +254,6 @@ debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{.
     (do
       Debugger.runDebugger writeDebuggerOutput rootDir componentDir libdir units finalGhcInvocation mainFp runConf $ do
         liftIO $ signalInitialized (Right ())
-
         forever $ do
           req <- takeMVar requests & liftIO
           resp <- (Debugger.execute (cmapWithSev DebuggerLog recorder) req <&> Right)
