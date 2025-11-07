@@ -95,7 +95,7 @@ parseHomeUnitArguments cfp compRoot units theOpts dflags rootDir = do
         -- Canonicalize! Why? Because the targets we get from the cradle are normalised and if we don't normalise the "special target" then they aren't deduplicated properly.
         canon_fp <- liftIO $ Directory.canonicalizePath abs_fp
         let special_target = mkSimpleTarget df canon_fp
-        pure $ (df, special_target : targets) NonEmpty.:| []
+        pure $ (df, if null targets then [special_target] else targets) NonEmpty.:| []
     where
       initMulti unitArgFiles =
         forM unitArgFiles $ \f -> do
