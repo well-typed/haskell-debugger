@@ -105,12 +105,8 @@ data ScopeInfo = ScopeInfo
       , expensive :: Bool }
   deriving (Show, Generic)
 
--- Seems like this could just be a newtype over [VarInfo]
--- -- TODO: MERGE INTO NEWTYPE OVER LIST VARINFO
-data VarFields = LabeledFields [VarInfo]
-               | IndexedFields [VarInfo]
-               | NoFields
-               deriving (Show, Generic, Eq)
+newtype VarFields = VarFields [VarInfo]
+  deriving (Show, Generic, Eq)
 
 -- | Information about a variable
 data VarInfo = VarInfo

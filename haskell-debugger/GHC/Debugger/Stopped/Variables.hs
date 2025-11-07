@@ -60,7 +60,7 @@ termVarFields top_key top_term = do
     Just fls -> do
 
       let keys = map (\(f_name, f_term) -> FromCustomTerm top_key f_name f_term) fls
-      LabeledFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
+      VarFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
 
     -- The general case
     _ -> case top_term of
@@ -71,28 +71,28 @@ termVarFields top_key top_term = do
           -- Use indexed fields
           [] -> do
             let keys = zipWith (\ix _ -> FromPath top_key (PositionalIndex ix)) [1..] (dataConOrigArgTys dc)
-            IndexedFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
+            VarFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
           -- Is a record data con,
           -- Use field labels
           dataConFields -> do
             let keys = map (FromPath top_key . LabeledField . flSelector) dataConFields
-            LabeledFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
+            VarFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
       NewtypeWrap{dc=Right dc, wrapped_term=_{- don't use directly! go through @obtainTerm@ -}} -> do
         case dataConFieldLabels dc of
           [] -> do
             let key = FromPath top_key (PositionalIndex 1)
             wvi <- obtainTerm key >>= termToVarInfo key
-            return (IndexedFields [wvi])
+            return (VarFields [wvi])
           [fld] -> do
             let key = FromPath top_key (LabeledField (flSelector fld))
             wvi <- obtainTerm key >>= termToVarInfo key
-            return (LabeledFields [wvi])
+            return (VarFields [wvi])
           _ -> error "unexpected number of Newtype fields: larger than 1"
       RefWrap{wrapped_term=_{- don't use directly! go through @obtainTerm@ -}} -> do
         let key = FromPath top_key (PositionalIndex 1)
         wvi <- obtainTerm key >>= termToVarInfo key
-        return (IndexedFields [wvi])
-      _ -> return NoFields
+        return (VarFields [wvi])
+      _ -> return (VarFields [])
 
 
 -- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
