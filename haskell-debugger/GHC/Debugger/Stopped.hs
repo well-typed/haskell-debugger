@@ -181,10 +181,7 @@ getVariables vk = do
                 -- Return ONLY the fields
 
                 termVarFields key term >>= \case
-                  NoFields -> return []
-                  LabeledFields xs -> return xs
-                  IndexedFields xs -> return xs
-
+                  VarFields vfs -> return vfs
 
       -- (VARR)(a) from here onwards
 

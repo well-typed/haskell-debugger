@@ -6,6 +6,8 @@ import Control.Monad.Reader
 import qualified Data.List as L
 
 import GHC
+import GHC.Utils.Outputable
+import GHC.Utils.Trace
 import GHC.Types.FieldLabel
 import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
