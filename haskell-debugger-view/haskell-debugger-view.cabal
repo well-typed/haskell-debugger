@@ -12,7 +12,13 @@ common warnings
 
 library
     import:           warnings
+    -- If you add a module here make sure to also add this module to the list
+    -- of modules that we attempt to load when haskell-debug-view is not
+    -- dependend upon transitively, in GHC.Debugger.Runtime....
     exposed-modules:  GHC.Debugger.View.Class
+                      GHC.Debugger.View.Containers
+                      GHC.Debugger.View.Text
+                      GHC.Debugger.View.ByteString
     build-depends:    base,
                       containers >= 0.7 && < 0.9,
                       text >= 2.1 && < 2.3,
