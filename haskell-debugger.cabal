@@ -84,11 +84,13 @@ library
                       base16-bytestring >= 1.0.2.0 && < 1.1,
                       aeson >= 2.2.3 && < 2.3,
                       hie-bios >= 0.15 && < 0.18,
+                      file-embed >= 0.0.16 && < 0.1,
                       -- Logger dependencies
                       time >= 1.14 && < 2,
                       prettyprinter >= 1.7.1 && < 2,
                       text >= 2.1 && < 2.3,
                       co-log-core >= 0.3.2.5 && < 0.4,
+
                       haskell-debugger-view >= 0.1 && < 1.0
 
     hs-source-dirs:   haskell-debugger
