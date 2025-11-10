@@ -35,7 +35,7 @@ obtainTerm key = do
         getTerm = \case
           FromId i -> GHC.obtainTermFromId defaultDepth False{-don't force-} i
           FromPath k pf -> do
-            term <- getTerm k
+            term <- obtainTerm k
             liftIO $ expandTerm hsc_env $ case term of
               Term{dc=Right dc, subTerms} -> case pf of
                 PositionalIndex ix -> subTerms !! (ix-1)
@@ -47,7 +47,7 @@ obtainTerm key = do
                 wrapped_term -- regardless of PathFragment
               RefWrap{wrapped_term} ->
                 wrapped_term -- regardless of PathFragment
-              _ -> error "Unexpected term for the given TermKey"
+              _ -> error ("Unexpected term for the given TermKey because <term> should have been expanded before and we're getting a path fragment!\n" ++ showPprUnsafe (ppr key <+> ppr k <+> ppr pf))
           FromCustomTerm _key _name ctm -> do
             -- For custom terms return them straightaway.
             liftIO $ expandTerm hsc_env ctm
@@ -72,6 +72,6 @@ expandTerm hsc_env term = case term of
   NewtypeWrap{wrapped_term} -> do
     wt' <- expandTerm hsc_env wrapped_term
     return term{wrapped_term=wt'}
-  -- For other terms there's no point in trying to expand
-  (Suspension{}; Prim{}) -> return term
+  Suspension{val, ty} -> cvObtainTerm hsc_env defaultDepth False ty val
+  Prim{} -> return term
 
