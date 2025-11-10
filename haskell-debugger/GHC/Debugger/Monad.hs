@@ -6,6 +6,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
 module GHC.Debugger.Monad where
@@ -20,6 +21,7 @@ import System.Directory (makeAbsolute)
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Exception (assert)
+import Data.FileEmbed
 
 import Control.Monad.Catch
 import GHC.Utils.Trace
@@ -275,14 +277,14 @@ makeInMemoryHDV initialDynFlags = do
               -- ]
           }
     time <- getCurrentTime
-    bufa <- hGetStringBuffer "/Users/romes/Developer/ghc-debugger/haskell-debugger-view/src/GHC/Debugger/View/Class.hs"
+    let buffer = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/Class.hs")
     return
       ( hdvDynFlags
       , [ GHC.Target
-          { targetId = GHC.TargetFile "dummy" Nothing
+          { targetId = GHC.TargetFile "dummy-for-GHC.Debugger.View.Class" Nothing
           , targetAllowObjCode = False
           , GHC.targetUnitId = inMemoryHDVUid
-          , GHC.targetContents = Just (bufa , time)
+          , GHC.targetContents = Just (buffer, time)
           }
         ]
       )
