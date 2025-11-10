@@ -661,6 +661,31 @@ describe("Debug Adapter Tests", function () {
             const _5Var = await tChild.get('field5');
             assert.strictEqual(_5Var.value, '2345.0');
         })
+
+        it('user-defined custom instance without haskell-debugger-view dependency (issue #47)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/T47b",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 11 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 11 }, expected, expected);
+
+            let locals = await fetchLocalVars();
+            const tVar = await forceLazy(locals.get('action'));
+            assert.strictEqual(tVar.value, "X")
+            const tChild = await expandVar(tVar);
+            const _1Var = await tChild.get('_1');
+            assert.strictEqual(_1Var.value, '( , )');
+            const _1Child = await expandVar(_1Var);
+            const _2Var = await forceLazy(_1Child.get('fst'));
+            assert.strictEqual(_2Var.value, '"A33"');
+            const _3Var = await _1Child.get('snd');
+            assert.strictEqual(_3Var.value, '3456.0');
+        })
     })
     describe("Stepping out (step-out)", function () {
 

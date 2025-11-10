@@ -81,7 +81,7 @@ debugValueTerm term = do
             return Nothing
           Right transformed_v -> do
 
-            liftIO (cvObtainTerm hsc_env 2 True varValueIOTy transformed_v) >>= \case
+            liftIO (cvObtainTerm hsc_env maxBound True varValueIOTy transformed_v) >>= \case
 
               -- Get the Term of the VarValue to decode fields
               Term{ ty=_{-assert==VarValueIO-}
@@ -98,7 +98,7 @@ debugValueTerm term = do
                         | falseDataCon == dc -> False
                       Term{dc=Right dc}
                         | trueDataCon == dc -> True
-                      _ -> False
+                      _ -> error "Decoding of VarValue failed"
 
                 return $ Just VarValue
                   { varValue = valStr
@@ -249,27 +249,9 @@ findDebugViewInstance needle_ty = do
   hsc_env <- getSession
   logger  <- getLogger
 
-  -- We want to attempt finding DebugView instances twice.
-  -- Once: using the haskell-debugger-view unit-id found by looking for
-  -- "GHC.Debugger.View.Class" in the module graph.
-  --  - This will be the module depended on by the user or library authors to
-  --  define custom instances for types they use in their program -- which is
-  --  why it's so important to find the right unit-id.
-  -- Second: using a built-in unit-id for a runtime-loaded version of haskell-debugger-view.
-  --  - We look for our own custom defined instances with this unit id if there
-  --  was none found for the former.
-
-  -- TODO: Better lookup of unit-id, and do it on 'runDebugger' and store...
-  mod_graph <- getModuleGraph
-  let hskl_dbgr_vws =
-        [ uid
-        | UnitNode _deps uid <- mg_mss mod_graph
-        , "haskell-debugger-view" `L.isPrefixOf` unitIdString uid
-        ]
-
-  case hskl_dbgr_vws of
-    [hdv_uid] -> liftIO $ do
-
+  mhdv_uid <- getHsDebuggerViewUid
+  case mhdv_uid of
+    Just hdv_uid -> liftIO $ do
       let modl = mkModule (RealUnit (Definite hdv_uid)) (mkModuleName "GHC.Debugger.View.Class")
       let mthdRdrName mthStr = mkOrig modl (mkVarOcc mthStr)
 
@@ -334,13 +316,8 @@ findDebugViewInstance needle_ty = do
           return Nothing
         Just is ->
           return $ Just is
-    ms -> do
-      -- Not imported by any module: no custom views. Therefore, the builtin
-      -- ones haven't been loaded. In this case, we will load the package ourselves.
-      -- TODO!!!
-      --
-      -- ...
-      -- PRINCIPLE: User code should not have to be modified to use the debugger
+    Nothing ->
+      -- Custom view is disabled
       return Nothing
 
 -- | Try to compile and load a class method for the given type.

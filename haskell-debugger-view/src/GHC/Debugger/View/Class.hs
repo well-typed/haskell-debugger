@@ -1,13 +1,13 @@
 {-# LANGUAGE DerivingVia, StandaloneDeriving, ViewPatterns, ImpredicativeTypes #-}
 module GHC.Debugger.View.Class where
 
-import qualified Data.ByteString    as BS
-
-import qualified Data.Text          as T
-import qualified Data.Text.Encoding as T
-
-import qualified Data.IntMap        as IM
-import qualified Data.Map           as M
+-- import qualified Data.ByteString    as BS
+--
+-- import qualified Data.Text          as T
+-- import qualified Data.Text.Encoding as T
+--
+-- import qualified Data.IntMap        as IM
+-- import qualified Data.Map           as M
 
 -- | The representation of the value for some variable on the debugger
 data VarValue = VarValue
@@ -94,27 +94,27 @@ instance DebugView (a, b) where
     [ ("fst", VarFieldValue x)
     , ("snd", VarFieldValue y) ]
 
-instance DebugView T.Text where
-  debugValue  t = VarValue (show (T.unpack t)) False
-  debugFields _ = VarFields []
-
-instance DebugView BS.ByteString where
-  debugValue  t = VarValue (show (T.unpack (T.decodeUtf8 t))) False
-  debugFields _ = VarFields []
-
-instance DebugView (IM.IntMap a) where
-  debugValue _ = VarValue "IntMap" True
-  debugFields im = VarFields
-    [ (show k, VarFieldValue v)
-    | (k, v) <- IM.toList im
-    ]
-
-instance Show k => DebugView (M.Map k a) where
-  debugValue _ = VarValue "Map" True
-  debugFields m = VarFields
-    [ (show k, VarFieldValue v)
-    | (k, v) <- M.toList m
-    ]
+-- instance DebugView T.Text where
+--   debugValue  t = VarValue (show (T.unpack t)) False
+--   debugFields _ = VarFields []
+--
+-- instance DebugView BS.ByteString where
+--   debugValue  t = VarValue (show (T.unpack (T.decodeUtf8 t))) False
+--   debugFields _ = VarFields []
+--
+-- instance DebugView (IM.IntMap a) where
+--   debugValue _ = VarValue "IntMap" True
+--   debugFields im = VarFields
+--     [ (show k, VarFieldValue v)
+--     | (k, v) <- IM.toList im
+--     ]
+--
+-- instance Show k => DebugView (M.Map k a) where
+--   debugValue _ = VarValue "Map" True
+--   debugFields m = VarFields
+--     [ (show k, VarFieldValue v)
+--     | (k, v) <- M.toList m
+--     ]
 
 --------------------------------------------------------------------------------
 -- * (Internal) Wrappers required to call `evalStmt` on methods more easily
