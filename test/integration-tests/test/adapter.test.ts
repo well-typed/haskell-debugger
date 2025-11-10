@@ -82,6 +82,10 @@ describe("Debug Adapter Tests", function () {
         const tmp = mkdtempSync(join(tmpdir(), "hdb-")) + path
         const data = process.cwd() + path;
         cpSync(data, tmp, { recursive: true }) // Copy data contents to temp directory
+
+        // Copy dependency too for now (until it's available on hackage)
+        const hsDebugView = process.cwd() + "/../../haskell-debugger-view";
+        cpSync(hsDebugView, tmp + "/haskell-debugger-view", { recursive: true }) // Copy data contents to temp directory
         return realpathSync(tmp)
     }
 
@@ -625,6 +629,37 @@ describe("Debug Adapter Tests", function () {
             const _2Var = await tChild.get('_2');
             assert.strictEqual(_1Var.value, '333');
             assert.strictEqual(_2Var.value, '34');
+        })
+
+        it('user-defined custom instance (issue #47)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/T47a",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 29 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 29 }, expected, expected);
+
+            let locals = await fetchLocalVars();
+            const tVar = await forceLazy(locals.get('action'));
+            assert.strictEqual(tVar.value, "SDJFLSKDJFLKSDJFLSJDKFL")
+            const tChild = await expandVar(tVar);
+            const _1Var = await forceLazy(tChild.get('field1'));
+            assert.strictEqual(_1Var.value, '"A33"');
+            const _2Var = await forceLazy(tChild.get('myfield2'));
+            assert.strictEqual(_2Var.value, '3');
+            const _3Var = await forceLazy(tChild.get('field3'));
+            assert.strictEqual(_3Var.value, 'Y');
+            const _3Child = await expandVar(_3Var);
+            const _3_1Var = await forceLazy(_3Child.get("_1"))
+            assert.strictEqual(_3_1Var.value, '"7"');
+            const _4Var = await tChild.get('field4');
+            assert.strictEqual(_4Var.value, '2345');
+            const _5Var = await tChild.get('field5');
+            assert.strictEqual(_5Var.value, '2345.0');
         })
     })
     describe("Stepping out (step-out)", function () {
