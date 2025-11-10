@@ -27,6 +27,11 @@ import Control.Monad.Catch
 import GHC.Utils.Trace
 
 import GHC
+import GHC.Driver.Make
+import GHC.Driver.Messager
+import GHC.Driver.Errors.Types
+import GHC.Types.SourceError
+import GHC.Types.Error
 import GHC.Data.StringBuffer
 import GHC.Data.Maybe (expectJust)
 import qualified GHCi.BreakArray as BA
@@ -189,34 +194,82 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     -- Discover the user-given flags and targets
     flagsAndTargets <- parseHomeUnitArguments mainFp compDir units ghcInvocation dflags1 rootDir
 
-    -- Add in-memory haskell-debugger-view unit
-    inMemHDV <- liftIO $ makeInMemoryHDV dflags1
-
-    -- Setup preliminary HomeUnitGraph
-    setupHomeUnitGraph (NonEmpty.toList flagsAndTargets ++ [inMemHDV])
+    -- Setup base HomeUnitGraph
+    setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
 
     dflags6 <- GHC.getSessionDynFlags
 
-    -- Should this be done in GHC=
+    -- Should this be done in GHC?
     liftIO $ GHC.initUniqSupply (GHC.initialUnique dflags6) (GHC.uniqueIncrement dflags6)
 
-    ok_flag <- GHC.load GHC.LoadAllTargets
-    when (GHC.failed ok_flag) (liftIO $ exitWith (ExitFailure 1))
+#if __GLASGOW_HASKELL__ > 914
+    msg <- batchMultiMsg <$> getSession
+#else
+    let msg = batchMultiMsg
+#endif
 
-    -- TODO: Add flag to disable this
-    hdv_uid <- makeHsDebuggerViewUnitId
+    -- Get mod_graph for base HUG
+    (errs_base, mod_graph_base) <- depanalE mkUnknownDiagnostic (Just msg) [] False
 
-    -- TODO: Shouldn't initLoaderState be called somewhere?
+    when (not $ isEmptyMessages errs_base) $ do
+#if __GLASGOW_HASKELL__ > 914
+      sec <- initSourceErrorContext . hsc_dflags <$> getSession
+      throwErrors sec (fmap GhcDriverMessage errs_base)
+#else
+      throwErrors (fmap GhcDriverMessage errs_base)
+#endif
+
+    mhdv_uid <- findHsDebuggerViewUnitId mod_graph_base
+    (hdv_uid, mod_graph)  <- case mhdv_uid of
+      Nothing -> do
+        -- Not imported by any module: no custom views. Therefore, the builtin
+        -- ones haven't been loaded. In this case, we will load the package ourselves.
+
+        -- Add in-memory haskell-debugger-view unit
+        inMemHDV <- liftIO $ makeInMemoryHDV dflags1
+        -- Try again, with custom modules loaded
+        setupHomeUnitGraph (NonEmpty.toList flagsAndTargets ++ [inMemHDV])
+        (errs, mod_graph) <- depanalE mkUnknownDiagnostic (Just msg) [] False
+        when (not $ isEmptyMessages errs) $ do
+#if __GLASGOW_HASKELL__ > 914
+          sec <- initSourceErrorContext . hsc_dflags <$> getSession
+          throwErrors sec (fmap GhcDriverMessage errs)
+#else
+          throwErrors (fmap GhcDriverMessage errs)
+#endif
+        return (inMemoryHDVUid, mod_graph)
+
+      Just uid ->
+        return (uid, mod_graph_base)
+
+    (success, dbg_view_loaded) <-
+      -- Load only up to debugger-view modules
+      load' noIfaceCache (GHC.LoadUpTo [mkModule hdv_uid (mkModuleName "GHC.Debugger.View.Class")]) mkUnknownDiagnostic (Just msg) mod_graph
+        >>= \case
+          Failed -> (, False) <$> do
+            -- Failed to load debugger-view modules! Try again without the haskell-debugger-view modules
+            logger <- getLogger
+            liftIO $ logMsg logger MCInfo noSrcSpan $
+              text "Failed to compile built-in DebugView modules! Ignoring custom debug views."
+            setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
+            load' noIfaceCache GHC.LoadAllTargets mkUnknownDiagnostic (Just msg) mod_graph_base
+          Succeeded -> (, True) <$> do
+            -- It worked! Now load everything else
+            load' noIfaceCache GHC.LoadAllTargets mkUnknownDiagnostic (Just msg) mod_graph
+    when (GHC.failed success) $ liftIO $
+      throwM DebuggerFailedToLoad
 
     -- Set interactive context to import all loaded modules
-    -- TODO: Think about Note [GHCi and local Preludes] and what is done in `getImplicitPreludeImports`
     let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
     -- dbgView should always be available, either because we manually loaded it or because it's in the transitive closure.
     let dbgViewImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "GHC.Debugger.View.Class"
     mss <- getAllLoadedModules
-    GHC.setContext $ preludeImp : dbgViewImp : map (GHC.IIModule . GHC.ms_mod) mss
+    GHC.setContext $
+      preludeImp
+        : (if dbg_view_loaded then [dbgViewImp] else [])
+        ++ map (GHC.IIModule . GHC.ms_mod) mss
 
-    runReaderT action =<< initialDebuggerState (Just hdv_uid)
+    runReaderT action =<< initialDebuggerState (if dbg_view_loaded then Just hdv_uid else Nothing)
 
 -- | The logger action used to log GHC output
 debuggerLoggerAction :: Handle -> LogAction
@@ -230,17 +283,16 @@ getHsDebuggerViewUid :: Debugger (Maybe UnitId)
 getHsDebuggerViewUid = asks hsDbgViewUnitId
 
 -- | Try to find the @haskell-debugger-view@ unit-id in the transitive closure,
--- or, otherwise, create a custom unit to load the @haskell-debugger-view@
--- modules in it (essentially preparing an in-memory version of the library to
--- find the built-in instances in).
+-- or, otherwise, return the a custom unit for which we'll load the
+-- @haskell-debugger-view@ modules in it (essentially preparing an in-memory
+-- version of the library to find the built-in instances in).
 --
 -- See also comment on the @'hsDbgViewUnitId'@ field of @'DebuggerState'@
-makeHsDebuggerViewUnitId :: GHC.Ghc UnitId
-makeHsDebuggerViewUnitId = do
+findHsDebuggerViewUnitId :: ModuleGraph -> GHC.Ghc (Maybe UnitId)
+findHsDebuggerViewUnitId mod_graph = do
 
-  -- TODO: Better lookup of unit-id than by filtering list?
-  mod_graph <- getModuleGraph
   -- Only looks at unit-nodes, this is not robust!
+  -- TODO: Better lookup of unit-id
   let hskl_dbgr_vws =
         [ uid
         | UnitNode _deps uid <- mg_mss mod_graph
@@ -250,11 +302,9 @@ makeHsDebuggerViewUnitId = do
   case hskl_dbgr_vws of
     [hdv_uid] ->
       -- In transitive closure, use that one.
-      return hdv_uid
+      return (Just hdv_uid)
     [] -> do
-      -- Not imported by any module: no custom views. Therefore, the builtin
-      -- ones haven't been loaded. In this case, we will load the package ourselves.
-      return inMemoryHDVUid
+      return Nothing
     _  ->
       error "Multiple unit-ids found for haskell-debugger-view in the transitive closure?!"
 
@@ -269,12 +319,6 @@ makeInMemoryHDV initialDynFlags = do
           { homeUnitId_ = inMemoryHDVUid
           , importPaths = []
           , packageFlags = []
-              -- [ ExposePackage
-              --     ("-package-id " ++ unitIdString unitId)
-              --     (UnitIdArg $ RealUnit (Definite unitId))
-              --     (ModRenaming True [])
-              -- | (unitId, _) <- unitEnvList
-              -- ]
           }
     time <- getCurrentTime
     let buffer = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/Class.hs")
@@ -497,6 +541,11 @@ initialDebuggerState hsDbgViewUid =
 -- | Lift a 'Ghc' action into a 'Debugger' one.
 liftGhc :: GHC.Ghc a -> Debugger a
 liftGhc = Debugger . ReaderT . const
+
+data DebuggerFailedToLoad = DebuggerFailedToLoad
+instance Exception DebuggerFailedToLoad
+instance Show DebuggerFailedToLoad where
+  show DebuggerFailedToLoad = "Failed to compile and load user project."
 
 --------------------------------------------------------------------------------
 
