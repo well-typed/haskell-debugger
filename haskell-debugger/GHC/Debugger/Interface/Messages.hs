@@ -1,17 +1,13 @@
 {-# LANGUAGE LambdaCase,
-             DeriveGeneric,
              StandaloneDeriving,
              OverloadedStrings,
              DuplicateRecordFields,
              TypeApplications
              #-}
-{-# OPTIONS_GHC -Wno-orphans #-} -- JSON GHC.BreakpointId
 
 -- | Types for sending and receiving messages to/from haskell-debugger
 module GHC.Debugger.Interface.Messages where
 
-import GHC.Generics
-import Data.Aeson
 import qualified GHC
 import qualified GHC.Utils.Outputable as GHC
 import GHC.Unit.Types
@@ -86,7 +82,7 @@ data Command
 
 -- | An entry point for program execution.
 data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnName :: String }
-  deriving (Show, Generic)
+  deriving (Show)
 
 -- | A breakpoint can be set/removed on functions by name, or in modules by
 -- line number. And, globally, for all exceptions, or just uncaught exceptions.
@@ -95,7 +91,7 @@ data Breakpoint
   | FunctionBreak { function  :: String }
   | OnExceptionsBreak
   | OnUncaughtExceptionsBreak
-  deriving (Show, Generic)
+  deriving (Show)
 
 -- | Information about a scope
 data ScopeInfo = ScopeInfo
@@ -103,10 +99,10 @@ data ScopeInfo = ScopeInfo
       , sourceSpan :: SourceSpan
       , numVars :: Maybe Int
       , expensive :: Bool }
-  deriving (Show, Generic)
+  deriving (Show)
 
 newtype VarFields = VarFields [VarInfo]
-  deriving (Show, Generic, Eq)
+  deriving (Show, Eq)
 
 -- | Information about a variable
 data VarInfo = VarInfo
@@ -120,7 +116,7 @@ data VarInfo = VarInfo
       -- TODO:
       --  memory reference using ghc-debug.
       }
-      deriving (Show, Generic, Eq)
+      deriving (Show, Eq)
 
 -- | What kind of breakpoint are we referring to, module or function breakpoints?
 -- Used e.g. in the 'ClearBreakpoints' request
@@ -129,7 +125,7 @@ data BreakpointKind
   = ModuleBreakpointKind
   -- | Function breakpoints
   | FunctionBreakpointKind
-  deriving (Show, Generic, Eq)
+  deriving (Show, Eq)
 
 instance GHC.Outputable BreakpointKind where ppr = GHC.text . show
 
@@ -138,7 +134,7 @@ data ScopeVariablesReference
   = LocalVariablesScope
   | ModuleVariablesScope
   | GlobalVariablesScope
-  deriving (Show, Generic, Eq, Ord)
+  deriving (Show, Eq, Ord)
 
 -- | The type of variables referenced, or a particular variable referenced for its fields or value (when inspecting a thunk)
 data VariableReference
@@ -158,7 +154,7 @@ data VariableReference
   -- Used to force its result or get its structured children
   | SpecificVariable Int
 
-  deriving (Show, Generic, Eq, Ord)
+  deriving (Show, Eq, Ord)
 
 -- | From 'ScopeVariablesReference' to a 'VariableReference' that can be used in @"variable"@ requests
 scopeToVarRef :: ScopeVariablesReference -> VariableReference
@@ -198,7 +194,7 @@ data SourceSpan = SourceSpan
       , endCol :: {-# UNPACK #-} !Int
       -- ^ RealSrcSpan end col
       }
-      deriving (Show, Generic)
+      deriving (Show)
 
 --------------------------------------------------------------------------------
 -- Responses
@@ -238,7 +234,7 @@ data BreakFound
   -- | Found many breakpoints.
   -- Caused by setting breakpoint on a name with multiple matches or many equations.
   | ManyBreaksFound [BreakFound]
-  deriving (Show, Generic)
+  deriving (Show)
 
 data EvalResult
   = EvalCompleted { resultVal :: String
@@ -252,7 +248,7 @@ data EvalResult
   | EvalStopped   { breakId :: Maybe GHC.InternalBreakpointId {-^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)? -} }
   -- | Evaluation failed for some reason other than completed/completed-with-exception/stopped.
   | EvalAbortedWith String
-  deriving (Show, Generic)
+  deriving (Show)
 
 data StackFrame
   = StackFrame
@@ -261,58 +257,15 @@ data StackFrame
     , sourceSpan :: SourceSpan
     -- ^ Source span for this stack frame
     }
-  deriving (Show, Generic)
+  deriving (Show)
 
 --------------------------------------------------------------------------------
 -- Instances
 --------------------------------------------------------------------------------
 
 deriving instance Show Command
-deriving instance Generic Command
-
 deriving instance Show Response
-deriving instance Generic Response
-
-instance ToJSON Command    where toEncoding = genericToEncoding defaultOptions
-instance ToJSON Breakpoint where toEncoding = genericToEncoding defaultOptions
-instance ToJSON BreakpointKind where toEncoding = genericToEncoding defaultOptions
-instance ToJSON ScopeVariablesReference where toEncoding = genericToEncoding defaultOptions
-instance ToJSON VariableReference where toEncoding = genericToEncoding defaultOptions
-instance ToJSON Response   where toEncoding = genericToEncoding defaultOptions
-instance ToJSON EvalResult where toEncoding = genericToEncoding defaultOptions
-instance ToJSON BreakFound where toEncoding = genericToEncoding defaultOptions
-instance ToJSON SourceSpan where toEncoding = genericToEncoding defaultOptions
-instance ToJSON EntryPoint where toEncoding = genericToEncoding defaultOptions
-instance ToJSON StackFrame where toEncoding = genericToEncoding defaultOptions
-instance ToJSON ScopeInfo  where toEncoding = genericToEncoding defaultOptions
-instance ToJSON VarInfo    where toEncoding = genericToEncoding defaultOptions
-instance ToJSON VarFields where toEncoding = genericToEncoding defaultOptions
-
-instance FromJSON Command
-instance FromJSON Breakpoint
-instance FromJSON BreakpointKind
-instance FromJSON ScopeVariablesReference
-instance FromJSON VariableReference
-instance FromJSON Response
-instance FromJSON EvalResult
-instance FromJSON BreakFound
-instance FromJSON SourceSpan
-instance FromJSON EntryPoint
-instance FromJSON StackFrame
-instance FromJSON ScopeInfo
-instance FromJSON VarInfo
-instance FromJSON VarFields
 
 instance Show GHC.InternalBreakpointId where
   show (GHC.InternalBreakpointId m ix) = "InternalBreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix
 
-instance ToJSON GHC.InternalBreakpointId where
-  toJSON (GHC.InternalBreakpointId (Module unit mn) ix) =
-    object [ "module_name" .= moduleNameString mn
-           , "module_unit" .= unitString unit
-           , "ix" .= ix
-           ]
-instance FromJSON GHC.InternalBreakpointId where
-  parseJSON = withObject "InternalBreakpointId" $ \v -> GHC.InternalBreakpointId
-        <$> (Module <$> (stringToUnit <$> v .: "module_unit") <*> (mkModuleName <$> v .: "module_name"))
-        <*> v .: "ix"
