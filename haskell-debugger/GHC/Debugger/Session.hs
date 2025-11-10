@@ -36,6 +36,7 @@ import qualified Data.Containers.ListUtils as L
 import GHC.ResponseFile (expandResponse)
 import HIE.Bios.Environment as HIE
 import System.FilePath
+import Data.Time
 import qualified System.Directory as Directory
 import qualified System.Environment as Env
 
@@ -58,6 +59,7 @@ import GHC.Data.FastString
 import qualified Data.Foldable as Foldable
 import qualified GHC.Unit.Home.Graph as HUG
 import Data.Maybe
+import GHC.Types.Target (InputFileBuffer)
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -225,7 +227,7 @@ setupMultiHomeUnitGhcSession exts hsc_env cis = do
     ts <- forM cis $ \(df, targets) -> do
       -- evaluate $ liftRnf rwhnf targets
 
-      let mk t = fromTargetId (importPaths df) exts (homeUnitId_ df) (GHC.targetId t)
+      let mk t = fromTargetId (importPaths df) exts (homeUnitId_ df) (GHC.targetId t) (GHC.targetContents t)
       ctargets <- concatMapM mk targets
 
       return (L.nubOrdOn targetTarget ctargets)
@@ -242,8 +244,8 @@ data TargetDetails = TargetDetails
   -- convenient lookup table from 'FilePath' to 'TargetDetails'.
   , targetUnitId :: UnitId
   -- ^ UnitId of 'targetTarget'.
+  , targetContents :: Maybe (InputFileBuffer, UTCTime)
   }
-  deriving (Eq, Ord)
 
 -- | A simplified view on a 'TargetId'.
 --
@@ -253,29 +255,30 @@ data Target = TargetModule ModuleName | TargetFile FilePath
 
 -- | Turn a 'TargetDetails' into a 'GHC.Target'.
 toGhcTarget :: TargetDetails -> GHC.Target
-toGhcTarget (TargetDetails tid _ uid) = case tid of
-  TargetModule modl -> GHC.Target (GHC.TargetModule modl) True uid Nothing
-  TargetFile fp -> GHC.Target (GHC.TargetFile fp Nothing) True uid Nothing
+toGhcTarget (TargetDetails tid _ uid cts) = case tid of
+  TargetModule modl -> GHC.Target (GHC.TargetModule modl) True uid cts
+  TargetFile fp -> GHC.Target (GHC.TargetFile fp Nothing) True uid cts
 
 fromTargetId :: [FilePath]          -- ^ import paths
              -> [String]            -- ^ extensions to consider
              -> UnitId
              -> GHC.TargetId
+             -> Maybe (InputFileBuffer, UTCTime)
              -> IO [TargetDetails]
 -- For a target module we consider all the import paths
-fromTargetId is exts unitId (GHC.TargetModule modName) = do
+fromTargetId is exts unitId (GHC.TargetModule modName) ctts = do
     let fps = [i </> moduleNameSlashes modName -<.> ext <> boot
               | ext <- exts
               , i <- is
               , boot <- ["", "-boot"]
               ]
-    return [TargetDetails (TargetModule modName) fps unitId]
+    return [TargetDetails (TargetModule modName) fps unitId ctts]
 -- For a 'TargetFile' we consider all the possible module names
-fromTargetId _ _ unitId (GHC.TargetFile f _) = do
+fromTargetId _ _ unitId (GHC.TargetFile f _) ctts = do
     let other
           | "-boot" `L.isSuffixOf` f = dropEnd 5 f
           | otherwise = (f ++ "-boot")
-    return [TargetDetails (TargetFile f) [f, other] unitId]
+    return [TargetDetails (TargetFile f) [f, other] unitId ctts]
 
 -- ----------------------------------------------------------------------------
 -- GHC Utils that should likely be exposed by GHC

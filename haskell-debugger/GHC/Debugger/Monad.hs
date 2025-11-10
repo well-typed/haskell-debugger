@@ -11,6 +11,7 @@
 module GHC.Debugger.Monad where
 
 import Prelude hiding (mod)
+import Data.Time
 import Data.Function
 import System.Exit
 import System.IO
@@ -21,11 +22,15 @@ import Control.Monad.IO.Class
 import Control.Exception (assert)
 
 import Control.Monad.Catch
+import GHC.Utils.Trace
 
 import GHC
+import GHC.Data.StringBuffer
 import GHC.Data.Maybe (expectJust)
 import qualified GHCi.BreakArray as BA
 import GHC.Driver.DynFlags as GHC
+import GHC.Unit.Module.Graph
+import GHC.Unit.Types
 import GHC.Unit.Module.ModSummary as GHC
 import GHC.Utils.Outputable as GHC
 import GHC.Utils.Logger as GHC
@@ -40,6 +45,7 @@ import Data.IORef
 import Data.Maybe
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.IntMap as IM
+import qualified Data.List as L
 
 import Control.Monad.Reader
 import System.Posix.Signals
@@ -81,6 +87,25 @@ data DebuggerState = DebuggerState
 
       , genUniq           :: IORef Int
       -- ^ Generates unique ints
+
+      , hsDbgViewUnitId   :: Maybe UnitId
+      -- ^ The unit-id of the companion @haskell-debugger-view@ unit, used for
+      -- user-defined and built-in custom debug visualisations of values (e.g.
+      -- for Strings or IntMap).
+      --
+      -- If the user depends on @haskell-debugger-view@ in its transitive
+      -- closure, then we should use that exact unit which was solved by Cabal.
+      -- The built-in instances and additional instances be available for the
+      -- 'DebugView' class found in that unit. We can find the exact unit of
+      -- the module by looking for @haskell-debugger-view@ in the module graph.
+      --
+      -- If the user does not depend on @haskell-debugger-view@ in any way,
+      -- then we create our own unit and try to load the
+      -- @haskell-debugger-view@ modules directly into it. As long as loading
+      -- succeeds, the 'DebugView' class from this custom unit can be used to
+      -- find the built-in instances for types like @'String'@
+      --
+      -- If the user explicitly disabled custom views, use @Nothing@.
       }
 
 -- | Enabling/Disabling a breakpoint
@@ -159,8 +184,14 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     -- subsequent call to `getLogger` to be affected by a plugin.
     GHC.initializeSessionPlugins
 
+    -- Discover the user-given flags and targets
     flagsAndTargets <- parseHomeUnitArguments mainFp compDir units ghcInvocation dflags1 rootDir
-    setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
+
+    -- Add in-memory haskell-debugger-view unit
+    inMemHDV <- liftIO $ makeInMemoryHDV dflags1
+
+    -- Setup preliminary HomeUnitGraph
+    setupHomeUnitGraph (NonEmpty.toList flagsAndTargets ++ [inMemHDV])
 
     dflags6 <- GHC.getSessionDynFlags
 
@@ -170,22 +201,92 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     ok_flag <- GHC.load GHC.LoadAllTargets
     when (GHC.failed ok_flag) (liftIO $ exitWith (ExitFailure 1))
 
+    -- TODO: Add flag to disable this
+    hdv_uid <- makeHsDebuggerViewUnitId
+
     -- TODO: Shouldn't initLoaderState be called somewhere?
 
     -- Set interactive context to import all loaded modules
     -- TODO: Think about Note [GHCi and local Preludes] and what is done in `getImplicitPreludeImports`
     let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
+    -- dbgView should always be available, either because we manually loaded it or because it's in the transitive closure.
+    let dbgViewImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "GHC.Debugger.View.Class"
     mss <- getAllLoadedModules
-    GHC.setContext $ preludeImp : map (GHC.IIModule . GHC.ms_mod) mss
+    GHC.setContext $ preludeImp : dbgViewImp : map (GHC.IIModule . GHC.ms_mod) mss
 
-    runReaderT action =<< initialDebuggerState
-
+    runReaderT action =<< initialDebuggerState (Just hdv_uid)
 
 -- | The logger action used to log GHC output
 debuggerLoggerAction :: Handle -> LogAction
 debuggerLoggerAction h a b c d = do
   hSetEncoding h utf8 -- GHC output uses utf8
   defaultLogActionWithHandles h h a b c d
+
+-- | Fetch the @haskell-debugger-view@ unit-id from the environment.
+-- @Nothing@ means custom debugger views are disabled.
+getHsDebuggerViewUid :: Debugger (Maybe UnitId)
+getHsDebuggerViewUid = asks hsDbgViewUnitId
+
+-- | Try to find the @haskell-debugger-view@ unit-id in the transitive closure,
+-- or, otherwise, create a custom unit to load the @haskell-debugger-view@
+-- modules in it (essentially preparing an in-memory version of the library to
+-- find the built-in instances in).
+--
+-- See also comment on the @'hsDbgViewUnitId'@ field of @'DebuggerState'@
+makeHsDebuggerViewUnitId :: GHC.Ghc UnitId
+makeHsDebuggerViewUnitId = do
+
+  -- TODO: Better lookup of unit-id than by filtering list?
+  mod_graph <- getModuleGraph
+  -- Only looks at unit-nodes, this is not robust!
+  let hskl_dbgr_vws =
+        [ uid
+        | UnitNode _deps uid <- mg_mss mod_graph
+        , "haskell-debugger-view" `L.isPrefixOf` unitIdString uid
+        ]
+
+  case hskl_dbgr_vws of
+    [hdv_uid] ->
+      -- In transitive closure, use that one.
+      return hdv_uid
+    [] -> do
+      -- Not imported by any module: no custom views. Therefore, the builtin
+      -- ones haven't been loaded. In this case, we will load the package ourselves.
+      return inMemoryHDVUid
+    _  ->
+      error "Multiple unit-ids found for haskell-debugger-view in the transitive closure?!"
+
+-- | The fixed unit-id for when we load the haskell-debugger-view modules in memory
+inMemoryHDVUid :: UnitId
+inMemoryHDVUid = toUnitId $ stringToUnit "haskell-debugger-view-in-memory"
+
+-- | Create a unit @haskell-debugger-view@ which uses in-memory files for the modules
+makeInMemoryHDV :: DynFlags {- initial dynflags -} -> IO (DynFlags, [GHC.Target])
+makeInMemoryHDV initialDynFlags = do
+    let hdvDynFlags = initialDynFlags
+          { homeUnitId_ = inMemoryHDVUid
+          , importPaths = []
+          , packageFlags = []
+              -- [ ExposePackage
+              --     ("-package-id " ++ unitIdString unitId)
+              --     (UnitIdArg $ RealUnit (Definite unitId))
+              --     (ModRenaming True [])
+              -- | (unitId, _) <- unitEnvList
+              -- ]
+          }
+    time <- getCurrentTime
+    bufa <- hGetStringBuffer "/Users/romes/Developer/ghc-debugger/haskell-debugger-view/src/GHC/Debugger/View/Class.hs"
+    return
+      ( hdvDynFlags
+      , [ GHC.Target
+          { targetId = GHC.TargetFile "dummy" Nothing
+          , targetAllowObjCode = False
+          , GHC.targetUnitId = inMemoryHDVUid
+          , GHC.targetContents = Just (bufa , time)
+          }
+        ]
+      )
+
 
 -- | Registers or deletes a breakpoint in the GHC session and from the list of
 -- active breakpoints that is kept in 'DebuggerState', depending on the
@@ -383,11 +484,13 @@ freshInt = do
   return i
 
 -- | Initialize a 'DebuggerState'
-initialDebuggerState :: GHC.Ghc DebuggerState
-initialDebuggerState = DebuggerState <$> liftIO (newIORef BM.empty)
-                                     <*> liftIO (newIORef mempty)
-                                     <*> liftIO (newIORef mempty)
-                                     <*> liftIO (newIORef 0)
+initialDebuggerState :: Maybe UnitId -> GHC.Ghc DebuggerState
+initialDebuggerState hsDbgViewUid =
+  DebuggerState <$> liftIO (newIORef BM.empty)
+                <*> liftIO (newIORef mempty)
+                <*> liftIO (newIORef mempty)
+                <*> liftIO (newIORef 0)
+                <*> pure hsDbgViewUid
 
 -- | Lift a 'Ghc' action into a 'Debugger' one.
 liftGhc :: GHC.Ghc a -> Debugger a
