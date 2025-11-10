@@ -10,6 +10,8 @@ import Data.Maybe
 import qualified Data.List as L
 
 import GHC
+import GHC.Utils.Logger
+import GHC.Types.Error
 import GHC.Builtin.Names
 import GHC.Core.Class
 import GHC.Core.InstEnv
@@ -245,6 +247,7 @@ Use    | LoadDependenciesOf HomeUnitModule for 'load'
 findDebugViewInstance :: Type -> Debugger (Maybe DebugViewInstance)
 findDebugViewInstance needle_ty = do
   hsc_env <- getSession
+  logger  <- getLogger
 
   -- We want to attempt finding DebugView instances twice.
   -- Once: using the haskell-debugger-view unit-id found by looking for
@@ -325,7 +328,8 @@ findDebugViewInstance needle_ty = do
 
       case res of
         Nothing -> do
-          pprTraceM "Couldn't compile DebugView instance for" (ppr needle_ty $$ ppr err_msgs)
+          liftIO $ logMsg logger MCDump noSrcSpan $
+            text "Couldn't compile DebugView instance for" <+> ppr needle_ty $$ ppr err_msgs
           -- The error is for debug purposes. We simply won't use a custom instance:
           return Nothing
         Just is ->
