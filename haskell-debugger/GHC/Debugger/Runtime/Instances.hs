@@ -32,6 +32,7 @@ import GHC.Utils.Logger
 import GHCi.Message
 
 import GHC.Debugger.Monad
+import GHC.Debugger.Session.Builtin
 import GHC.Debugger.View.Class
 
 --------------------------------------------------------------------------------
@@ -173,47 +174,9 @@ data DebugViewInstance = DebugViewInstance
 -- * Impl. to find instance and load instance methods applied to right dictionary
 --------------------------------------------------------------------------------
 
--- As long as the user depends on GHC.Debugger.View.Class somewhere in their full transitive closure,
---  then we get haskell-debugger-view unit-id from the module graph; and all
---  built-in instances are available because they're defined in that module.
---
--- If it's NOT anywhere in the closure, we want to load it ourselves to bring
---  the built-in instances into scope.
-
-{-
-How to :
-1. Make a unit id for this in memory package
-2. Make a ModSummary for each of the modules in haskell-debugger-view
-  2.1. Probably summariseFile with the StringBuffer argument
-
---
-3. Call 'compileOne' function on the ModSummary to know whether it will work or not
-4. Get HomeModInfo then add it to the HUG/HPT ?
---
-Alternatively:
-If I knew it was going to compile, I could just load it into the interactive
-context directly?
---
-Main issue: how to setup the environment for the home package?
-When I create the home package I have to pass some package flags
-If I want to use e.g. containers for some modules I need to find the right
-unit-id of containers that the user is using to pick the right one.
-
-I could just get the module graph from the user program and just use all of them since that's the "maximal" set
-
-If containers is not in the existing build plan then no need to try and compile that module
-(If load to int. context did work)
-
---------------------------------------------------------------------------------
-Perhaps more easily:
-
-Just get the user module graph and inject the modules
-
-Add to the module graph a ModSummary node for all of the haskell-debugger-view
-modules and try to load the module graph whole again.
-Use    | LoadDependenciesOf HomeUnitModule for 'load'
--}
-
+-- | Try to find the 'DebugView' instance for a given type using the
+-- @haskell-debugger-view@ unit found at session set-up time (see
+-- @'hsDbgViewUnitId'@)
 findDebugViewInstance :: Type -> Debugger (Maybe DebugViewInstance)
 findDebugViewInstance needle_ty = do
   hsc_env <- getSession
@@ -222,7 +185,7 @@ findDebugViewInstance needle_ty = do
   mhdv_uid <- getHsDebuggerViewUid
   case mhdv_uid of
     Just hdv_uid -> liftIO $ do
-      let modl = mkModule (RealUnit (Definite hdv_uid)) (mkModuleName "GHC.Debugger.View.Class")
+      let modl = mkModule (RealUnit (Definite hdv_uid)) debuggerViewClassModName
       let mthdRdrName mthStr = mkOrig modl (mkVarOcc mthStr)
 
       (err_msgs, res) <- runTcInteractive hsc_env $ do

@@ -125,7 +125,6 @@ initDebugger l supportsRunInTerminal
             , supportsANSIHyperlinks = False -- VSCode does not support this
             }
 
-
       -- Create pipes to read/write the debugger (not debuggee's) output.
       -- The write end is given to `runDebugger` and the read end is continuously
       -- read from until we read an EOF.

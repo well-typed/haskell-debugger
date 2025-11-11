@@ -15,10 +15,8 @@ import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
 import Control.Monad.Reader
-import Data.FileEmbed
 import Data.Function
 import Data.IORef
-import Data.Time
 import Prelude hiding (mod)
 import System.IO
 import System.Posix.Signals
@@ -27,7 +25,6 @@ import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
 
 import GHC
-import GHC.Data.StringBuffer
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
 import GHC.Driver.Errors.Types
@@ -49,6 +46,7 @@ import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Session
+import GHC.Debugger.Session.Builtin
 import qualified GHC.Debugger.Breakpoint.Map as BM
 
 -- | A debugger action.
@@ -169,14 +167,15 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
       -- Override the logger to output to the given handle
       GHC.pushLogHook (const $ debuggerLoggerAction dbg_out)
 
-    -- TODO: this is weird, we set the session dynflags now to initialise
-    -- the hsc_interp.
-    -- This is incredibly dubious
+    -- Set the session dynflags now to initialise the hsc_interp.
     _ <- GHC.setSessionDynFlags dflags1
 
     -- Initialise plugins here because the plugin author might already expect this
     -- subsequent call to `getLogger` to be affected by a plugin.
     GHC.initializeSessionPlugins
+
+    GHC.getSessionDynFlags >>= \df -> liftIO $
+      GHC.initUniqSupply (GHC.initialUnique df) (GHC.uniqueIncrement df)
 
     -- Discover the user-given flags and targets
     flagsAndTargets <- parseHomeUnitArguments mainFp compDir units ghcInvocation dflags1 rootDir
@@ -184,12 +183,7 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     -- Setup base HomeUnitGraph
     setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
 
-    dflags6 <- GHC.getSessionDynFlags
-
-    -- Should this be done in GHC?
-    liftIO $ GHC.initUniqSupply (GHC.initialUnique dflags6) (GHC.uniqueIncrement dflags6)
-
-#if __GLASGOW_HASKELL__ > 914
+#if MIN_VERSION_ghc(9,15,0)
     msg <- batchMultiMsg <$> getSession
 #else
     let msg = batchMultiMsg
@@ -199,7 +193,7 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     (errs_base, mod_graph_base) <- depanalE mkUnknownDiagnostic (Just msg) [] False
 
     when (not $ isEmptyMessages errs_base) $ do
-#if __GLASGOW_HASKELL__ > 914
+#if MIN_VERSION_ghc(9,15,0)
       sec <- initSourceErrorContext . hsc_dflags <$> getSession
       throwErrors sec (fmap GhcDriverMessage errs_base)
 #else
@@ -213,32 +207,31 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
         -- ones haven't been loaded. In this case, we will load the package ourselves.
 
         -- Add in-memory haskell-debugger-view unit
-        inMemHDV <- liftIO $ makeInMemoryHDV dflags1
+        inMemHDV <- liftIO . makeInMemoryHsDebuggerViewUnit =<< getDynFlags
         -- Try again, with custom modules loaded
         setupHomeUnitGraph (NonEmpty.toList flagsAndTargets ++ [inMemHDV])
         (errs, mod_graph) <- depanalE mkUnknownDiagnostic (Just msg) [] False
         when (not $ isEmptyMessages errs) $ do
-#if __GLASGOW_HASKELL__ > 914
+#if MIN_VERSION_ghc(9,15,0)
           sec <- initSourceErrorContext . hsc_dflags <$> getSession
           throwErrors sec (fmap GhcDriverMessage errs)
 #else
           throwErrors (fmap GhcDriverMessage errs)
 #endif
-        return (inMemoryHDVUid, mod_graph)
+        return (hsDebuggerViewInMemoryUnitId, mod_graph)
 
       Just uid ->
         return (uid, mod_graph_base)
 
     (success, dbg_view_loaded) <-
       -- Load only up to debugger-view modules
-      load' noIfaceCache (GHC.LoadUpTo [mkModule hdv_uid (mkModuleName "GHC.Debugger.View.Class")]) mkUnknownDiagnostic (Just msg) mod_graph
+      load' noIfaceCache (GHC.LoadUpTo [mkModule hdv_uid debuggerViewClassModName]) mkUnknownDiagnostic (Just msg) mod_graph
         >>= \case
           Failed -> (, False) <$> do
             -- Failed to load debugger-view modules! Try again without the haskell-debugger-view modules
             logger <- getLogger
             liftIO $ logMsg logger MCInfo noSrcSpan $
               text "Failed to compile built-in DebugView modules! Ignoring custom debug views."
-            setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
             load' noIfaceCache GHC.LoadAllTargets mkUnknownDiagnostic (Just msg) mod_graph_base
           Succeeded -> (, True) <$> do
             -- It worked! Now load everything else
@@ -249,7 +242,7 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     -- Set interactive context to import all loaded modules
     let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
     -- dbgView should always be available, either because we manually loaded it or because it's in the transitive closure.
-    let dbgViewImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "GHC.Debugger.View.Class"
+    let dbgViewImp = GHC.IIDecl . GHC.simpleImportDecl $ debuggerViewClassModName
     mss <- getAllLoadedModules
     GHC.setContext $
       preludeImp
@@ -263,6 +256,10 @@ debuggerLoggerAction :: Handle -> LogAction
 debuggerLoggerAction h a b c d = do
   hSetEncoding h utf8 -- GHC output uses utf8
   defaultLogActionWithHandles h h a b c d
+
+--------------------------------------------------------------------------------
+-- * Finding Debugger View
+--------------------------------------------------------------------------------
 
 -- | Fetch the @haskell-debugger-view@ unit-id from the environment.
 -- @Nothing@ means custom debugger views are disabled.
@@ -294,31 +291,6 @@ findHsDebuggerViewUnitId mod_graph = do
       return Nothing
     _  ->
       error "Multiple unit-ids found for haskell-debugger-view in the transitive closure?!"
-
--- | The fixed unit-id for when we load the haskell-debugger-view modules in memory
-inMemoryHDVUid :: UnitId
-inMemoryHDVUid = toUnitId $ stringToUnit "haskell-debugger-view-in-memory"
-
--- | Create a unit @haskell-debugger-view@ which uses in-memory files for the modules
-makeInMemoryHDV :: DynFlags {- initial dynflags -} -> IO (DynFlags, [GHC.Target])
-makeInMemoryHDV initialDynFlags = do
-    let hdvDynFlags = initialDynFlags
-          { homeUnitId_ = inMemoryHDVUid
-          , importPaths = []
-          , packageFlags = []
-          }
-    time <- getCurrentTime
-    let buffer = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/Class.hs")
-    return
-      ( hdvDynFlags
-      , [ GHC.Target
-          { targetId = GHC.TargetFile "dummy-for-GHC.Debugger.View.Class" Nothing
-          , targetAllowObjCode = False
-          , GHC.targetUnitId = inMemoryHDVUid
-          , GHC.targetContents = Just (buffer, time)
-          }
-        ]
-      )
 
 --------------------------------------------------------------------------------
 -- Variable references
@@ -364,44 +336,6 @@ leaveSuspendedState = do
 --------------------------------------------------------------------------------
 -- Utilities
 --------------------------------------------------------------------------------
-
-defaultDepth :: Int
-defaultDepth =  2 -- the depth determines how much of the runtime structure is traversed.
-                  -- @obtainTerm@ and friends handle fetching arbitrarily nested data structures
-                  -- so we only depth enough to get to the next level of subterms.
-
--- | Evaluate a suspended Term to WHNF.
---
--- Used in @'getVariables'@ to reply to a variable introspection request.
-seqTerm :: HscEnv -> Term -> IO Term
-seqTerm hsc_env term = do
-  let
-    interp = hscInterp hsc_env
-    unit_env = hsc_unit_env hsc_env
-  case term of
-    Suspension{val, ty} -> do
-      r <- GHCi.seqHValue interp unit_env val
-      () <- fromEvalResult r
-      let
-        forceThunks = False {- whether to force the thunk subterms -}
-        forceDepth  = defaultDepth
-      cvObtainTerm hsc_env forceDepth forceThunks ty val
-    NewtypeWrap{wrapped_term} -> do
-      wrapped_term' <- seqTerm hsc_env wrapped_term
-      return term{wrapped_term=wrapped_term'}
-    _ -> return term
-
--- | Evaluate a Term to NF
-deepseqTerm :: HscEnv -> Term -> IO Term
-deepseqTerm hsc_env t = case t of
-  Suspension{}   -> do t' <- seqTerm hsc_env t
-                       deepseqTerm hsc_env t'
-  Term{subTerms} -> do subTerms' <- mapM (deepseqTerm hsc_env) subTerms
-                       return t{subTerms = subTerms'}
-  NewtypeWrap{wrapped_term}
-                 -> do wrapped_term' <- deepseqTerm hsc_env wrapped_term
-                       return t{wrapped_term = wrapped_term'}
-  _              -> do seqTerm hsc_env t
 
 -- | Generate a new unique 'Int'
 freshInt :: Debugger Int
@@ -450,7 +384,50 @@ getAllLoadedModules =
     filterM (\ms -> GHC.isLoadedModule (ms_unitid ms) (ms_mod_name ms))
 
 --------------------------------------------------------------------------------
--- Instances
+-- * Forcing laziness
+--------------------------------------------------------------------------------
+
+-- | The depth determines how much of the runtime structure is traversed.
+-- @obtainTerm@ and friends handle fetching arbitrarily nested data structures
+-- so we only depth enough to get to the next level of subterms.
+defaultDepth :: Int
+defaultDepth =  2
+
+-- | Evaluate a suspended Term to WHNF.
+--
+-- Used in @'getVariables'@ to reply to a variable introspection request.
+seqTerm :: HscEnv -> Term -> IO Term
+seqTerm hsc_env term = do
+  let
+    interp = hscInterp hsc_env
+    unit_env = hsc_unit_env hsc_env
+  case term of
+    Suspension{val, ty} -> do
+      r <- GHCi.seqHValue interp unit_env val
+      () <- fromEvalResult r
+      let
+        forceThunks = False {- whether to force the thunk subterms -}
+        forceDepth  = defaultDepth
+      cvObtainTerm hsc_env forceDepth forceThunks ty val
+    NewtypeWrap{wrapped_term} -> do
+      wrapped_term' <- seqTerm hsc_env wrapped_term
+      return term{wrapped_term=wrapped_term'}
+    _ -> return term
+
+-- | Evaluate a Term to NF
+deepseqTerm :: HscEnv -> Term -> IO Term
+deepseqTerm hsc_env t = case t of
+  Suspension{}   -> do t' <- seqTerm hsc_env t
+                       deepseqTerm hsc_env t'
+  Term{subTerms} -> do subTerms' <- mapM (deepseqTerm hsc_env) subTerms
+                       return t{subTerms = subTerms'}
+  NewtypeWrap{wrapped_term}
+                 -> do wrapped_term' <- deepseqTerm hsc_env wrapped_term
+                       return t{wrapped_term = wrapped_term'}
+  _              -> do seqTerm hsc_env t
+
+--------------------------------------------------------------------------------
+-- * Instances
 --------------------------------------------------------------------------------
 
 instance GHC.HasLogger Debugger where
