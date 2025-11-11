@@ -582,7 +582,7 @@ describe("Debug Adapter Tests", function () {
             const expected = { path: config.projectRoot + "/" + config.entryFile, line: 7 }
             await dc.hitBreakpoint(config, { path: config.entryFile, line: 7 }, expected, expected);
 
-            async function getMutVarValue() {
+            async function getMutVarValue(val) {
                 let locals = await fetchLocalVars();
                 const rVar = await locals.get('r');
                 assert.strictEqual(rVar.value, "IORef (STRef (GHC.Prim.MutVar# _))")
@@ -591,13 +591,13 @@ describe("Debug Adapter Tests", function () {
                 assert.strictEqual(r_1_Var.value, 'STRef');
                 const r_1_Child = await expandVar(r_1_Var);
                 const r_1_1_Var = await r_1_Child.get("_1"); // No force
-                assert.strictEqual(r_1_1_Var.value, 'GHC.Prim.MutVar# _');
+                assert.strictEqual(r_1_1_Var.value, 'GHC.Prim.MutVar# '+val);
                 const r_1_1_Child = await expandVar(r_1_1_Var);
-                const r_1_1_1_Var = await forceLazy(r_1_1_Child.get("_1")); // FORCE REFERENCE!
+                const r_1_1_1_Var = await r_1_1_Child.get("_1");
                 return r_1_1_1_Var
             }
 
-            const m1 = await getMutVarValue()
+            const m1 = await getMutVarValue("False")
             assert.strictEqual(m1.value, "False")
             await dc.nextRequest({ threadId: 0 });
             await dc.nextRequest({ threadId: 0 });
@@ -605,7 +605,7 @@ describe("Debug Adapter Tests", function () {
             // Now we're at the start of the last line, where the ref should be True
             // Note how we get it from scratch, the content of the ref must be
             // forced again (the forceLazy call in getMutVarValue)
-            const m2 = await getMutVarValue()
+            const m2 = await getMutVarValue("True")
             assert.strictEqual(m2.value, "True")
         })
 
