@@ -17,7 +17,6 @@ import qualified GHC.Runtime.Debugger     as GHCD
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 
 import GHC.Debugger.View.Class hiding (VarFields)
-import qualified GHC.Debugger.View.Class as VC
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages

@@ -45,8 +45,6 @@ import GHC.Debugger.Interface.Messages hiding (Command, Response)
 import DAP
 import Development.Debug.Adapter.Handles
 import Development.Debug.Session.Setup
-import GHC.Debugger.Utils hiding ((<>))
-import GHC.Driver.Session
 
 --------------------------------------------------------------------------------
 -- * Logging

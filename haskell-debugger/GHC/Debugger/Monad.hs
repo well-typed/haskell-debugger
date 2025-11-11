@@ -11,57 +11,44 @@
 
 module GHC.Debugger.Monad where
 
-import Prelude hiding (mod)
-import Data.Time
-import Data.Function
-import System.Exit
-import System.IO
-import System.FilePath (normalise)
-import System.Directory (makeAbsolute)
 import Control.Monad
-import Control.Monad.IO.Class
-import Control.Exception (assert)
-import Data.FileEmbed
-
 import Control.Monad.Catch
-import GHC.Utils.Trace
-
-import GHC
-import GHC.Driver.Make
-import GHC.Driver.Messager
-import GHC.Driver.Errors.Types
-import GHC.Types.SourceError
-import GHC.Types.Error
-import GHC.Data.StringBuffer
-import GHC.Data.Maybe (expectJust)
-import qualified GHCi.BreakArray as BA
-import GHC.Driver.DynFlags as GHC
-import GHC.Unit.Module.Graph
-import GHC.Unit.Types
-import GHC.Unit.Module.ModSummary as GHC
-import GHC.Utils.Outputable as GHC
-import GHC.Utils.Logger as GHC
-import GHC.Types.Unique.Supply as GHC
-import GHC.Runtime.Loader as GHC
-import GHC.Runtime.Interpreter as GHCi
-import GHC.Runtime.Heap.Inspect
-import GHC.Runtime.Debugger.Breakpoints
-import GHC.Driver.Env
-
+import Control.Monad.IO.Class
+import Control.Monad.Reader
+import Data.FileEmbed
+import Data.Function
 import Data.IORef
-import Data.Maybe
-import qualified Data.List.NonEmpty as NonEmpty
+import Data.Time
+import Prelude hiding (mod)
+import System.IO
+import System.Posix.Signals
 import qualified Data.IntMap as IM
 import qualified Data.List as L
+import qualified Data.List.NonEmpty as NonEmpty
 
-import Control.Monad.Reader
-import System.Posix.Signals
+import GHC
+import GHC.Data.StringBuffer
+import GHC.Driver.DynFlags as GHC
+import GHC.Driver.Env
+import GHC.Driver.Errors.Types
+import GHC.Driver.Make
+import GHC.Driver.Messager
+import GHC.Runtime.Heap.Inspect
+import GHC.Runtime.Interpreter as GHCi
+import GHC.Runtime.Loader as GHC
+import GHC.Types.Error
+import GHC.Types.SourceError
+import GHC.Types.Unique.Supply as GHC
+import GHC.Unit.Module.Graph
+import GHC.Unit.Module.ModSummary as GHC
+import GHC.Unit.Types
+import GHC.Utils.Logger as GHC
+import GHC.Utils.Outputable as GHC
 
 import GHC.Debugger.Interface.Messages
-import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Runtime.Term.Cache
+import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Session
-import GHC.ByteCode.Breakpoints
 import qualified GHC.Debugger.Breakpoint.Map as BM
 
 -- | A debugger action.
@@ -333,91 +320,6 @@ makeInMemoryHDV initialDynFlags = do
         ]
       )
 
-
--- | Registers or deletes a breakpoint in the GHC session and from the list of
--- active breakpoints that is kept in 'DebuggerState', depending on the
--- 'BreakpointStatus' being set.
---
--- Returns @True@ when the breakpoint status is changed.
-registerBreakpoint :: GHC.BreakpointId -> BreakpointStatus -> BreakpointKind -> Debugger (Bool, [GHC.InternalBreakpointId])
-registerBreakpoint bp status kind = do
-
-  -- Set breakpoint in GHC session
-  let breakpoint_count = breakpointStatusInt status
-  hsc_env <- GHC.getSession
-  internal_break_ids <- getInternalBreaksOf bp
-  changed <- forM internal_break_ids $ \ibi -> do
-    GHC.setupBreakpoint (hscInterp hsc_env) ibi breakpoint_count
-
-    -- Register breakpoint in Debugger state for every internal breakpoint
-    brksMapRef <- asks activeBreakpoints
-    liftIO $ atomicModifyIORef' brksMapRef $ \brksMap ->
-      case status of
-        -- Disabling the breakpoint:
-        BreakpointDisabled ->
-          (BM.delete ibi brksMap, True{-assume map always contains BP, thus changes on deletion-})
-
-        -- Enabling the breakpoint:
-        _ -> case BM.lookup ibi brksMap of
-          Just (status', _kind)
-            | status' == status
-            -> -- Nothing changed, OK
-               (brksMap, False)
-          _ -> -- Else, insert
-            (BM.insert ibi (status, kind) brksMap, True)
-
-  return (any id changed, internal_break_ids)
-
-
--- | Get a list with all currently active breakpoints on the given module (by path)
---
--- If the path argument is @Nothing@, get all active function breakpoints instead
-getActiveBreakpoints :: Maybe FilePath -> Debugger [GHC.InternalBreakpointId]
-getActiveBreakpoints mfile = do
-  bm <- asks activeBreakpoints >>= liftIO . readIORef
-  case mfile of
-    Just file -> do
-      mms <- getModuleByPath file
-      case mms of
-        Right ms -> do
-          hsc_env    <- getSession
-          imodBreaks <- liftIO $ expectJust <$> readIModBreaksMaybe (hsc_HUG hsc_env) (ms_mod ms)
-          return
-            [ ibi
-            | ibi <- BM.keys bm
-            , getBreakSourceMod ibi imodBreaks == ms_mod ms
-            -- assert: status is always > disabled
-            ]
-        Left e -> do
-          displayWarnings [e]
-          return []
-    Nothing -> do
-      return
-        [ ibi
-        | (ibi, (status, kind)) <- BM.toList bm
-        -- Keep only function breakpoints in this case
-        , FunctionBreakpointKind == kind
-        , assert (status > BreakpointDisabled) True
-        ]
-
--- | List all loaded modules 'ModSummary's
-getAllLoadedModules :: GHC.GhcMonad m => m [GHC.ModSummary]
-getAllLoadedModules =
-  (GHC.mgModSummaries <$> GHC.getModuleGraph) >>=
-    filterM (\ms -> GHC.isLoadedModule (GHC.ms_unitid ms) (GHC.ms_mod_name ms))
-
--- | Get a 'ModSummary' of a loaded module given its 'FilePath'
-getModuleByPath :: FilePath -> Debugger (Either String ModSummary)
-getModuleByPath path = do
-  -- do this every time as the loaded modules may have changed
-  lms <- getAllLoadedModules
-  absPath <- liftIO $ makeAbsolute path
-  let matches ms = normalise (msHsFilePath ms) == normalise absPath
-  return $ case filter matches lms of
-    [x] -> Right x
-    [] -> Left $ "No module matched " ++ path ++ ".\nLoaded modules:\n" ++ show (map msHsFilePath lms) ++ "\n. Perhaps you've set a breakpoint on a module that isn't loaded into the session?"
-    xs -> Left $ "Too many modules (" ++ showPprUnsafe xs ++ ") matched " ++ path ++ ". Please report a bug at https://github.com/well-typed/haskell-debugger."
-
 --------------------------------------------------------------------------------
 -- Variable references
 --------------------------------------------------------------------------------
@@ -501,25 +403,6 @@ deepseqTerm hsc_env t = case t of
                        return t{wrapped_term = wrapped_term'}
   _              -> do seqTerm hsc_env t
 
--- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
---
--- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
-continueToCompletion :: Debugger GHC.ExecResult
-continueToCompletion = do
-  execr <- GHC.resumeExec GHC.RunToCompletion Nothing
-  case execr of
-    GHC.ExecBreak{} -> continueToCompletion
-    GHC.ExecComplete{} -> return execr
-
--- | Turn a 'BreakpointStatus' into its 'Int' representation for 'BreakArray'
-breakpointStatusInt :: BreakpointStatus -> Int
-breakpointStatusInt = \case
-  BreakpointEnabled          -> BA.breakOn  -- 0
-  BreakpointDisabled         -> BA.breakOff -- -1
-  BreakpointAfterCount n     -> n           -- n
-  BreakpointWhenCond{}       -> BA.breakOn  -- always stop, cond evaluated after
-  BreakpointAfterCountCond{} -> BA.breakOn  -- ditto, decrease only when cond is true
-
 -- | Generate a new unique 'Int'
 freshInt :: Debugger Int
 freshInt = do
@@ -549,10 +432,22 @@ instance Show DebuggerFailedToLoad where
 
 --------------------------------------------------------------------------------
 
-type Warning = String
+type Warning = SDoc
 
 displayWarnings :: [Warning] -> Debugger ()
-displayWarnings = liftIO . putStrLn . unlines
+displayWarnings ws = do
+  logger <- getLogger
+  liftIO $ logMsg logger MCInfo noSrcSpan (vcat ws)
+
+--------------------------------------------------------------------------------
+-- * Modules
+--------------------------------------------------------------------------------
+
+-- | List all loaded modules 'ModSummary's
+getAllLoadedModules :: GHC.GhcMonad m => m [GHC.ModSummary]
+getAllLoadedModules =
+  (GHC.mgModSummaries <$> GHC.getModuleGraph) >>=
+    filterM (\ms -> GHC.isLoadedModule (ms_unitid ms) (ms_mod_name ms))
 
 --------------------------------------------------------------------------------
 -- Instances
@@ -565,12 +460,3 @@ instance GHC.GhcMonad Debugger where
   getSession = liftGhc GHC.getSession
   setSession s = liftGhc $ GHC.setSession s
 
---------------------------------------------------------------------------------
-
--- | Find all the internal breakpoints that use the given source-level breakpoint id
-getInternalBreaksOf :: BreakpointId -> Debugger [InternalBreakpointId]
-getInternalBreaksOf bi = do
-  bs <- mkBreakpointOccurrences
-  return $
-    fromMaybe [] {- still not found after refresh -} $
-      lookupBreakpointOccurrences bs bi
