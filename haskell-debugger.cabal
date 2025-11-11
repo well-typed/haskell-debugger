@@ -63,6 +63,7 @@ library
                       GHC.Debugger.Runtime.Term.Cache,
 
                       GHC.Debugger.Monad,
+
                       GHC.Debugger.Session,
                       GHC.Debugger.Interface.Messages
     -- other-modules:

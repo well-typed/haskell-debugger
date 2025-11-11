@@ -2,9 +2,7 @@
 module Main where
 
 import System.Environment
-import System.Process
 import Data.Maybe
-import Data.Aeson
 import Data.IORef
 import Text.Read
 import Control.Concurrent
@@ -39,8 +37,8 @@ import Development.Debug.Interactive
 --------------------------------------------------------------------------------
 
 defaultStdoutForwardingAction :: T.Text -> IO ()
-defaultStdoutForwardingAction line = do
-  T.hPutStrLn stderr ("[INTERCEPTED STDOUT] " <> line)
+defaultStdoutForwardingAction l = do
+  T.hPutStrLn stderr ("[INTERCEPTED STDOUT] " <> l)
 
 main :: IO ()
 main = do

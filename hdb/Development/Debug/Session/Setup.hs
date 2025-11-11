@@ -75,6 +75,7 @@ hieBiosSetup :: Recorder (WithSeverity FlagsLog)
              -> ExceptT String IO (Either String HieBiosFlags)
 hieBiosSetup logger projectRoot entryFile = do
 
+  logT "Figuring out the right flags to compile the project using hie-bios..."
   cradle <- hieBiosCradle logger projectRoot entryFile & ExceptT
 
   -- GHC is found in PATH (by hie-bios as well).

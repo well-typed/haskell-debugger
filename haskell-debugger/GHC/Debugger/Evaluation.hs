@@ -186,6 +186,16 @@ doEval expr = do
     Right ExecBreak{} -> continueToCompletion >>= handleExecResult
     Right r@ExecComplete{} -> handleExecResult r
 
+-- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
+--
+-- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
+continueToCompletion :: Debugger GHC.ExecResult
+continueToCompletion = do
+  execr <- GHC.resumeExec GHC.RunToCompletion Nothing
+  case execr of
+    GHC.ExecBreak{} -> continueToCompletion
+    GHC.ExecComplete{} -> return execr
+
 -- | Turn a GHC's 'ExecResult' into an 'EvalResult' response
 handleExecResult :: GHC.ExecResult -> Debugger EvalResult
 handleExecResult = \case
@@ -206,7 +216,7 @@ handleExecResult = \case
       case BM.lookup bid bm of
         -- todo: BreakpointAfterCountCond is not handled yet.
         Just (BreakpointWhenCond cond, _) -> do
-          let evalFailedMsg e = "Evaluation of conditional breakpoint expression failed with " ++ e ++ "\nIgnoring..."
+          let evalFailedMsg e = text $ "Evaluation of conditional breakpoint expression failed with " ++ e ++ "\nIgnoring..."
           let resume = GHC.resumeExec GHC.RunToCompletion Nothing >>= handleExecResult
           doEval cond >>= \case
             EvalStopped{} -> error "impossible for doEval"

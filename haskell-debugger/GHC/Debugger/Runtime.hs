@@ -7,14 +7,12 @@ import qualified Data.List as L
 
 import GHC
 import GHC.Utils.Outputable
-import GHC.Utils.Trace
 import GHC.Types.FieldLabel
 import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Runtime.Term.Cache
-import GHC.Debugger.Runtime.Instances
 import GHC.Debugger.Monad
 
 -- | Obtain the runtime 'Term' from a 'TermKey'.

@@ -3,26 +3,17 @@ module GHC.Debugger.Runtime.Instances where
 
 import Control.Exception
 import Control.Monad
-import Data.Either
 import Control.Monad.Reader
-import Data.IORef
-import Data.Maybe
-import qualified Data.List as L
 
 import GHC
-import GHC.Utils.Logger
-import GHC.Types.Error
 import GHC.Builtin.Names
-import GHC.Core.Class
-import GHC.Core.InstEnv
-import GHC.Unit.Module.Graph
 import GHC.Core.TyCon
 import GHC.Core.Type
 import GHC.Driver.Config
 import GHC.Driver.Env
-import GHC.Driver.Errors.Types
 import GHC.Driver.Main
-import GHC.HsToCore
+import GHC.HsToCore.Expr
+import GHC.HsToCore.Monad
 import GHC.Plugins
 import GHC.Rename.Env
 import GHC.Rename.Expr
@@ -30,33 +21,18 @@ import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as Interp
 import GHC.Tc.Gen.Expr
-import GHC.Tc.Utils.Env
-import GHC.Tc.Utils.TcType
-import GHC.ThToHs
-import GHC.Types.FieldLabel
-import GHC.Types.Id
-import GHC.Types.Name
-import GHC.Types.Var
-import GHC.Unit.Finder
-import GHC.Unit.State
-import GHC.Utils.Outputable
-import GHCi.Message
-import qualified GHC.Linker.Loader as Loader
-import qualified GHC.Runtime.Heap.Inspect as Inspect
-import qualified GHC.Runtime.Debugger as GHCD
-
-import GHC.Debugger.Monad
-import GHC.Debugger.Runtime.Term.Cache
-import GHC.Debugger.Runtime.Term.Key
-import GHC.Debugger.Utils
-import GHC.Debugger.View.Class
-import GHC.Tc.Utils.Monad
-import GHC.Debugger.Session
 import GHC.Tc.Solver
 import GHC.Tc.Types.Evidence
+import GHC.Tc.Utils.Env
+import GHC.Tc.Utils.Monad
+import GHC.Tc.Utils.TcType
 import GHC.Tc.Zonk.Type
-import GHC.HsToCore.Monad
-import GHC.HsToCore.Expr
+import GHC.Types.Error
+import GHC.Utils.Logger
+import GHCi.Message
+
+import GHC.Debugger.Monad
+import GHC.Debugger.View.Class
 
 --------------------------------------------------------------------------------
 -- * High level interface for 'DebugView' on 'Term's
@@ -68,8 +44,7 @@ debugValueTerm :: Term -> Debugger (Maybe VarValue)
 debugValueTerm term = do
   hsc_env <- getSession
   let interp = hscInterp hsc_env
-  let dflags = hsc_dflags hsc_env
-  let ty = Inspect.termType term
+  let ty = termType term
   mbInst <- findDebugViewInstance ty
   case mbInst of
     Nothing -> return Nothing
@@ -119,13 +94,12 @@ debugFieldsTerm :: Term -> Debugger (Maybe [(String, Term)])
 debugFieldsTerm term = do
   hsc_env <- getSession
   let interp = hscInterp hsc_env
-  let dflags = hsc_dflags hsc_env
-  let ty = Inspect.termType term
+  let ty = termType term
   mbInst <- findDebugViewInstance ty
   case mbInst of
     Nothing -> return Nothing
     Just DebugViewInstance
-      {instDebugFields, varFieldsIOTy, varFieldValueTy, ioTyCon} -> do
+      {instDebugFields, varFieldsIOTy} -> do
         liftIO (instDebugFields (val term)) >>= \case
           Left _e ->
             -- exception! ignore.
@@ -153,7 +127,7 @@ debugFieldsTerm term = do
                       seqTerm hsc_env varFieldValTerm >>= \case
                         Term{subTerms=[unexpandedValueTerm]} -> do
                           actualValueTerm <- liftIO $ do
-                            let val_ty = Inspect.termType unexpandedValueTerm
+                            let val_ty = termType unexpandedValueTerm
                             cvObtainTerm hsc_env defaultDepth False{-don't force-} val_ty (val unexpandedValueTerm)
                           return (fieldStr, actualValueTerm)
 
@@ -193,10 +167,6 @@ data DebugViewInstance = DebugViewInstance
   , varValueIOTy  :: Type
     -- | 'VarFieldsIO' type
   , varFieldsIOTy :: Type
-    -- | 'VarFieldValue' type
-  , varFieldValueTy :: Type
-    -- | 'IO' Ty con
-  , ioTyCon :: TyCon
   }
 
 --------------------------------------------------------------------------------
@@ -262,8 +232,6 @@ findDebugViewInstance needle_ty = do
                         =<< lookupTypeOccRn (mkOrig modl (mkTcOcc "VarValueIO"))
         varFieldsIOTy   <-  fmap mkTyConTy . tcLookupTyCon
                         =<< lookupTypeOccRn (mkOrig modl (mkTcOcc "VarFieldsIO"))
-        varFieldValueTy <-  fmap mkTyConTy . tcLookupTyCon
-                        =<< lookupTypeOccRn (mkOrig modl (mkTcOcc "VarFieldValue"))
 
         ioTyCon <- tcLookupTyCon ioTyConName
 
@@ -304,8 +272,6 @@ findDebugViewInstance needle_ty = do
                 (EvalThis debugFields_fval `EvalApp` EvalThis x_fval)
           , varValueIOTy
           , varFieldsIOTy
-          , varFieldValueTy
-          , ioTyCon
           }
 
       case res of
