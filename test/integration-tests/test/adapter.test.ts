@@ -640,8 +640,8 @@ describe("Debug Adapter Tests", function () {
                   extraGhcArgs: []
                 })
 
-            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 29 }
-            await dc.hitBreakpoint(config, { path: config.entryFile, line: 29 }, expected, expected);
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 26 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 26 }, expected, expected);
 
             let locals = await fetchLocalVars();
             const tVar = await forceLazy(locals.get('action'));
