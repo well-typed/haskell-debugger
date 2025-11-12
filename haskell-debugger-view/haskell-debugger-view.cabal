@@ -10,18 +10,40 @@ extra-doc-files: CHANGELOG.md
 common warnings
     ghc-options: -Wall
 
+flag containers
+    description: Depend and provide custom views for containers
+    manual: True
+    default: True
+
+flag text
+    description: Depend and provide custom views for text
+    manual: True
+    default: True
+
+flag bytestring
+    description: Depend and provide custom views for bytestring
+    manual: True
+    default: True
+
 library
     import:           warnings
     -- If you add a module here make sure to also add this module to the list
     -- of modules that we attempt to load when haskell-debug-view is not
     -- dependend upon transitively, in GHC.Debugger.Runtime....
     exposed-modules:  GHC.Debugger.View.Class
-                      GHC.Debugger.View.Containers
-                      GHC.Debugger.View.Text
-                      GHC.Debugger.View.ByteString
-    build-depends:    base,
-                      containers >= 0.7 && < 0.9,
-                      text >= 2.1 && < 2.3,
-                      bytestring >= 0.12.1 && < 0.13,
+    if flag(containers)
+        exposed-modules: GHC.Debugger.View.Containers
+        build-depends:   containers >= 0.7 && < 0.9,
+        cpp-options:     -DHASKELL_DEBUGGER_VIEW_CONTAINERS
+    if flag(text)
+        exposed-modules: GHC.Debugger.View.Text
+        build-depends:   text >= 2.1 && < 2.3,
+        cpp-options:     -DHASKELL_DEBUGGER_VIEW_TEXT
+    if flag(bytestring)
+        exposed-modules: GHC.Debugger.View.ByteString
+        build-depends:   bytestring >= 0.12.1 && < 0.13,
+        cpp-options:     -DHASKELL_DEBUGGER_VIEW_BYTESTRING
+
+    build-depends:    base
     hs-source-dirs:   src
     default-language: GHC2021
