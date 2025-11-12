@@ -207,7 +207,7 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
       throwErrors (fmap GhcDriverMessage errs_base)
 #endif
 
-    (hdv_uid, success) <-
+    (hdv_uid, loadedBuiltinModNames, success) <-
       findHsDebuggerViewUnitId mod_graph_base >>= \case
         Nothing -> do
           -- Not imported by any module: no custom views. Therefore, the builtin
@@ -229,19 +229,27 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
           -- Load only up to debugger-view modules
           load' noIfaceCache (GHC.LoadUpTo [mkModule hsDebuggerViewInMemoryUnitId debuggerViewClassModName])
                 mkUnknownDiagnostic (Just msg) mod_graph >>= \case
-            Failed -> (Nothing,) <$> do
+            Failed -> (Nothing, [],) <$> do
               -- Failed to load debugger-view modules! Try again without the haskell-debugger-view modules
               logger <- getLogger
               liftIO $ logMsg logger MCInfo noSrcSpan $
                 text "Failed to compile built-in DebugView modules! Ignoring custom debug views."
               load' noIfaceCache GHC.LoadAllTargets mkUnknownDiagnostic (Just msg) mod_graph_base
-            Succeeded -> (Just hsDebuggerViewInMemoryUnitId,) <$> do
+            Succeeded -> (Just hsDebuggerViewInMemoryUnitId, [debuggerViewClassModName],) <$> do
               -- It worked! Now load everything else
               load' noIfaceCache GHC.LoadAllTargets mkUnknownDiagnostic (Just msg) mod_graph
 
-        Just hdv_uid -> (Just hdv_uid,) <$>
-          -- haskell-debug-view is in module graph already, so just load it all.
-          load' noIfaceCache GHC.LoadAllTargets mkUnknownDiagnostic (Just msg) mod_graph_base
+        Just hdv_uid ->
+          -- TODO: We assume for now that if you depended on
+          -- @haskell-debugger-view@, then you also depend on all its
+          -- transitive dependencies (containers, text, ...), thus can load all
+          -- custom views. Hence all @debuggerViewBuiltinModNames@.
+          -- In the future, we may want to guard all dependencies behind cabal
+          -- flags that the user can tweak when depending on
+          -- @haskell-debugger-view@.
+          (Just hdv_uid, debuggerViewBuiltinModNames,) <$>
+            -- haskell-debug-view is in module graph already, so just load it all.
+            load' noIfaceCache GHC.LoadAllTargets mkUnknownDiagnostic (Just msg) mod_graph_base
 
     when (GHC.failed success) $ liftIO $
       throwM DebuggerFailedToLoad
@@ -250,27 +258,29 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
     -- dbgView should always be available, either because we manually loaded it
     -- or because it's in the transitive closure.
-    let dbgViewImp uid
+    let dbgViewImps uid
           -- Using in-memory hs-dbg-view.
           -- It's a home-unit, so refer to it directly
           | uid == hsDebuggerViewInMemoryUnitId
-          = GHC.IIModule (mkModule (RealUnit (Definite uid)) debuggerViewClassModName)
+          = map (GHC.IIModule . mkModule (RealUnit (Definite uid))) loadedBuiltinModNames
           -- It's available in a unit in the transitive closure.
           -- Resolve it.
           | otherwise
-          = GHC.IIDecl (GHC.simpleImportDecl debuggerViewClassModName)
+          = map (\mn ->
+              GHC.IIDecl (GHC.simpleImportDecl mn)
               { ideclPkgQual = RawPkgQual
                   StringLiteral
                     { sl_st = NoSourceText
                     , sl_fs = mkFastString (unitIdString uid)
                     , sl_tc = Nothing
                     }
-              }
+              }) loadedBuiltinModNames
+
     mss <- getAllLoadedModules
 
     GHC.setContext
       (preludeImp :
-        (case hdv_uid of Just uid -> [dbgViewImp uid]; _ -> []) ++
+        (case hdv_uid of Just uid -> dbgViewImps uid; _ -> []) ++
         map (GHC.IIModule . GHC.ms_mod) mss)
 
     runReaderT action =<< initialDebuggerState hdv_uid

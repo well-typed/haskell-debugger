@@ -662,7 +662,7 @@ describe("Debug Adapter Tests", function () {
             assert.strictEqual(_5Var.value, '2345.0');
         })
 
-        it('user-defined custom instance without haskell-debugger-view dependency (issue #47)', async () => {
+        it('built-in custom instance without haskell-debugger-view dependency (issue #47)', async () => {
             let config = mkConfig({
                   projectRoot: "/data/T47b",
                   entryFile: "Main.hs",
@@ -686,6 +686,37 @@ describe("Debug Adapter Tests", function () {
             const _3Var = await _1Child.get('snd');
             assert.strictEqual(_3Var.value, '3456.0');
         })
+
+        it('hdv dependency with containers module (issue #47)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/T47c",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 13 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 13 }, expected, expected);
+
+            // Check IntMap custom view
+            let locals = await fetchLocalVars();
+            const tVar = await forceLazy(locals.get('action'));
+            assert.strictEqual(tVar.value, "IntMap")
+            const tChild = await expandVar(tVar);
+            const _1Var = await forceLazy(tChild.get('3'));
+            assert.strictEqual(_1Var.value, '"one"');
+            const _2Var = await forceLazy(tChild.get('2'));
+            assert.strictEqual(_2Var.value, '"two"');
+        })
+
+        // it('hdv in-memory with containers module (issue #47)', async () => {
+        // ...
+        // })
+        //
+        // it('hdv in-memory without containers module (issue #47)', async () => {
+        // ...
+        // })
     })
     describe("Stepping out (step-out)", function () {
 
