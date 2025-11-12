@@ -250,15 +250,22 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
     -- dbgView should always be available, either because we manually loaded it
     -- or because it's in the transitive closure.
-    let dbgViewImp uid = GHC.IIDecl
-          (GHC.simpleImportDecl debuggerViewClassModName)
-            { ideclPkgQual = RawPkgQual
-                StringLiteral
-                  { sl_st = NoSourceText
-                  , sl_fs = mkFastString (unitIdString uid)
-                  , sl_tc = Nothing
-                  }
-            }
+    let dbgViewImp uid
+          -- Using in-memory hs-dbg-view.
+          -- It's a home-unit, so refer to it directly
+          | uid == hsDebuggerViewInMemoryUnitId
+          = GHC.IIModule (mkModule (RealUnit (Definite uid)) debuggerViewClassModName)
+          -- It's available in a unit in the transitive closure.
+          -- Resolve it.
+          | otherwise
+          = GHC.IIDecl (GHC.simpleImportDecl debuggerViewClassModName)
+              { ideclPkgQual = RawPkgQual
+                  StringLiteral
+                    { sl_st = NoSourceText
+                    , sl_fs = mkFastString (unitIdString uid)
+                    , sl_tc = Nothing
+                    }
+              }
     mss <- getAllLoadedModules
 
     GHC.setContext
