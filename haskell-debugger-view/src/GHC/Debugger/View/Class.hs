@@ -1,14 +1,6 @@
 {-# LANGUAGE DerivingVia, StandaloneDeriving, ViewPatterns, ImpredicativeTypes #-}
 module GHC.Debugger.View.Class where
 
--- import qualified Data.ByteString    as BS
---
--- import qualified Data.Text          as T
--- import qualified Data.Text.Encoding as T
---
--- import qualified Data.IntMap        as IM
--- import qualified Data.Map           as M
-
 -- | The representation of the value for some variable on the debugger
 data VarValue = VarValue
   { -- | The value to display inline for this variable

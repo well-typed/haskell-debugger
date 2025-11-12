@@ -14,9 +14,20 @@ import GHC.Data.StringBuffer
 -- * Built-in Module names
 --------------------------------------------------------------------------------
 
+-- | The set of modules to load from @haskell-debugger-view@.
+-- NOTE: This list should always be kept up to date with the modules listed in
+-- @exposed-modules@ in @haskell-debugger-view@ to make sure all (possibly
+-- orphan) instances are loaded and available.
+debuggerViewBuiltinModNames :: [ModuleName]
+debuggerViewBuiltinModNames = [debuggerViewClassModName, debuggerViewContainersModName]
+
 -- | GHC.Debugger.View.Class
 debuggerViewClassModName :: ModuleName
 debuggerViewClassModName = mkModuleName "GHC.Debugger.View.Class"
+
+-- | GHC.Debugger.View.Containers
+debuggerViewContainersModName :: ModuleName
+debuggerViewContainersModName = mkModuleName "GHC.Debugger.View.Containers"
 
 --------------------------------------------------------------------------------
 -- * In memory haskell-debugger-view
@@ -56,3 +67,7 @@ makeInMemoryHsDebuggerViewUnit initialDynFlags = do
 -- | The contents of GHC.Debugger.View.Class in memory
 debuggerViewClassContents :: StringBuffer
 debuggerViewClassContents = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/Class.hs")
+
+-- | The contents of GHC.Debugger.View.Containers in memory
+debuggerViewContainersContents :: StringBuffer
+debuggerViewContainersContents = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/Containers.hs")
