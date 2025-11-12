@@ -17,6 +17,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.Function
 import Data.IORef
+import Data.Maybe
 import Prelude hiding (mod)
 import System.IO
 import System.Posix.Signals
@@ -24,12 +25,15 @@ import qualified Data.IntMap as IM
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
 
+import GHC.Utils.Trace
+
 import GHC
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
 import GHC.Driver.Errors.Types
+import GHC.Driver.Main
 import GHC.Driver.Make
-import GHC.Driver.Messager
+import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Loader as GHC
@@ -241,13 +245,15 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
 
     -- Set interactive context to import all loaded modules
     let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
-    -- dbgView should always be available, either because we manually loaded it or because it's in the transitive closure.
-    let dbgViewImp = GHC.IIDecl . GHC.simpleImportDecl $ debuggerViewClassModName
+    -- dbgView should always be available, either because we manually loaded it
+    -- or because it's in the transitive closure.
+    let dbgViewImp uid = (mkModule (RealUnit (Definite uid)) debuggerViewClassModName)
     mss <- getAllLoadedModules
-    GHC.setContext $
-      preludeImp
-        : (case hdv_uid of Just _ -> [dbgViewImp]; _ -> [])
-        ++ map (GHC.IIModule . GHC.ms_mod) mss
+
+    GHC.setContext
+      (preludeImp :
+        (case hdv_uid of Just uid -> [GHC.IIModule $ dbgViewImp uid]; _ -> []) ++
+        map (GHC.IIModule . GHC.ms_mod) mss)
 
     runReaderT action =<< initialDebuggerState hdv_uid
 

@@ -25,6 +25,7 @@ module Development.Debug.Adapter.Exit where
 import DAP
 import Data.Function
 import System.IO
+import Control.Monad
 import Control.Monad.IO.Class
 import Control.Exception
 import Control.Exception.Context
@@ -71,12 +72,14 @@ exitCleanupWithMsg
   -- killing the output thread with @destroyDebugSession@)
   -> String
   -- ^ Error message, logged with notification
-  -> DebugAdaptor a
+  -> DebugAdaptor ()
 exitCleanupWithMsg final_handle msg = do
   destroyDebugSession -- kill all session threads (including the output thread)
-  do                  -- flush buffer and get all pending output from GHC
-    c <- T.hGetContents final_handle & liftIO
-    Output.neutral c
+  has_data <- hReady final_handle & liftIO
+  when has_data $ do
+      -- get all pending output from GHC
+      c <- T.hGetContents final_handle & liftIO
+      Output.neutral c
   exitWithMsg msg
 
 -- | Logs the error to the debug console and sends a terminate event

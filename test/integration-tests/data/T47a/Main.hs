@@ -1,9 +1,6 @@
 module Main where
 import GHC.Debugger.View.Class
 
-import qualified Data.IntMap as IM
-import qualified Data.Map as M
-
 data X = X String
     deriving Show
 
@@ -15,7 +12,7 @@ instance DebugView X where
     debugFields (X s) = VarFields
         [ ("field1", (VarFieldValue s))
         , ("myfield2", (VarFieldValue (length s)))
-        , ("field4", (VarFieldValue 2345))
+        , ("field4", (VarFieldValue (2345 :: Int)))
         , ("field5", (VarFieldValue (2345 :: Double)))
         -- important! test no-debug-view type inside of debug-view instance. this used to crash:
         , ("field3", (VarFieldValue (Y (show (length "inner Y")))))
