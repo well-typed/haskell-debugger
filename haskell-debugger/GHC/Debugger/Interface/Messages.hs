@@ -10,8 +10,6 @@ module GHC.Debugger.Interface.Messages where
 
 import qualified GHC
 import qualified GHC.Utils.Outputable as GHC
-import GHC.Unit.Types
-import Language.Haskell.Syntax.Module.Name
 
 --------------------------------------------------------------------------------
 -- Commands

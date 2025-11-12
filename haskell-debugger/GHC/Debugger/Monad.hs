@@ -25,9 +25,8 @@ import qualified Data.IntMap as IM
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
 
-import GHC.Utils.Trace
-
 import GHC
+import GHC.Data.FastString
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
 import GHC.Driver.Errors.Types
@@ -38,13 +37,16 @@ import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Loader as GHC
 import GHC.Types.Error
+import GHC.Types.PkgQual
 import GHC.Types.SourceError
+import GHC.Types.SourceText
 import GHC.Types.Unique.Supply as GHC
 import GHC.Unit.Module.Graph
 import GHC.Unit.Module.ModSummary as GHC
 import GHC.Unit.Types
 import GHC.Utils.Logger as GHC
 import GHC.Utils.Outputable as GHC
+import qualified GHC.LanguageExtensions as LangExt
 
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime.Term.Cache
@@ -158,7 +160,8 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
           , GHC.canUseColor = conf.supportsANSIStyling
           , GHC.canUseErrorLinks = conf.supportsANSIHyperlinks
           }
-          -- Default GHCi settings
+          -- Default debugger settings
+          `GHC.xopt_set` LangExt.PackageImports
           `GHC.gopt_set` GHC.Opt_ImplicitImportQualified
           `GHC.gopt_set` GHC.Opt_IgnoreOptimChanges
           `GHC.gopt_set` GHC.Opt_IgnoreHpcChanges
@@ -247,12 +250,20 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
     -- dbgView should always be available, either because we manually loaded it
     -- or because it's in the transitive closure.
-    let dbgViewImp uid = (mkModule (RealUnit (Definite uid)) debuggerViewClassModName)
+    let dbgViewImp uid = GHC.IIDecl
+          (GHC.simpleImportDecl debuggerViewClassModName)
+            { ideclPkgQual = RawPkgQual
+                StringLiteral
+                  { sl_st = NoSourceText
+                  , sl_fs = mkFastString (unitIdString uid)
+                  , sl_tc = Nothing
+                  }
+            }
     mss <- getAllLoadedModules
 
     GHC.setContext
       (preludeImp :
-        (case hdv_uid of Just uid -> [GHC.IIModule $ dbgViewImp uid]; _ -> []) ++
+        (case hdv_uid of Just uid -> [dbgViewImp uid]; _ -> []) ++
         map (GHC.IIModule . GHC.ms_mod) mss)
 
     runReaderT action =<< initialDebuggerState hdv_uid

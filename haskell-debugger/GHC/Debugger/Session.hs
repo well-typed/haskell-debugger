@@ -53,9 +53,6 @@ import qualified GHC.Unit.State                        as State
 import GHC.Driver.Env
 import GHC.Types.SrcLoc
 import Language.Haskell.Syntax.Module.Name
-import GHC.Utils.Trace
-import GHC.Utils.Outputable (ppr, ($$))
-import GHC.Data.FastString
 import qualified Data.Foldable as Foldable
 import qualified GHC.Unit.Home.Graph as HUG
 import Data.Maybe
