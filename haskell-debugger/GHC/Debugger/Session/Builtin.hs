@@ -25,11 +25,13 @@ import Data.Time
 
 import GHC
 import GHC.Unit
+import GHC.Driver.Session
 import GHC.Driver.Env
 import GHC.Driver.Monad
 import GHC.Data.StringBuffer
 import qualified GHC.Unit.Home.Graph as HUG
 import qualified GHC.Unit.Home.PackageTable as HPT
+import qualified GHC.Unit.State as State
 
 import GHC.Debugger.Session
 
@@ -69,27 +71,38 @@ hsDebuggerViewInMemoryUnitId = toUnitId $ stringToUnit "haskell-debugger-view-in
 --  and add it to the HUG
 addInMemoryHsDebuggerViewUnit
   :: GhcMonad m
-  => DynFlags -- ^ Initial dynflags
+  => [UnitId] -- ^ The unit-ids from the transitive dependencies closure of the user-given targets
+  -> DynFlags -- ^ Dynflags resulting from first downsweep of user given targets
   -> m ()
-addInMemoryHsDebuggerViewUnit initialDynFlags = do
+addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
   let imhdv_dflags = initialDynFlags
         { homeUnitId_ = hsDebuggerViewInMemoryUnitId
         , importPaths = []
-        , packageFlags = []
+        , packageFlags =
+          [ ExposePackage
+                  ("-package-id " ++ unitIdString unitId)
+                  (UnitIdArg $ RealUnit (Definite unitId))
+                  (ModRenaming True [])
+          | unitId <- base_uids
+          , unitId /= rtsUnitId
+          , unitId /= ghcInternalUnitId
+          ]
         }
+        & setGeneralFlag' Opt_HideAllPackages
+  hsc_env <- getSession
+  (dbs,unit_state,home_unit,mconstants) <- liftIO $ State.initUnits (hsc_logger hsc_env) imhdv_dflags Nothing mempty
+  updated_dflags <- liftIO $ updatePlatformConstants imhdv_dflags mconstants
   emptyHpt <- liftIO HPT.emptyHomePackageTable
   modifySession $ \env ->
     env
       -- Inserts the in-memory hdv unit
       & hscUpdateHUG (\hug ->
-          let idebugger_hue =
-                fromJust $ HUG.unitEnv_lookup_maybe interactiveGhcDebuggerUnitId hug
-              hdv_hue = HUG.HomeUnitEnv
-               { HUG.homeUnitEnv_units = HUG.homeUnitEnv_units idebugger_hue
-               , HUG.homeUnitEnv_unit_dbs = Nothing
-               , HUG.homeUnitEnv_dflags = imhdv_dflags
+          let hdv_hue = HUG.HomeUnitEnv
+               { HUG.homeUnitEnv_units = unit_state
+               , HUG.homeUnitEnv_unit_dbs = Just dbs
+               , HUG.homeUnitEnv_dflags = updated_dflags
                , HUG.homeUnitEnv_hpt = emptyHpt
-               , HUG.homeUnitEnv_home_unit = Just (DefiniteHomeUnit hsDebuggerViewInMemoryUnitId Nothing)
+               , HUG.homeUnitEnv_home_unit = Just home_unit
                }
            in HUG.unitEnv_insert hsDebuggerViewInMemoryUnitId hdv_hue hug
       )
