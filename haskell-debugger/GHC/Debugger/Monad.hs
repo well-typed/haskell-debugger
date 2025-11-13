@@ -206,7 +206,8 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
         -- ones haven't been loaded. In this case, we will load the package ourselves.
 
         -- Add the custom unit to the HUG
-        addInMemoryHsDebuggerViewUnit =<< getDynFlags
+        let base_dep_uids = [uid | UnitNode _ uid <- mg_mss mod_graph_base]
+        addInMemoryHsDebuggerViewUnit base_dep_uids =<< getDynFlags
 
         tryLoadHsDebuggerViewModule if_cache (const False) debuggerViewClassModName debuggerViewClassContents
           >>= \case
@@ -217,6 +218,8 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
                 text "Failed to compile built-in DebugView class module! Ignoring custom debug views."
               return []
             Succeeded -> (debuggerViewClassModName:) . concat <$> do
+              -- TODO: We could be a bit smarter and filter out if there isn't
+              -- a -package flag for the package we need for each module.
               forM debuggerViewInstancesMods $ \(modName, modContent) -> do
                 tryLoadHsDebuggerViewModule if_cache
                     ((== hsDebuggerViewInMemoryUnitId) . GHC.targetUnitId)
