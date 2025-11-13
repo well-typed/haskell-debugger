@@ -11,6 +11,7 @@
 
 module GHC.Debugger.Monad where
 
+import Control.Concurrent
 import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
@@ -27,6 +28,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 
 import GHC
 import GHC.Data.FastString
+import GHC.Data.StringBuffer
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
 import GHC.Driver.Errors.Types
@@ -46,6 +48,7 @@ import GHC.Unit.Module.ModSummary as GHC
 import GHC.Unit.Types
 import GHC.Utils.Logger as GHC
 import GHC.Utils.Outputable as GHC
+import GHC.Utils.Trace
 import qualified GHC.LanguageExtensions as LangExt
 
 import GHC.Debugger.Interface.Messages
@@ -190,67 +193,57 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     -- Setup base HomeUnitGraph
     setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
 
-#if MIN_VERSION_ghc(9,15,0)
-    msg <- batchMultiMsg <$> getSession
-#else
-    let msg = batchMultiMsg
-#endif
+    if_cache <- Just <$> liftIO newIfaceCache
 
-    -- Get mod_graph for base HUG
-    (errs_base, mod_graph_base) <- depanalE mkUnknownDiagnostic (Just msg) [] False
+    -- Downsweep user-given modules first 
+    mod_graph_base <- doDownsweep Nothing
 
-    when (not $ isEmptyMessages errs_base) $ do
-#if MIN_VERSION_ghc(9,15,0)
-      sec <- initSourceErrorContext . hsc_dflags <$> getSession
-      throwErrors sec (fmap GhcDriverMessage errs_base)
-#else
-      throwErrors (fmap GhcDriverMessage errs_base)
-#endif
+    -- Try to find or load the built-in classes from `haskell-debugger-view`
+    (hdv_uid, loadedBuiltinModNames) <- findHsDebuggerViewUnitId mod_graph_base >>= \case
+      Nothing -> (hsDebuggerViewInMemoryUnitId,) <$> do
 
-    (hdv_uid, loadedBuiltinModNames, success) <-
-      findHsDebuggerViewUnitId mod_graph_base >>= \case
-        Nothing -> do
-          -- Not imported by any module: no custom views. Therefore, the builtin
-          -- ones haven't been loaded. In this case, we will load the package ourselves.
+        -- Not imported by any module: no custom views. Therefore, the builtin
+        -- ones haven't been loaded. In this case, we will load the package ourselves.
 
-          -- Add in-memory haskell-debugger-view unit
-          in_mem_hdv <- liftIO . makeInMemoryHsDebuggerViewUnit =<< getDynFlags
-          -- Try again, with custom modules loaded
-          setupHomeUnitGraph (NonEmpty.toList flagsAndTargets ++ [in_mem_hdv])
-          (errs, mod_graph) <- depanalE mkUnknownDiagnostic (Just msg) [] False
-          when (not $ isEmptyMessages errs) $ do
-#if MIN_VERSION_ghc(9,15,0)
-            sec <- initSourceErrorContext . hsc_dflags <$> getSession
-            throwErrors sec (fmap GhcDriverMessage errs)
-#else
-            throwErrors (fmap GhcDriverMessage errs)
-#endif
+        -- Add the custom unit to the HUG
+        addInMemoryHsDebuggerViewUnit =<< getDynFlags
 
-          -- Load only up to debugger-view modules
-          load' noIfaceCache (GHC.LoadUpTo [mkModule hsDebuggerViewInMemoryUnitId debuggerViewClassModName])
-                mkUnknownDiagnostic (Just msg) mod_graph >>= \case
-            Failed -> (Nothing, [],) <$> do
-              -- Failed to load debugger-view modules! Try again without the haskell-debugger-view modules
+        tryLoadHsDebuggerViewModule if_cache (const False) debuggerViewClassModName debuggerViewClassContents
+          >>= \case
+            Failed -> do
+              -- Failed to load base debugger-view module!
               logger <- getLogger
               liftIO $ logMsg logger MCInfo noSrcSpan $
-                text "Failed to compile built-in DebugView modules! Ignoring custom debug views."
-              load' noIfaceCache GHC.LoadAllTargets mkUnknownDiagnostic (Just msg) mod_graph_base
-            Succeeded -> (Just hsDebuggerViewInMemoryUnitId, [debuggerViewClassModName],) <$> do
-              -- It worked! Now load everything else
-              load' noIfaceCache GHC.LoadAllTargets mkUnknownDiagnostic (Just msg) mod_graph
+                text "Failed to compile built-in DebugView class module! Ignoring custom debug views."
+              return []
+            Succeeded -> (debuggerViewClassModName:) . concat <$> do
+              forM debuggerViewInstancesMods $ \(modName, modContent) -> do
+                tryLoadHsDebuggerViewModule if_cache
+                    ((== hsDebuggerViewInMemoryUnitId) . GHC.targetUnitId)
+                    modName modContent >>= \case
+                  Failed -> do
+                    logger <- getLogger
+                    liftIO $ logMsg logger MCInfo noSrcSpan $
+                      text "Failed to compile built-in DebugView instances for"
+                        <+> ppr modName
+                        GHC.<> text "! Ignoring this module's instances."
+                    return []
+                  Succeeded -> do
+                    return [modName]
 
-        Just hdv_uid ->
-          -- TODO: We assume for now that if you depended on
-          -- @haskell-debugger-view@, then you also depend on all its
-          -- transitive dependencies (containers, text, ...), thus can load all
-          -- custom views. Hence all @debuggerViewBuiltinModNames@.
-          -- In the future, we may want to guard all dependencies behind cabal
-          -- flags that the user can tweak when depending on
-          -- @haskell-debugger-view@.
-          (Just hdv_uid, debuggerViewBuiltinModNames,) <$>
-            -- haskell-debug-view is in module graph already, so just load it all.
-            load' noIfaceCache GHC.LoadAllTargets mkUnknownDiagnostic (Just msg) mod_graph_base
+      Just uid ->
+        -- TODO: We assume for now that if you depended on
+        -- @haskell-debugger-view@, then you also depend on all its transitive
+        -- dependencies (containers, text, ...), thus can load all custom
+        -- views. Hence all `debuggerViewBuiltinMods`. In the future, we
+        -- may want to guard all dependencies behind cabal flags that the user
+        -- can tweak when depending on `haskell-debugger-view`.
+        return (uid, map fst debuggerViewBuiltinMods)
 
+    -- Final load combining all base modules plus haskell-debugger-view ones that loaded successfully
+    -- The targets which were successfully loaded have been set with `setTarget` (e.g. by setupHomeUnitGraph).
+    final_mod_graph <- doDownsweep (Just mod_graph_base)
+    success <- doLoad if_cache GHC.LoadAllTargets final_mod_graph
     when (GHC.failed success) $ liftIO $
       throwM DebuggerFailedToLoad
 
@@ -258,20 +251,18 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
     let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
     -- dbgView should always be available, either because we manually loaded it
     -- or because it's in the transitive closure.
-    let dbgViewImps uid
-          -- Using in-memory hs-dbg-view.
-          -- It's a home-unit, so refer to it directly
-          | uid == hsDebuggerViewInMemoryUnitId
-          = map (GHC.IIModule . mkModule (RealUnit (Definite uid))) loadedBuiltinModNames
-          -- It's available in a unit in the transitive closure.
-          -- Resolve it.
+    let dbgViewImps
+          -- Using in-memory hs-dbg-view. It's a home-unit, so refer to it directly
+          | hdv_uid == hsDebuggerViewInMemoryUnitId
+          = map (GHC.IIModule . mkModule (RealUnit (Definite hdv_uid))) loadedBuiltinModNames
+          -- It's available in a unit in the transitive closure. Resolve it.
           | otherwise
           = map (\mn ->
               GHC.IIDecl (GHC.simpleImportDecl mn)
               { ideclPkgQual = RawPkgQual
                   StringLiteral
                     { sl_st = NoSourceText
-                    , sl_fs = mkFastString (unitIdString uid)
+                    , sl_fs = mkFastString (unitIdString hdv_uid)
                     , sl_tc = Nothing
                     }
               }) loadedBuiltinModNames
@@ -280,16 +271,73 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
 
     GHC.setContext
       (preludeImp :
-        (case hdv_uid of Just uid -> dbgViewImps uid; _ -> []) ++
+        dbgViewImps ++
         map (GHC.IIModule . GHC.ms_mod) mss)
 
-    runReaderT action =<< initialDebuggerState hdv_uid
+    runReaderT action =<< initialDebuggerState (if loadedBuiltinModNames == [] then Nothing else Just hdv_uid)
 
 -- | The logger action used to log GHC output
 debuggerLoggerAction :: Handle -> LogAction
 debuggerLoggerAction h a b c d = do
   hSetEncoding h utf8 -- GHC output uses utf8
   defaultLogActionWithHandles h h a b c d
+
+-- | Run downsweep on the currently set targets (see @hsc_targets@)
+doDownsweep :: GhcMonad m
+            => Maybe ModuleGraph -- ^ Re-use existing module graph which was already summarised
+            -> m ModuleGraph -- ^ Module graph constructed from current set targets
+doDownsweep reuse_mg = do
+  hsc_env <- getSession
+#if MIN_VERSION_ghc(9,15,0)
+  let msg = batchMultiMsg hsc_env
+#else
+  let msg = batchMultiMsg
+#endif
+  (errs_base, mod_graph) <- liftIO $ downsweep hsc_env mkUnknownDiagnostic (Just msg) (maybe [] mgModSummaries reuse_mg) [] False
+  when (not $ null errs_base) $ do
+#if MIN_VERSION_ghc(9,15,0)
+    sec <- initSourceErrorContext . hsc_dflags <$> getSession
+    throwErrors sec (fmap GhcDriverMessage (unionManyMessages errs_base))
+#else
+    throwErrors (fmap GhcDriverMessage (unionManyMessages errs_base))
+#endif
+  return mod_graph
+
+doLoad if_cache how_much mg = do
+#if MIN_VERSION_ghc(9,15,0)
+  msg <- batchMultiMsg <$> getSession
+#else
+  let msg = batchMultiMsg
+#endif
+  load' if_cache how_much mkUnknownDiagnostic (Just msg) mg
+
+-- | Returns @Just modName@ if the given module was successfully loaded
+tryLoadHsDebuggerViewModule
+  :: GhcMonad m => Maybe ModIfaceCache
+  -> (GHC.Target -> Bool)
+  -- ^ Predicate to determine which of the existing
+  -- targets should be re-used when doing downsweep
+  -- Should be as minimal as necessary (i.e. just DebugView class for the
+  -- instances modules).
+  -> ModuleName -> StringBuffer -> m SuccessFlag
+tryLoadHsDebuggerViewModule if_cache keepTarget modName modContents = do
+  -- Store existing targets to restore afterwards
+  -- We want to use as little targets as possible to keep downsweep minimal+fast
+  old_targets <- GHC.getTargets
+
+  -- Make the target
+  dvcT <- liftIO $ makeInMemoryHsDebuggerViewTarget modName modContents
+
+  -- Make mod_graph just for this target
+  GHC.setTargets (dvcT:filter keepTarget old_targets)
+  dvc_mod_graph <- doDownsweep Nothing
+
+  -- And try to load it
+  result <- doLoad if_cache (GHC.LoadUpTo [mkModule hsDebuggerViewInMemoryUnitId modName]) dvc_mod_graph
+
+  -- Restore targets plus new one if success
+  GHC.setTargets (old_targets ++ (if succeeded result then [dvcT] else []))
+  return result
 
 --------------------------------------------------------------------------------
 -- * Finding Debugger View
