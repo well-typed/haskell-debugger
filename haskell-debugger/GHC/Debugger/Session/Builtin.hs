@@ -47,7 +47,15 @@ debuggerViewBuiltinMods = (debuggerViewClassModName, debuggerViewClassContents):
 -- We will try to load each of these modules separately.
 debuggerViewInstancesMods :: [(ModuleName, StringBuffer)]
 debuggerViewInstancesMods =
-  [ (debuggerViewContainersModName, debuggerViewContainersContents)
+  [ ( debuggerViewContainersModName
+    , debuggerViewContainersContents
+    )
+  , ( debuggerViewTextModName
+    , debuggerViewTextContents
+    )
+  , ( debuggerViewByteStringModName
+    , debuggerViewByteStringContents
+    )
   ]
 
 -- | GHC.Debugger.View.Class
@@ -57,6 +65,14 @@ debuggerViewClassModName = mkModuleName "GHC.Debugger.View.Class"
 -- | GHC.Debugger.View.Containers
 debuggerViewContainersModName :: ModuleName
 debuggerViewContainersModName = mkModuleName "GHC.Debugger.View.Containers"
+
+-- | GHC.Debugger.View.Text
+debuggerViewTextModName :: ModuleName
+debuggerViewTextModName = mkModuleName "GHC.Debugger.View.Text"
+
+-- | GHC.Debugger.View.ByteString
+debuggerViewByteStringModName :: ModuleName
+debuggerViewByteStringModName = mkModuleName "GHC.Debugger.View.ByteString"
 
 --------------------------------------------------------------------------------
 -- * In memory haskell-debugger-view
@@ -130,3 +146,12 @@ debuggerViewClassContents = stringToStringBuffer $(embedStringFile "haskell-debu
 -- | The contents of GHC.Debugger.View.Containers in memory
 debuggerViewContainersContents :: StringBuffer
 debuggerViewContainersContents = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/Containers.hs")
+
+-- | GHC.Debugger.View.Text
+debuggerViewTextContents :: StringBuffer
+debuggerViewTextContents = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/Text.hs")
+
+-- | GHC.Debugger.View.ByteString
+debuggerViewByteStringContents :: StringBuffer
+debuggerViewByteStringContents = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/ByteString.hs")
+

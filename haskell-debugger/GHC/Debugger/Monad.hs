@@ -220,8 +220,11 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
               -- a -package flag for the package we need for each module.
               forM debuggerViewInstancesMods $ \(modName, modContent) -> do
                 tryLoadHsDebuggerViewModule if_cache
-                    -- TODO: Better predicate, we only really need to keep the TargetFile "in-memory:"++debuggerViewClassModName
-                    ((== hsDebuggerViewInMemoryUnitId) . GHC.targetUnitId)
+                    ((\case
+                        -- Keep only "GHC.Debugger.View.Class", which is a dependency of all these.
+                        GHC.TargetFile f _
+                          -> f == "in-memory:" ++ moduleNameString debuggerViewClassModName
+                        _ -> False) . GHC.targetId)
                     modName modContent >>= \case
                   Failed -> do
                     logger <- getLogger

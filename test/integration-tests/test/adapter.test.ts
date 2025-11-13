@@ -737,6 +737,24 @@ describe("Debug Adapter Tests", function () {
         // it('hdv in-memory without containers module (issue #47)', async () => {
         // ...
         // })
+
+        it('hdv in-memory with text module (issue #47)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/T47e",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 11 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 11 }, expected, expected);
+
+            // Check IntMap custom view
+            let locals = await fetchLocalVars();
+            const tVar = await forceLazy(locals.get('action'));
+            assert.strictEqual(tVar.value, "\"this should be displayed as a simple string\"")
+        })
     })
     describe("Stepping out (step-out)", function () {
 
@@ -890,16 +908,12 @@ describe("Debug Adapter Tests", function () {
         const variables = await fetchLocalVars()
         const imVar = variables.get('im');
 
-        assert.strictEqual(imVar.value, 'Bin');
+        assert.strictEqual(imVar.value, 'IntMap');
         const imChild = await expandVar(imVar);
-        const _2Var = await imChild.get("_2");
-        const _3Var = await imChild.get("_3");
-        const _2Child = await expandVar(_2Var)
-        const _3Child = await expandVar(_3Var)
-        const _2_2Var = await _2Child.get("_2")
-        const _3_2Var = await _3Child.get("_2")
-        assert.strictEqual(_2_2Var.value, '2');
-        assert.strictEqual(_3_2Var.value, '4');
+        const _2Var = await imChild.get("0");
+        const _3Var = await imChild.get("2");
+        assert.strictEqual(_2Var.value, '2');
+        assert.strictEqual(_3Var.value, '4');
 
         // And doesn't stop again
         await dc.continueRequest({threadId: 0, singleThread: false});
@@ -944,16 +958,12 @@ describe("Debug Adapter Tests", function () {
         const variables = await fetchLocalVars()
         const imVar = await forceLazy(variables.get('im'));
 
-        assert.strictEqual(imVar.value, 'Bin');
+        assert.strictEqual(imVar.value, 'IntMap');
         const imChild = await expandVar(imVar);
-        const _2Var = await imChild.get("_2");
-        const _3Var = await imChild.get("_3");
-        const _2Child = await expandVar(_2Var)
-        const _3Child = await expandVar(_3Var)
-        const _2_2Var = await _2Child.get("_2")
-        const _3_2Var = await _3Child.get("_2")
-        assert.strictEqual(_2_2Var.value, '2');
-        assert.strictEqual(_3_2Var.value, '4');
+        const _2Var = await imChild.get("0");
+        const _3Var = await imChild.get("2");
+        assert.strictEqual(_2Var.value, '2');
+        assert.strictEqual(_3Var.value, '4');
 
         // Unlike conditional expression, we hit the breakpoint every time
         // after the ignore count, so run this twice
@@ -984,12 +994,10 @@ describe("Debug Adapter Tests", function () {
 
         let resp = await dc.evaluateRequest({expression: "IM.delete 0 (IM.insert 0 'a' (IM.insert 1 'b' IM.empty))"} )
 
-        assert.strictEqual(resp.body.result, 'Tip');
+        assert.strictEqual(resp.body.result, 'IntMap');
         const respChild = await expandVar({...resp.body, name: resp.body.result})
-        const _1Var = await respChild.get("_1")
-        const _2Var = await respChild.get("_2")
-        assert.strictEqual(_1Var.value, '1');
-        assert.strictEqual(_2Var.value, '\'b\'');
+        const _1Var = await respChild.get("1")
+        assert.strictEqual(_1Var.value, '\'b\'');
       })
     })
 })
