@@ -5,6 +5,10 @@ on:
   pull_request: {}
   workflow_call: {}
 
+env:
+  haskellDebuggerViewVersion: 0.1.0.0
+  haskellDebuggerVersion: 0.10.0.0
+
 name: Debugger CI
 jobs:
   build-vscode-extension:
@@ -42,10 +46,14 @@ jobs:
       - name: Package hdb
         run: cabal sdist
 
+      - name: Package haskell-debugger-view
+        run: cabal sdist haskell-debugger-view
+
       - name: Upload haskell-debugger source distribution
         uses: actions/upload-artifact@v4
         with:
           name: Haskell Debugger Source Distribution
+          # This will catch both haskell-debugger and haskell-debugger-view
           path: dist-newstyle/sdist/haskell-debugger*.tar.gz
 
   # Building and testing are done on the distributed sdist: not on the full git repo.
@@ -95,8 +103,10 @@ jobs:
       - name: Build and Run integration tests
         run: |
           echo "Running DAP Integration Testsuite now..."
-          (cd ${{ runner.temp }}/dist && tar xzf *.tar.gz && rm *.tar.gz && cd haskell-debugger-* && cabal build exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
-          export DEBUGGER=$(cd ${{ runner.temp }}/dist/haskell-debugger-* && cabal list-bin exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
+          (cd ${{ runner.temp }}/dist && for f in *.tar.gz; do tar xzf "$f"; done)
+          (cd ${{ runner.temp }}/dist && cd haskell-debugger-${{env.haskellDebuggerVersion}} && echo 'packages: . ../haskell-debugger-view-${{env.haskellDebuggerViewVersion}}' > cabal.project)
+          (cd ${{ runner.temp }}/dist && cd haskell-debugger-${{env.haskellDebuggerVersion}} && cabal build exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
+          export DEBUGGER=$(cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}} && cabal list-bin exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
           echo "DEBUGGER: $DEBUGGER"
           cd test/integration-tests/
           make clean
