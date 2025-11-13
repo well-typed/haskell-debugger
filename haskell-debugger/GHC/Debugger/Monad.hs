@@ -11,7 +11,6 @@
 
 module GHC.Debugger.Monad where
 
-import Control.Concurrent
 import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
@@ -48,7 +47,6 @@ import GHC.Unit.Module.ModSummary as GHC
 import GHC.Unit.Types
 import GHC.Utils.Logger as GHC
 import GHC.Utils.Outputable as GHC
-import GHC.Utils.Trace
 import qualified GHC.LanguageExtensions as LangExt
 
 import GHC.Debugger.Interface.Messages
@@ -222,6 +220,7 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
               -- a -package flag for the package we need for each module.
               forM debuggerViewInstancesMods $ \(modName, modContent) -> do
                 tryLoadHsDebuggerViewModule if_cache
+                    -- TODO: Better predicate, we only really need to keep the TargetFile "in-memory:"++debuggerViewClassModName
                     ((== hsDebuggerViewInMemoryUnitId) . GHC.targetUnitId)
                     modName modContent >>= \case
                   Failed -> do
@@ -306,6 +305,7 @@ doDownsweep reuse_mg = do
 #endif
   return mod_graph
 
+doLoad :: GhcMonad m => Maybe ModIfaceCache -> LoadHowMuch -> ModuleGraph -> m SuccessFlag
 doLoad if_cache how_much mg = do
 #if MIN_VERSION_ghc(9,15,0)
   msg <- batchMultiMsg <$> getSession
