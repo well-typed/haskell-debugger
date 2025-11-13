@@ -20,7 +20,6 @@ module GHC.Debugger.Session.Builtin
 
 import Data.FileEmbed
 import Data.Function
-import Data.Maybe
 import Data.Time
 
 import GHC
@@ -32,8 +31,6 @@ import GHC.Data.StringBuffer
 import qualified GHC.Unit.Home.Graph as HUG
 import qualified GHC.Unit.Home.PackageTable as HPT
 import qualified GHC.Unit.State as State
-
-import GHC.Debugger.Session
 
 --------------------------------------------------------------------------------
 -- * Built-in Modules
@@ -49,7 +46,9 @@ debuggerViewBuiltinMods = (debuggerViewClassModName, debuggerViewClassContents):
 -- | The modules which provide orphan instances for types defined in external packages.
 -- We will try to load each of these modules separately.
 debuggerViewInstancesMods :: [(ModuleName, StringBuffer)]
-debuggerViewInstancesMods = [(debuggerViewContainersModName, debuggerViewContainersContents)]
+debuggerViewInstancesMods =
+  [ (debuggerViewContainersModName, debuggerViewContainersContents)
+  ]
 
 -- | GHC.Debugger.View.Class
 debuggerViewClassModName :: ModuleName

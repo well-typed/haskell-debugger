@@ -710,10 +710,30 @@ describe("Debug Adapter Tests", function () {
             assert.strictEqual(_2Var.value, '"two"');
         })
 
-        // it('hdv in-memory with containers module (issue #47)', async () => {
-        // ...
-        // })
-        //
+        it('hdv in-memory with containers module (issue #47)', async () => {
+            let config = mkConfig({
+                  projectRoot: "/data/T47d",
+                  entryFile: "Main.hs",
+                  entryPoint: "main",
+                  entryArgs: [],
+                  extraGhcArgs: []
+                })
+
+            const expected = { path: config.projectRoot + "/" + config.entryFile, line: 11 }
+            await dc.hitBreakpoint(config, { path: config.entryFile, line: 11 }, expected, expected);
+
+            // Check IntMap custom view
+            let locals = await fetchLocalVars();
+            const tVar = await forceLazy(locals.get('action'));
+            assert.strictEqual(tVar.value, "IntMap")
+            const tChild = await expandVar(tVar);
+            const _1Var = await forceLazy(tChild.get('3'));
+            assert.strictEqual(_1Var.value, '"one"');
+            const _2Var = await forceLazy(tChild.get('2'));
+            assert.strictEqual(_2Var.value, '"two"');
+        })
+
+        // Not needed! Tested in multiple places that this still works.
         // it('hdv in-memory without containers module (issue #47)', async () => {
         // ...
         // })
