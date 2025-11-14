@@ -212,7 +212,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (D
         let base_dep_uids = [uid | UnitNode _ uid <- mg_mss mod_graph_base]
         addInMemoryHsDebuggerViewUnit base_dep_uids =<< getDynFlags
 
-        tryLoadHsDebuggerViewModule if_cache (const False) debuggerViewClassModName debuggerViewClassContents
+        tryLoadHsDebuggerViewModule l if_cache (const False) debuggerViewClassModName debuggerViewClassContents
           >>= \case
             Failed -> do
               -- Failed to load base debugger-view module!
@@ -222,7 +222,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (D
               -- TODO: We could be a bit smarter and filter out if there isn't
               -- a -package flag for the package we need for each module.
               forM debuggerViewInstancesMods $ \(modName, modContent) -> do
-                tryLoadHsDebuggerViewModule if_cache
+                tryLoadHsDebuggerViewModule l if_cache
                     ((\case
                         -- Keep only "GHC.Debugger.View.Class", which is a dependency of all these.
                         GHC.TargetFile f _
@@ -314,17 +314,28 @@ doLoad if_cache how_much mg = do
 
 -- | Returns @Just modName@ if the given module was successfully loaded
 tryLoadHsDebuggerViewModule
-  :: GhcMonad m => Maybe ModIfaceCache
+  :: GhcMonad m
+  => Recorder (WithSeverity DebuggerMonadLog)
+  -> Maybe ModIfaceCache
   -> (GHC.Target -> Bool)
   -- ^ Predicate to determine which of the existing
   -- targets should be re-used when doing downsweep
   -- Should be as minimal as necessary (i.e. just DebugView class for the
   -- instances modules).
   -> ModuleName -> StringBuffer -> m SuccessFlag
-tryLoadHsDebuggerViewModule if_cache keepTarget modName modContents = do
+tryLoadHsDebuggerViewModule l if_cache keepTarget modName modContents = do
+  dflags <- getDynFlags
   -- Store existing targets to restore afterwards
   -- We want to use as little targets as possible to keep downsweep minimal+fast
   old_targets <- GHC.getTargets
+
+  -- Also: temporarily disable the logger! We don't want to show the user these
+  -- modules we're trying to load and compile.
+  restore_logger <- GHC.getLogger
+  GHC.modifyLogger $
+    -- Emit it all as Debug-level logs
+    GHC.pushLogHook $ const $ \_ _ _ sdoc ->
+      logWith l Logger.Debug $ LogSDoc dflags sdoc
 
   -- Make the target
   dvcT <- liftIO $ makeInMemoryHsDebuggerViewTarget modName modContents
@@ -338,6 +349,11 @@ tryLoadHsDebuggerViewModule if_cache keepTarget modName modContents = do
 
   -- Restore targets plus new one if success
   GHC.setTargets (old_targets ++ (if succeeded result then [dvcT] else []))
+
+  -- Restore logger
+  GHC.modifyLogger $
+    GHC.pushLogHook (const $ putLogMsg restore_logger)
+
 
   return result
 
@@ -544,8 +560,7 @@ logSDoc sev doc = do
   logWith l sev (LogSDoc dflags doc)
 
 logAction :: Recorder (WithSeverity DebuggerMonadLog) -> DynFlags -> GHC.LogAction
-logAction l dflags = do
-  return $ \ msg_class _ sdoc -> do
+logAction l dflags = \_ msg_class _ sdoc -> do
     logWith l (msgClassSeverity msg_class) $ LogSDoc dflags sdoc
 
 msgClassSeverity :: MessageClass -> Logger.Severity
