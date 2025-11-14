@@ -31,6 +31,13 @@ category:           Development
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
                     README.md
+
+                    -- Make sure to list all files which we embed with TH, so sdist + build works.
+extra-source-files: haskell-debugger-view/src/GHC/Debugger/View/Class.hs
+                    haskell-debugger-view/src/GHC/Debugger/View/Containers.hs
+                    haskell-debugger-view/src/GHC/Debugger/View/Text.hs
+                    haskell-debugger-view/src/GHC/Debugger/View/ByteString.hs
+
 homepage:           https://github.com/well-typed/haskell-debugger
 bug-reports:        https://github.com/well-typed/haskell-debugger/issues
 
