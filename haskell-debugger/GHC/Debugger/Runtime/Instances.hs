@@ -27,13 +27,12 @@ import GHC.Tc.Utils.Env
 import GHC.Tc.Utils.Monad
 import GHC.Tc.Utils.TcType
 import GHC.Tc.Zonk.Type
-import GHC.Types.Error
-import GHC.Utils.Logger
 import GHCi.Message
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Session.Builtin
 import GHC.Debugger.View.Class
+import GHC.Debugger.Logger as Logger
 
 --------------------------------------------------------------------------------
 -- * High level interface for 'DebugView' on 'Term's
@@ -180,15 +179,14 @@ data DebugViewInstance = DebugViewInstance
 findDebugViewInstance :: Type -> Debugger (Maybe DebugViewInstance)
 findDebugViewInstance needle_ty = do
   hsc_env <- getSession
-  logger  <- getLogger
 
   mhdv_uid <- getHsDebuggerViewUid
   case mhdv_uid of
-    Just hdv_uid -> liftIO $ do
+    Just hdv_uid -> do
       let modl = mkModule (RealUnit (Definite hdv_uid)) debuggerViewClassModName
       let mthdRdrName mthStr = mkOrig modl (mkVarOcc mthStr)
 
-      (err_msgs, res) <- runTcInteractive hsc_env $ do
+      (err_msgs, res) <- liftIO $ runTcInteractive hsc_env $ do
 
         -- Types used by DebugView
         varValueIOTy    <-  fmap mkTyConTy . tcLookupTyCon
@@ -239,7 +237,7 @@ findDebugViewInstance needle_ty = do
 
       case res of
         Nothing -> do
-          liftIO $ logMsg logger MCDump noSrcSpan $
+          logSDoc Logger.Debug $
             text "Couldn't compile DebugView instance for" <+> ppr needle_ty $$ ppr err_msgs
           -- The error is for debug purposes. We simply won't use a custom instance:
           return Nothing

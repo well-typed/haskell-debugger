@@ -41,7 +41,7 @@ import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Monad
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
-import GHC.Debugger.Logger
+import GHC.Debugger.Logger as Logger
 import qualified GHC.Debugger.Breakpoint.Map as BM
 
 data EvalLog
@@ -227,13 +227,13 @@ handleExecResult = \case
                 else
                   resume
               else do
-                displayWarnings [evalFailedMsg "\"expression resultType is != Bool\""]
+                logSDoc Logger.Warning (evalFailedMsg "\"expression resultType is != Bool\"")
                 resume
             EvalException { resultVal } -> do
-              displayWarnings [evalFailedMsg resultVal]
+              logSDoc Logger.Warning (evalFailedMsg resultVal)
               resume
             EvalAbortedWith e -> do
-              displayWarnings [evalFailedMsg e]
+              logSDoc Logger.Warning (evalFailedMsg e)
               resume
 
         -- Unconditionally 'EvalStopped' in all other cases

@@ -28,6 +28,7 @@ import qualified GHCi.BreakArray as BA
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Session
+import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Breakpoint.Map as BM
@@ -57,7 +58,7 @@ getBreakpointsAt ModuleBreak{path, lineNum, columnNum} = do
   mmodl <- getModuleByPath path
   case mmodl of
     Left e -> do
-      displayWarnings [e]
+      logSDoc Logger.Warning e
       return Nothing
     Right modl -> do
       mbfnd <- findBreakpoint modl lineNum columnNum
@@ -67,13 +68,14 @@ getBreakpointsAt _ = error "unexpected getbreakpoints without ModuleBreak"
 -- | Set a breakpoint in this session
 setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger BreakFound
 setBreakpoint bp BreakpointAfterCountCond{} = do
-  displayWarnings [text $ "Setting a hit count condition on a conditional breakpoint is not yet supported. Ignoring breakpoint " ++ show bp]
+  logSDoc Logger.Warning $
+    text $ "Setting a hit count condition on a conditional breakpoint is not yet supported. Ignoring breakpoint " ++ show bp
   return BreakNotFound
 setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
   mmodl <- getModuleByPath path
   case mmodl of
     Left e -> do
-      displayWarnings [e]
+      logSDoc Logger.Warning e
       return BreakNotFound
     Right modl -> do
       findBreakpoint modl lineNum columnNum >>= \case
@@ -189,7 +191,7 @@ getActiveBreakpoints mfile = do
             -- assert: status is always > disabled
             ]
         Left e -> do
-          displayWarnings [e]
+          logSDoc Logger.Warning e
           return []
     Nothing -> do
       return
@@ -231,7 +233,7 @@ condBreakEnableStatus hitCount condition = do
     (Just i,  Just c)  -> BreakpointAfterCountCond i c
 
 -- | Get a 'ModSummary' of a loaded module given its 'FilePath'
-getModuleByPath :: FilePath -> Debugger (Either Warning ModSummary)
+getModuleByPath :: FilePath -> Debugger (Either SDoc ModSummary)
 getModuleByPath path = do
   -- get all loaded modules this every time as the loaded modules may have changed
   lms <- getAllLoadedModules

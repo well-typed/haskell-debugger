@@ -33,6 +33,7 @@ import GHC.Driver.Env
 import GHC.Driver.Errors.Types
 import GHC.Driver.Main
 import GHC.Driver.Make
+import GHC.Driver.Ppr
 import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as GHCi
@@ -50,6 +51,7 @@ import GHC.Utils.Outputable as GHC
 import qualified GHC.LanguageExtensions as LangExt
 
 import GHC.Debugger.Interface.Messages
+import GHC.Debugger.Logger
 import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Session
@@ -105,6 +107,8 @@ data DebuggerState = DebuggerState
       -- find the built-in instances for types like @'String'@
       --
       -- If the user explicitly disabled custom views, use @Nothing@.
+
+      , dbgLogger :: Recorder (WithSeverity DebuggerMonadLog)
       }
 
 -- | Enabling/Disabling a breakpoint
@@ -138,7 +142,8 @@ data RunDebuggerSettings = RunDebuggerSettings
       }
 
 -- | Run a 'Debugger' action on a session constructed from a given GHC invocation.
-runDebugger :: Handle     -- ^ The handle to which GHC's output is logged. The debuggee output is not affected by this parameter.
+runDebugger :: Recorder (WithSeverity DebuggerMonadLog)
+            -> Handle     -- ^ The handle to which GHC's output is logged. The debuggee output is not affected by this parameter.
             -> FilePath   -- ^ Cradle root directory
             -> FilePath   -- ^ Component root directory
             -> FilePath   -- ^ The libdir (given with -B as an arg)
@@ -148,7 +153,7 @@ runDebugger :: Handle     -- ^ The handle to which GHC's output is logged. The d
             -> RunDebuggerSettings -- ^ Other debugger run settings
             -> Debugger a -- ^ 'Debugger' action to run on the session constructed from this invocation
             -> IO a
-runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Debugger action) = do
+runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Debugger action) = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
   GHC.runGhc (Just libdir) $ do
     -- Workaround #4162
@@ -211,9 +216,7 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
           >>= \case
             Failed -> do
               -- Failed to load base debugger-view module!
-              logger <- getLogger
-              liftIO $ logMsg logger MCInfo noSrcSpan $
-                text "Failed to compile built-in DebugView class module! Ignoring custom debug views."
+              logWith l Debug $ LogFailedToCompileDebugViewModule debuggerViewClassModName
               return []
             Succeeded -> (debuggerViewClassModName:) . concat <$> do
               -- TODO: We could be a bit smarter and filter out if there isn't
@@ -227,11 +230,7 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
                         _ -> False) . GHC.targetId)
                     modName modContent >>= \case
                   Failed -> do
-                    logger <- getLogger
-                    liftIO $ logMsg logger MCInfo noSrcSpan $
-                      text "Failed to compile built-in DebugView instances for"
-                        <+> ppr modName
-                        GHC.<> text "! Ignoring this module's instances."
+                    logWith l Info $ LogFailedToCompileDebugViewModule modName
                     return []
                   Succeeded -> do
                     return [modName]
@@ -279,13 +278,9 @@ runDebugger dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Deb
         dbgViewImps ++
         map (GHC.IIModule . GHC.ms_mod) mss)
 
-    runReaderT action =<< initialDebuggerState (if loadedBuiltinModNames == [] then Nothing else Just hdv_uid)
+    runReaderT action =<< initialDebuggerState l (if loadedBuiltinModNames == [] then Nothing else Just hdv_uid)
 
--- | The logger action used to log GHC output
-debuggerLoggerAction :: Handle -> LogAction
-debuggerLoggerAction h a b c d = do
-  hSetEncoding h utf8 -- GHC output uses utf8
-  defaultLogActionWithHandles h h a b c d
+--------------------------------------------------------------------------------
 
 -- | Run downsweep on the currently set targets (see @hsc_targets@)
 doDownsweep :: GhcMonad m
@@ -435,13 +430,14 @@ freshInt = do
   return i
 
 -- | Initialize a 'DebuggerState'
-initialDebuggerState :: Maybe UnitId -> GHC.Ghc DebuggerState
-initialDebuggerState hsDbgViewUid =
+initialDebuggerState :: Recorder (WithSeverity DebuggerMonadLog) -> Maybe UnitId -> GHC.Ghc DebuggerState
+initialDebuggerState l hsDbgViewUid =
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef mempty)
                 <*> liftIO (newIORef mempty)
                 <*> liftIO (newIORef 0)
                 <*> pure hsDbgViewUid
+                <*> pure l
 
 -- | Lift a 'Ghc' action into a 'Debugger' one.
 liftGhc :: GHC.Ghc a -> Debugger a
@@ -453,13 +449,6 @@ instance Show DebuggerFailedToLoad where
   show DebuggerFailedToLoad = "Failed to compile and load user project."
 
 --------------------------------------------------------------------------------
-
-type Warning = SDoc
-
-displayWarnings :: [Warning] -> Debugger ()
-displayWarnings ws = do
-  logger <- getLogger
-  liftIO $ logMsg logger MCInfo noSrcSpan (vcat ws)
 
 --------------------------------------------------------------------------------
 -- * Modules
@@ -525,3 +514,30 @@ instance GHC.GhcMonad Debugger where
   getSession = liftGhc GHC.getSession
   setSession s = liftGhc $ GHC.setSession s
 
+--------------------------------------------------------------------------------
+-- * Logging
+--------------------------------------------------------------------------------
+
+-- | The logger action used to log GHC output
+debuggerLoggerAction :: Handle -> GHC.LogAction
+debuggerLoggerAction h a b c d = do
+  hSetEncoding h utf8 -- GHC output uses utf8
+  -- potentially use the `Recorder` here?
+  defaultLogActionWithHandles h h a b c d
+
+data DebuggerMonadLog
+  = LogFailedToCompileDebugViewModule GHC.ModuleName
+  | LogSDoc DynFlags SDoc
+
+instance Pretty DebuggerMonadLog where
+  pretty = \ case
+    LogFailedToCompileDebugViewModule mn ->
+      pretty $ "Failed to compile built-in " ++ moduleNameString mn ++ " module! Ignoring these custom debug views."
+    LogSDoc dflags doc ->
+      pretty $ showSDoc dflags doc
+
+logSDoc :: GHC.Debugger.Logger.Severity -> SDoc -> Debugger ()
+logSDoc sev doc = do
+  dflags <- getDynFlags
+  l <- asks dbgLogger
+  logWith l sev (LogSDoc dflags doc)
