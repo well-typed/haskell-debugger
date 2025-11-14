@@ -45,3 +45,4 @@ data DebuggerLog
 instance Pretty DebuggerLog where
   pretty = \ case
     EvalLog msg -> pretty msg
+

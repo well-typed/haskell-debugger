@@ -52,6 +52,7 @@ import Development.Debug.Session.Setup
 
 data InitLog
   = DebuggerLog Debugger.DebuggerLog
+  | DebuggerMonadLog Debugger.DebuggerMonadLog
   | FlagsLog FlagsLog
 
 instance Pretty InitLog where
@@ -249,7 +250,7 @@ debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{.
 
   catches
     (do
-      Debugger.runDebugger writeDebuggerOutput rootDir componentDir libdir units finalGhcInvocation mainFp runConf $ do
+      Debugger.runDebugger (cmapWithSev DebuggerMonadLog recorder) writeDebuggerOutput rootDir componentDir libdir units finalGhcInvocation mainFp runConf $ do
         liftIO $ signalInitialized (Right ())
         forever $ do
           req <- takeMVar requests & liftIO

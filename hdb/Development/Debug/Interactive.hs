@@ -27,6 +27,7 @@ type InteractiveDM a = InputT (RWST (FilePath{-entry file-},String{-entry point-
 
 data InteractiveLog
   = DebuggerLog DebuggerLog
+  | DebuggerMonadLog DebuggerMonadLog
   | FlagsLog FlagsLog
 
 instance Pretty InteractiveLog where
@@ -60,8 +61,9 @@ runIDM logger entryPoint entryFile entryArgs extraGhcArgs act = do
 
       let finalGhcInvocation = ghcInvocation ++ extraGhcArgs
       let absEntryFile = normalise $ projectRoot </> entryFile
+      let debugRec = cmapWithSev DebuggerMonadLog logger
 
-      runDebugger stdout rootDir componentDir libdir units finalGhcInvocation absEntryFile defaultRunConf $
+      runDebugger debugRec stdout rootDir componentDir libdir units finalGhcInvocation absEntryFile defaultRunConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
                    (entryFile, entryPoint, entryArgs) Nothing
