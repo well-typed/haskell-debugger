@@ -118,5 +118,5 @@ shouldReceive h expected = do
         Left e -> fail e
         Right actual
           | toHashMapText ex `H.isSubmapOf` toHashMapText actual -> pure ()
-          | otherwise -> encodePretty actual @=? encodePretty ex
+          | otherwise -> encodePretty ex @=? encodePretty actual
     _ -> fail "Invalid JSON"

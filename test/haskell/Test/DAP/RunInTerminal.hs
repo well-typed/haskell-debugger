@@ -107,6 +107,8 @@ runInTerminal1 = do
       _ <- shouldReceive handle
             ["type" .= ("event" :: String), "event" .= ("output" :: String)]
       _ <- shouldReceive handle
+            ["type" .= ("event" :: String), "event" .= ("output" :: String)]
+      _ <- shouldReceive handle
             [ "command" .= ("launch" :: String)
             , "success" .= True]
       _ <- shouldReceive handle

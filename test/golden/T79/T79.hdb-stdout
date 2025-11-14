@@ -7,7 +7,8 @@
 [Warn] No synopsis given. You should edit the .cabal file and add one.
 [Info] You may want to edit the .cabal file and add a Description field.
 
-[1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>-tmp]
+[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>-tmp]
 (hdb) Hello, Haskell!
 EvalCompleted {resultVal = "()", resultType = "()", resultStructureRef = NoVariables}
 (hdb) 
