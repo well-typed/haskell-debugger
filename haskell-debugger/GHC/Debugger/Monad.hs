@@ -178,8 +178,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (D
 
     GHC.modifyLogger $
       -- Override the logger to output to the given handle
-      GHC.pushLogHook $ const $ {- no longer: debuggerLoggerAction dbg_out -}
-       logAction l dflags1
+      GHC.pushLogHook $ const $ debuggerLoggerAction dbg_out
 
     -- Set the session dynflags now to initialise the hsc_interp.
     _ <- GHC.setSessionDynFlags dflags1
