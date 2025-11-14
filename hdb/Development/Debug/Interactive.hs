@@ -34,6 +34,7 @@ instance Pretty InteractiveLog where
   pretty = \ case
     DebuggerLog msg -> pretty msg
     FlagsLog msg -> pretty msg
+    DebuggerMonadLog msg -> pretty msg
 
 -- | Run it
 runIDM :: Recorder (WithSeverity InteractiveLog)
