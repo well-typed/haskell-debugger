@@ -195,11 +195,10 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (D
 
     -- Setup base HomeUnitGraph
     setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
-
-    if_cache <- Just <$> liftIO newIfaceCache
-
     -- Downsweep user-given modules first 
     mod_graph_base <- doDownsweep Nothing
+
+    if_cache <- Just <$> liftIO newIfaceCache
 
     -- Try to find or load the built-in classes from `haskell-debugger-view`
     (hdv_uid, loadedBuiltinModNames) <- findHsDebuggerViewUnitId mod_graph_base >>= \case
@@ -246,7 +245,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (D
 
     -- Final load combining all base modules plus haskell-debugger-view ones that loaded successfully
     -- The targets which were successfully loaded have been set with `setTarget` (e.g. by setupHomeUnitGraph).
-    final_mod_graph <- doDownsweep (Just mod_graph_base)
+    final_mod_graph <- doDownsweep (Just mod_graph_base{-cached previous result-})
     success <- doLoad if_cache GHC.LoadAllTargets final_mod_graph
     when (GHC.failed success) $ liftIO $
       throwM DebuggerFailedToLoad
