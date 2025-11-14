@@ -58,6 +58,7 @@ data InitLog
 instance Pretty InitLog where
   pretty = \ case
     DebuggerLog msg -> pretty msg
+    DebuggerMonadLog msg -> pretty msg
     FlagsLog msg -> pretty msg
 
 --------------------------------------------------------------------------------

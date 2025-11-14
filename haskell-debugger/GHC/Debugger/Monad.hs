@@ -51,7 +51,7 @@ import GHC.Utils.Outputable as GHC
 import qualified GHC.LanguageExtensions as LangExt
 
 import GHC.Debugger.Interface.Messages
-import GHC.Debugger.Logger
+import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Session
@@ -178,7 +178,8 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (D
 
     GHC.modifyLogger $
       -- Override the logger to output to the given handle
-      GHC.pushLogHook (const $ debuggerLoggerAction dbg_out)
+      GHC.pushLogHook $ const $ {- no longer: debuggerLoggerAction dbg_out -}
+       logAction l dflags1
 
     -- Set the session dynflags now to initialise the hsc_interp.
     _ <- GHC.setSessionDynFlags dflags1
@@ -338,6 +339,7 @@ tryLoadHsDebuggerViewModule if_cache keepTarget modName modContents = do
 
   -- Restore targets plus new one if success
   GHC.setTargets (old_targets ++ (if succeeded result then [dvcT] else []))
+
   return result
 
 --------------------------------------------------------------------------------
@@ -536,8 +538,28 @@ instance Pretty DebuggerMonadLog where
     LogSDoc dflags doc ->
       pretty $ showSDoc dflags doc
 
-logSDoc :: GHC.Debugger.Logger.Severity -> SDoc -> Debugger ()
+logSDoc :: Logger.Severity -> SDoc -> Debugger ()
 logSDoc sev doc = do
   dflags <- getDynFlags
   l <- asks dbgLogger
   logWith l sev (LogSDoc dflags doc)
+
+logAction :: Recorder (WithSeverity DebuggerMonadLog) -> DynFlags -> GHC.LogAction
+logAction l dflags = do
+  return $ \ msg_class _ sdoc -> do
+    logWith l (msgClassSeverity msg_class) $ LogSDoc dflags sdoc
+
+msgClassSeverity :: MessageClass -> Logger.Severity
+msgClassSeverity = \case
+  MCOutput -> Info
+  MCFatal -> Logger.Error
+  MCInteractive -> Info
+  MCDump -> Debug
+  MCInfo -> Info
+  MCDiagnostic sev _ _ -> ghcSevSeverity sev
+
+ghcSevSeverity :: GHC.Severity -> Logger.Severity
+ghcSevSeverity = \case
+  SevIgnore -> Debug -- ?
+  SevWarning -> Logger.Warning
+  SevError -> Logger.Error
