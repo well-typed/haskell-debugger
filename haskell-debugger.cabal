@@ -65,6 +65,7 @@ library
                       GHC.Debugger.Utils,
                       GHC.Debugger.Runtime,
                       GHC.Debugger.Runtime.Instances,
+                      GHC.Debugger.Runtime.Instances.Discover,
 
                       GHC.Debugger.Runtime.Term.Key,
                       GHC.Debugger.Runtime.Term.Cache,
