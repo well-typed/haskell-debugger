@@ -60,6 +60,8 @@ import GHC.Debugger.Session
 import GHC.Debugger.Session.Builtin
 import qualified GHC.Debugger.Breakpoint.Map as BM
 
+import {-# SOURCE #-} GHC.Debugger.Runtime.Instances.Discover (RuntimeInstancesCache, emptyRuntimeInstancesCache)
+
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
   deriving ( Functor, Applicative, Monad, MonadIO
@@ -87,6 +89,9 @@ data DebuggerState = DebuggerState
 
       , termCache         :: IORef TermCache
       -- ^ TermCache
+
+      , rtinstancesCache :: IORef RuntimeInstancesCache
+      -- ^ RuntimeInstancesCache
 
       , genUniq           :: IORef Int
       -- ^ Generates unique ints
@@ -471,6 +476,7 @@ initialDebuggerState l hsDbgViewUid =
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef mempty)
                 <*> liftIO (newIORef mempty)
+                <*> liftIO (newIORef emptyRuntimeInstancesCache)
                 <*> liftIO (newIORef 0)
                 <*> pure hsDbgViewUid
                 <*> pure l
