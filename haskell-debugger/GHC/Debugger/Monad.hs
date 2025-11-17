@@ -28,8 +28,10 @@ import qualified Data.List.NonEmpty as NonEmpty
 import GHC
 import GHC.Data.FastString
 import GHC.Data.StringBuffer
+import GHC.Driver.Config.Diagnostic
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
+import GHC.Driver.Errors
 import GHC.Driver.Errors.Types
 import GHC.Driver.Main
 import GHC.Driver.Make
@@ -149,11 +151,12 @@ runDebugger :: Recorder (WithSeverity DebuggerMonadLog)
             -> FilePath   -- ^ The libdir (given with -B as an arg)
             -> [String]   -- ^ The list of units included in the invocation
             -> [String]   -- ^ The full ghc invocation (as constructed by hie-bios flags)
+            -> [String]   -- ^ The extra GHC arguments (as given by the user in @extraGhcArgs@)
             -> FilePath   -- ^ Path to the main function
             -> RunDebuggerSettings -- ^ Other debugger run settings
             -> Debugger a -- ^ 'Debugger' action to run on the session constructed from this invocation
             -> IO a
-runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (Debugger action) = do
+runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp conf (Debugger action) = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
   GHC.runGhc (Just libdir) $ do
     -- Workaround #4162
@@ -180,8 +183,25 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (D
       -- Override the logger to output to the given handle
       GHC.pushLogHook $ const $ debuggerLoggerAction dbg_out
 
+    dflags2 <- getLogger >>= \logger -> do
+      -- Set the extra GHC arguments for ALL units by setting them early in
+      -- dynflags. This is important to make sure unfoldings for interfaces
+      -- loaded because of the built-in loaded classes (like
+      -- GHC.Debugger.View.Class) behave the same as if they were loaded for
+      -- the user program. Otherwise we may run into the problem which
+      -- 3093efa27468fb2d31a617f6a0e4ff67a90f6623 tried to fix (but had to be
+      -- reverted)
+      (dflags2, fileish_args, warns)
+        <- parseDynamicFlags logger dflags1 (map noLoc extraGhcArgs)
+      liftIO $ printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
+      -- todo: consider fileish_args?
+      forM_ fileish_args $ \fish_arg -> liftIO $ do
+        logMsg logger MCOutput noSrcSpan $ text "Ignoring extraGhcArg which isn't a recognized flag:" <+> text (unLoc fish_arg)
+        printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
+      return dflags2
+
     -- Set the session dynflags now to initialise the hsc_interp.
-    _ <- GHC.setSessionDynFlags dflags1
+    _ <- GHC.setSessionDynFlags dflags2
 
     -- Initialise plugins here because the plugin author might already expect this
     -- subsequent call to `getLogger` to be affected by a plugin.
@@ -191,7 +211,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (D
       GHC.initUniqSupply (GHC.initialUnique df) (GHC.uniqueIncrement df)
 
     -- Discover the user-given flags and targets
-    flagsAndTargets <- parseHomeUnitArguments mainFp compDir units ghcInvocation dflags1 rootDir
+    flagsAndTargets <- parseHomeUnitArguments mainFp compDir units ghcInvocation dflags2 rootDir
 
     -- Setup base HomeUnitGraph
     setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)

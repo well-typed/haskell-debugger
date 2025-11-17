@@ -60,11 +60,10 @@ runIDM logger entryPoint entryFile entryArgs extraGhcArgs act = do
             , supportsANSIHyperlinks = False
             }
 
-      let finalGhcInvocation = ghcInvocation ++ extraGhcArgs
       let absEntryFile = normalise $ projectRoot </> entryFile
       let debugRec = cmapWithSev DebuggerMonadLog logger
 
-      runDebugger debugRec stdout rootDir componentDir libdir units finalGhcInvocation absEntryFile defaultRunConf $
+      runDebugger debugRec stdout rootDir componentDir libdir units ghcInvocation extraGhcArgs absEntryFile defaultRunConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
                    (entryFile, entryPoint, entryArgs) Nothing

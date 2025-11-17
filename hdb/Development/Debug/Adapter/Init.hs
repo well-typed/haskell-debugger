@@ -237,8 +237,6 @@ debuggerThread :: Recorder (WithSeverity InitLog)
                -> IO ()
 debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
 
-  let finalGhcInvocation = ghcInvocation ++ extraGhcArgs
-
   -- See Notes (CWD) above
   setCurrentDirectory workDir
 
@@ -247,11 +245,11 @@ debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{.
     Output.console $ T.pack $
       "libdir: " <> libdir <> "\n" <>
       "units: " <> unwords units <> "\n" <>
-      "args: " <> unwords finalGhcInvocation
+      "args: " <> unwords (ghcInvocation ++ extraGhcArgs)
 
   catches
     (do
-      Debugger.runDebugger (cmapWithSev DebuggerMonadLog recorder) writeDebuggerOutput rootDir componentDir libdir units finalGhcInvocation mainFp runConf $ do
+      Debugger.runDebugger (cmapWithSev DebuggerMonadLog recorder) writeDebuggerOutput rootDir componentDir libdir units ghcInvocation extraGhcArgs mainFp runConf $ do
         liftIO $ signalInitialized (Right ())
         forever $ do
           req <- takeMVar requests & liftIO
