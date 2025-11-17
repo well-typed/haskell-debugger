@@ -785,7 +785,7 @@ describe("Debug Adapter Tests", function () {
                   entryFile: "MainA.hs",
                   entryPoint: "main",
                   entryArgs: [],
-                  extraGhcArgs: need_opt ? ["-O"] : []
+                  extraGhcArgs: need_opt ? ["-O", "-fno-unoptimized-core-for-interpreter"] : []
                 })
 
             const expected = (line) => ({ path: config.projectRoot + "/" + config.entryFile, line: line });
@@ -816,7 +816,7 @@ describe("Debug Adapter Tests", function () {
                   entryFile: "MainB.hs",
                   entryPoint: "main",
                   entryArgs: [],
-                  extraGhcArgs: need_opt ? ["-O"] : []
+                  extraGhcArgs: need_opt ? ["-O", "-fno-unoptimized-core-for-interpreter"] : []
                 })
 
             const expected = (line) => ({ path: config.projectRoot + "/" + config.entryFile, line: line });
