@@ -88,7 +88,6 @@ Cabal, Stack, custom `hie.yaml`) because
 it uses [`hie-bios`](https://github.com/haskell/hie-bios) to figure out the
 right flags to prepare the GHC session with.
 
-
 # Features
 
 Many not listed! Here are a few things:
@@ -117,6 +116,14 @@ Many not listed! Here are a few things:
 ### Conditionals
 - [ ] Conditional breakpoints     (breakpoint is hit only if condition is satisfied)
 - [ ] Hit conditional breakpoints (stop after N number of hits)
+
+# Talks
+
+### MuniHac 2025: A modern step-through debugger for Haskell
+[![MuniHac 2025 - Friday, September 12th - Rodrigo Mesquita: A modern step-through debugger for Haskell](https://img.youtube.com/vi/urYtE15ryA0/0.jpg)](https://youtu.be/urYtE15ryA0)
+
+### ZuriHac 2025: Haskell Implementor's Workshop: The GHC Debugger
+[![Rodrigo Mesquita - The GHC Debugger (ZuriHac)](https://img.youtube.com/vi/p-hBweQg42s/0.jpg)](https://youtu.be/p-hBweQg42s)
 
 # Building from source
 
