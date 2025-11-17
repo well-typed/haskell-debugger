@@ -27,6 +27,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 
 import GHC
 import GHC.Data.FastString
+import GHC.Driver.Session
 import GHC.Data.StringBuffer
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
@@ -175,6 +176,14 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' mainFp conf (D
           `GHC.gopt_set` GHC.Opt_InsertBreakpoints
           & setBytecodeBackend
           & enableByteCodeGeneration
+          -- DO NOT strip out all unfoldings, inline pragmas, etc from
+          -- interfaces that we load. At the moment this is quite crucial since
+          -- step-out in Do-notation relies on optimisations (when the user
+          -- sets -O1), and we don't want to ignore that.
+          & unSetGeneralFlag' Opt_IgnoreInterfacePragmas
+          -- We need this one as well otherwise the above will be nullified,
+          -- since the interpreter is NO OPTS by default.
+          & unSetGeneralFlag' Opt_UnoptimizedCoreForInterpreter
 
     GHC.modifyLogger $
       -- Override the logger to output to the given handle
