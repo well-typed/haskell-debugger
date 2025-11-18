@@ -41,20 +41,23 @@ import qualified GHC.Unit.State as State
 -- @exposed-modules@ in @haskell-debugger-view@ to make sure all (possibly
 -- orphan) instances are loaded and available.
 debuggerViewBuiltinMods :: [(ModuleName, StringBuffer)]
-debuggerViewBuiltinMods = (debuggerViewClassModName, debuggerViewClassContents):debuggerViewInstancesMods
+debuggerViewBuiltinMods = (debuggerViewClassModName, debuggerViewClassContents):map (\(a,b,_) -> (a,b)) debuggerViewInstancesMods
 
 -- | The modules which provide orphan instances for types defined in external packages.
 -- We will try to load each of these modules separately.
-debuggerViewInstancesMods :: [(ModuleName, StringBuffer)]
+debuggerViewInstancesMods :: [(ModuleName, StringBuffer, String {- package name -})]
 debuggerViewInstancesMods =
   [ ( debuggerViewContainersModName
     , debuggerViewContainersContents
+    , "containers"
     )
   , ( debuggerViewTextModName
     , debuggerViewTextContents
+    , "text"
     )
   , ( debuggerViewByteStringModName
     , debuggerViewByteStringContents
+    , "bytestring"
     )
   ]
 

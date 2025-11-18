@@ -243,21 +243,26 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
               logWith l Debug $ LogFailedToCompileDebugViewModule debuggerViewClassModName
               return []
             Succeeded -> (debuggerViewClassModName:) . concat <$> do
-              -- TODO: We could be a bit smarter and filter out if there isn't
-              -- a -package flag for the package we need for each module.
-              forM debuggerViewInstancesMods $ \(modName, modContent) -> do
-                tryLoadHsDebuggerViewModule l if_cache
-                    ((\case
-                        -- Keep only "GHC.Debugger.View.Class", which is a dependency of all these.
-                        GHC.TargetFile f _
-                          -> f == "in-memory:" ++ moduleNameString debuggerViewClassModName
-                        _ -> False) . GHC.targetId)
-                    modName modContent >>= \case
-                  Failed -> do
-                    logWith l Info $ LogFailedToCompileDebugViewModule modName
-                    return []
-                  Succeeded -> do
-                    return [modName]
+
+              forM debuggerViewInstancesMods $ \(modName, modContent, pkgName) -> do
+                -- Don't try to load instances whose packages are not even in
+                -- the module graph:
+                if any ((pkgName `L.isPrefixOf`) . unitIdString) base_dep_uids then do
+                  tryLoadHsDebuggerViewModule l if_cache
+                      ((\case
+                          -- Keep only "GHC.Debugger.View.Class", which is a dependency of all these.
+                          GHC.TargetFile f _
+                            -> f == "in-memory:" ++ moduleNameString debuggerViewClassModName
+                          _ -> False) . GHC.targetId)
+                      modName modContent >>= \case
+                    Failed -> do
+                      logWith l Info $ LogFailedToCompileDebugViewModule modName
+                      return []
+                    Succeeded -> do
+                      return [modName]
+                else do
+                  logWith l Debug $ LogSkippingViewModuleNoPkg modName pkgName (map unitIdString base_dep_uids)
+                  return []
 
       Just uid ->
         -- TODO: We assume for now that if you depended on
@@ -569,12 +574,16 @@ debuggerLoggerAction h a b c d = do
 
 data DebuggerMonadLog
   = LogFailedToCompileDebugViewModule GHC.ModuleName
+  | LogSkippingViewModuleNoPkg GHC.ModuleName String [String]
   | LogSDoc DynFlags SDoc
 
 instance Pretty DebuggerMonadLog where
   pretty = \ case
     LogFailedToCompileDebugViewModule mn ->
       pretty $ "Failed to compile built-in " ++ moduleNameString mn ++ " module! Ignoring these custom debug views."
+    LogSkippingViewModuleNoPkg mn pkg uids ->
+      pretty $ "Skipping compilation of built-in " ++ moduleNameString mn ++ " module because package "
+                ++ show pkg ++ " wasn't found in dependencies " ++ show uids
     LogSDoc dflags doc ->
       pretty $ showSDoc dflags doc
 
