@@ -1,11 +1,24 @@
 cabal-version:   3.12
 name:            haskell-debugger-view
 version:         0.1.0.0
-license:         NONE
+license:         BSD-3-Clause
 author:          Matthew Pickering
 maintainer:      matthewtpickering@gmail.com
 build-type:      Simple
 extra-doc-files: CHANGELOG.md
+category:        Development
+synopsis:
+    Custom debug visualization instances for @haskell-debugger@
+description:
+    This package provides a class to implement custom debug visualization
+    instances for user-defined datatypes, which will be discovered and used by
+    @haskell-debugger@ when debugging a program. Additionally, it provides a
+    handful of built-in custom visualizations, such as for @String@ and @IntMap@.
+    The custom debug visualizations are displayed in the editor when inspecting
+    a variable or evaluation result. The @'DebugView'@ class is the class for
+    which an instance must be provided, and allows one to customize what is
+    displayed inline and what fields are available when expanding it.
+    See the haddocks of @'GHC.Debugger.View.Class'@ for further information.
 
 common warnings
     ghc-options: -Wall
@@ -19,7 +32,7 @@ library
                       GHC.Debugger.View.Containers
                       GHC.Debugger.View.Text
                       GHC.Debugger.View.ByteString
-    build-depends:    base,
+    build-depends:    base >= 4.22 && < 5,
                       containers >= 0.7 && < 0.9,
                       text >= 2.1 && < 2.3,
                       bytestring >= 0.12.1 && < 0.13,
