@@ -1,6 +1,26 @@
 # Revision history for haskell-debugger
 
-## 0.10.0.0 -- Unreleased
+## 0.10.0.0 -- 2025-11-18
+
+* Adds Custom Debug Visualisations!
+    * The value inspection internals were refactored to always try first to use a
+      custom visualization and fallback to the general-case visualization which
+      mimics the heap representation of a value.
+    * We ship a handful of custom visualisations for base types like `String`,
+      `Int`, etc, and for types from a few core packages: `Text`, `ByteString`, `Map` and `IntMap`.
+    * The user can add custom visualizations for the desired types by
+      implementing an instance for `DebugView` from `haskell-debugger-view`
+        * At runtime, `hdb` will pick up the `DebugView` instances in scope and use them when possible.
+    * When the package dependency closure includes `haskell-debugger-view`, we
+      will use that unit specifically. When it is not in the dependencies, we
+      will load a built-in version in memory.
+* Evaluate requests now return a structured and expandable response, akin to the variables pane
+    * To show the whole value inline one can recover the previous behavior by
+      calling `show` on the value to display.
+    * This makes it possible to have structured results in the "Watch" pane.
+* Adds support for conditional breakpoints and hit count breakpoints
+* Bug fixes in variable inspection
+* Bug fixes in multiple-home-units
 
 ## 0.9.0.0 -- 2025-10-13
 
