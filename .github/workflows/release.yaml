@@ -24,6 +24,7 @@ jobs:
     # compatible with the version being released.
     with:
       use-haskell-debugger-view-from-hackage: true
+      is-release: true
 
   docs-haskell-debugger:
     name: Build Documentation

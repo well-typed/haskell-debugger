@@ -8,6 +8,9 @@ on:
       use-haskell-debugger-view-from-hackage:
         required: true
         type: boolean
+      is-release:
+        required: true
+        type: boolean
 
 env:
   haskellDebuggerViewVersion: 0.1.0.0
@@ -70,7 +73,8 @@ jobs:
     name: Build and Run Integration Tests
     needs: sdist-haskell-debugger
     runs-on: ubuntu-latest
-    continue-on-error: true # Run all jobs in the matrix to the end
+    # Run all jobs in the matrix to the end (IF NOT ON RELEASE)
+    continue-on-error: ${{ inputs.is-release == false }}
     strategy:
       matrix:
         version: [9.14.0.20251104] #, latest-nightly] disable nightly while its broken
@@ -134,7 +138,8 @@ jobs:
   build-n-more-test-haskell-debugger:
     name: Build and Run Haskell Tests
     runs-on: ubuntu-latest
-    continue-on-error: true # Run all jobs in the matrix to the end
+    # Run all jobs in the matrix to the end (IF NOT ON RELEASE)
+    continue-on-error: ${{ inputs.is-release == false }}
     strategy:
       matrix:
         version: [9.14.0.20251104] #, latest-nightly] disable nightly while its broken
