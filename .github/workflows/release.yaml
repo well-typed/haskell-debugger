@@ -19,6 +19,11 @@ permissions:
 jobs:
   build-haskell-debugger:
     uses: ./.github/workflows/debugger.yaml
+    # Build and Test using the haskell-debugger sdist and haskell-debugger-view
+    # from hackage. This requires that haskell-debugger-view on hackage be
+    # compatible with the version being released.
+    with:
+      use-haskell-debugger-view-from-hackage: true
 
   docs-haskell-debugger:
     name: Build Documentation
