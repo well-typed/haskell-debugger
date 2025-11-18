@@ -1,5 +1,66 @@
 {-# LANGUAGE DerivingVia, StandaloneDeriving, ViewPatterns, ImpredicativeTypes #-}
-module GHC.Debugger.View.Class where
+-- | The home of customizability for visualizing variables and values with @haskell-debugger@
+module GHC.Debugger.View.Class
+  (
+    -- * Writing custom debug visualizations
+    --
+    -- | The entry point for custom visualizations is 'DebugView'.
+    -- There are two axis of configuration:
+    --
+    -- 1. What to display inline in front of the variable name and whether it
+    -- is expandable
+    --
+    -- 2. What fields are displayed when the value is expanded and what are
+    -- their corresponding values
+    --
+    -- The former is answered by 'debugValue' / 'VarValue' and the latter by
+    -- 'debugFields' / 'VarFields'.
+    DebugView(..)
+
+  , VarValue(..)
+  , VarFields(..)
+  , VarFieldValue(..)
+
+  -- * Utilities
+  --
+  -- | These can make it easier to write your own custom instances.
+  -- We also use them for the built-in custom instances.
+  , BoringTy(..)
+
+  -- * The internals
+  --
+  -- | These are used by @haskell-debugger@ when invoking these instances at
+  -- runtime and reconstructing the result from the heap.
+  --
+  -- They should never be used by a user looking to write custom visualizations.
+  , VarValueIO(..)
+  , debugValueIOWrapper
+  , VarFieldsIO(..)
+  , debugFieldsIOWrapper
+  )
+  where
+
+-- | Custom handling of debug terms (e.g. in the variables pane, or when
+-- inspecting a lazy variable)
+class DebugView a where
+
+  -- | Compute the representation of a variable with the given value.
+  --
+  -- INVARIANT: this method should only called on values which are already in
+  -- WHNF, never thunks.
+  --
+  -- That said, this method is responsible for determining how much it is
+  -- forced when displaying it inline as a variable.
+  --
+  -- For instance, for @String@, @a@ will be fully forced to display the entire
+  -- string in one go rather than as a linked list of @'Char'@.
+  debugValue :: a -> VarValue
+
+  -- | Compute the fields to display when expanding a value of type @a@.
+  --
+  -- This method should only be called to get the fields if the corresponding
+  -- @'VarValue'@ has @'varExpandable' = True@.
+  debugFields :: a -> VarFields
 
 -- | The representation of the value for some variable on the debugger
 data VarValue = VarValue
@@ -26,28 +87,6 @@ newtype VarFields = VarFields
 -- existential @a@ (the instance is found at runtime), or the generic runtime
 -- term inspection mechanisms otherwise.
 data VarFieldValue = forall a. VarFieldValue a
-
--- | Custom handling of debug terms (e.g. in the variables pane, or when
--- inspecting a lazy variable)
-class DebugView a where
-
-  -- | Compute the representation of a variable with the given value.
-  --
-  -- INVARIANT: this method should only called on values which are already in
-  -- WHNF, never thunks.
-  --
-  -- That said, this method is responsible for determining how much it is
-  -- forced when displaying it inline as a variable.
-  --
-  -- For instance, for @String@, @a@ will be fully forced to display the entire
-  -- string in one go rather than as a linked list of @'Char'@.
-  debugValue :: a -> VarValue
-
-  -- | Compute the fields to display when expanding a value of type @a@.
-  --
-  -- This method should only be called to get the fields if the corresponding
-  -- @'VarValue'@ has @'varExpandable' = True@.
-  debugFields :: a -> VarFields
 
 --------------------------------------------------------------------------------
 
@@ -85,28 +124,6 @@ instance DebugView (a, b) where
   debugFields (x, y) = VarFields
     [ ("fst", VarFieldValue x)
     , ("snd", VarFieldValue y) ]
-
--- instance DebugView T.Text where
---   debugValue  t = VarValue (show (T.unpack t)) False
---   debugFields _ = VarFields []
---
--- instance DebugView BS.ByteString where
---   debugValue  t = VarValue (show (T.unpack (T.decodeUtf8 t))) False
---   debugFields _ = VarFields []
---
--- instance DebugView (IM.IntMap a) where
---   debugValue _ = VarValue "IntMap" True
---   debugFields im = VarFields
---     [ (show k, VarFieldValue v)
---     | (k, v) <- IM.toList im
---     ]
---
--- instance Show k => DebugView (M.Map k a) where
---   debugValue _ = VarValue "Map" True
---   debugFields m = VarFields
---     [ (show k, VarFieldValue v)
---     | (k, v) <- M.toList m
---     ]
 
 --------------------------------------------------------------------------------
 -- * (Internal) Wrappers required to call `evalStmt` on methods more easily
