@@ -114,8 +114,30 @@ Many not listed! Here are a few things:
 - [ ] Instruction breakpoints
 
 ### Conditionals
-- [ ] Conditional breakpoints     (breakpoint is hit only if condition is satisfied)
-- [ ] Hit conditional breakpoints (stop after N number of hits)
+- [x] Conditional breakpoints     (breakpoint is hit only if condition is satisfied)
+- [x] Hit conditional breakpoints (stop after N number of hits)
+
+## Custom Debug Visualizations
+
+The user can extend the debugger visualization behavior (in a plugin sort of
+way) by implementing `DebugView` from
+[`haskell-debugger-view`](https://hackage.haskell.org/package/haskell-debugger-view)
+for the desired types.
+
+We ship built-in custom instances for various `base` datatypes, such as
+`String` and `(a, b)`, and for a core packages as well, such as `Text`,
+`ByteString`, `Map` and `IntMap`.
+
+Here is an example of a completely custom `DebugView` instance for a
+user-defined datatype. You can also see how the `IntMap` is displayed as a pair
+of `Int` keys to their values as opposed as as a `Bin/Tip` tree mimicking its
+real definition:
+
+![Image showing custom debug view instance](https://github.com/user-attachments/assets/2ccb5858-4893-4b5a-a889-077d61937f28)
+
+When the package dependency closure includes `haskell-debugger-view`, we will
+use that unit specifically. When it is not in the dependencies, we will load a
+built-in version in memory.
 
 # Talks
 
