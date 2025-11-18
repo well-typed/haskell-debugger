@@ -3,11 +3,20 @@ on:
     branches:
       - master
   pull_request: {}
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      use-haskell-debugger-view-from-hackage:
+        required: true
+        type: boolean
 
 env:
   haskellDebuggerViewVersion: 0.1.0.0
   haskellDebuggerVersion: 0.10.0.0
+  USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE: ${{ 
+      github.event_name == 'workflow_call'
+        && inputs.use-haskell-debugger-view-from-hackage
+        || false
+    }}
 
 name: Debugger CI
 jobs:
@@ -100,11 +109,19 @@ jobs:
           name: Haskell Debugger Source Distribution
           path: ${{ runner.temp }}/dist
 
+      - name: Untar haskell-debugger
+        run: |
+          (cd ${{ runner.temp }}/dist && tar xzf "haskell-debugger-${{env.haskellDebuggerVersion}}.tar.gz")
+
+      - name: Setup local version of haskell-debugger-view
+        if: env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE
+        run: |
+          (cd ${{ runner.temp }}/dist && tar xzf "haskell-debugger-view-${{env.haskellDebuggerViewVersion}}.tar.gz")
+          (cd ${{ runner.temp }}/dist && cd haskell-debugger-${{env.haskellDebuggerVersion}} && echo 'packages: . ../haskell-debugger-view-${{env.haskellDebuggerViewVersion}}' > cabal.project)
+
       - name: Build and Run integration tests
         run: |
-          echo "Running DAP Integration Testsuite now..."
-          (cd ${{ runner.temp }}/dist && for f in *.tar.gz; do tar xzf "$f"; done)
-          (cd ${{ runner.temp }}/dist && cd haskell-debugger-${{env.haskellDebuggerVersion}} && echo 'packages: . ../haskell-debugger-view-${{env.haskellDebuggerViewVersion}}' > cabal.project)
+          echo "Using haskell-debugger-view from hackage: ${{env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE}}"
           (cd ${{ runner.temp }}/dist && cd haskell-debugger-${{env.haskellDebuggerVersion}} && cabal build exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
           export DEBUGGER=$(cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}} && cabal list-bin exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
           echo "DEBUGGER: $DEBUGGER"
