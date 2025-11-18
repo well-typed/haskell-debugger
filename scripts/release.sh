@@ -53,8 +53,9 @@ if ! git diff --staged --quiet; then
   exit 1
 fi
 
-# Do the release commit and tag it
-git commit --allow-empty -m "Release: $PKG_VERSION"
+# Tag latest commit
 git tag "v$PKG_VERSION" -m "Release: $PKG_VERSION"
 
 echo "Please don't forget to push with --tags"
+echo "Few more things:"
+echo "  - Make sure haskell-debugger-view was manually uploaded if there should be a new release."
