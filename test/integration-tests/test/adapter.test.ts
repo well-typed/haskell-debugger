@@ -3,7 +3,7 @@ import * as cp from 'child_process';
 import * as net from 'net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdtempSync, cpSync, realpathSync } from 'node:fs';
+import { mkdtempSync, cpSync, realpathSync, createWriteStream } from 'node:fs';
 import assert from 'assert';
 import { describe, beforeEach, afterEach, it } from 'mocha';
 
@@ -40,15 +40,18 @@ describe("Debug Adapter Tests", function () {
         };
         debuggerProcess = cp.spawn('hdb', ['server', '--port', port.toString()], hdbEnv);
 
+        const stream = createWriteStream(cacheDir + '/output.txt', { flags: 'a' });
+        // NOTE: UNCOMMENT ME TO DEBUG
+        console.log("Writing output to " + cacheDir + "/output.txt")
+
         const ready: Promise<void> = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
-                reject(new Error("haskell-debugger did not signal readiness in time"));
+                reject(new Error("haskell-debugger did not signal readiness in time. Read the server output in " + cacheDir + "/output.txt"));
             }, 15000); // 15 second timeout
 
             debuggerProcess.stdout.on('data', data => {
-                // NOTE: UNCOMMENT ME TO DEBUG
-                // console.log(data.toString())
                 const text = data.toString();
+                stream.write(text)
                 if (text.includes('Running')) {
                     clearTimeout(timeout);
 
