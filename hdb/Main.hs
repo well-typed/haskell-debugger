@@ -9,6 +9,7 @@ import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Except
+import Control.Exception.Backtrace
 
 import DAP
 
@@ -42,6 +43,10 @@ defaultStdoutForwardingAction l = do
 
 main :: IO ()
 main = do
+  setBacktraceMechanismState CostCentreBacktrace False
+  setBacktraceMechanismState HasCallStackBacktrace True
+  setBacktraceMechanismState IPEBacktrace True
+
   hdbOpts <- parseHdbOptions
   let
     timeStampLogger  = cmapIO renderWithTimestamp . fromCologAction

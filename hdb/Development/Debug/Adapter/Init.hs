@@ -186,7 +186,15 @@ stderrCaptureThread runInTerminal syncErr withAdaptor = do
         writeChan syncErr $ T.encodeUtf8 (line <> "\n")
 
       -- Always output to Debug Console
-      withAdaptor $ Output.stderr line
+      catch
+        (withAdaptor $ Output.stderr line)
+        (\(_ :: SomeException) ->
+          throwIO (FailedToWriteToAdaptor line))
+
+newtype FailedToWriteToAdaptor = FailedToWriteToAdaptor T.Text
+instance Show FailedToWriteToAdaptor where
+  show (FailedToWriteToAdaptor t) = "Failed to write to debug adapter: " ++ T.unpack t
+instance Exception FailedToWriteToAdaptor
 
 stdinForwardThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
 stdinForwardThread runInTerminal syncIn _withAdaptor = do
