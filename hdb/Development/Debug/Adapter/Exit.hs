@@ -45,7 +45,7 @@ commandTerminate = do
   -- DidTerminate <- sendInterleaved TerminateProcess sendTerminateResponse
   destroyDebugSession
   sendTerminateResponse
-  exitCleanly
+  exitCleanly Nothing
 
 -- | Command disconnect (1b)
 --
@@ -54,7 +54,7 @@ commandDisconnect :: DebugAdaptor ()
 commandDisconnect = do
   destroyDebugSession
   sendDisconnectResponse
-  exitCleanly
+  exitCleanly Nothing
 
 --- Exit Cleanly ---------------------------------------------------------------
 
@@ -86,17 +86,22 @@ exitCleanupWithMsg final_handle msg = do
 exitWithMsg :: String -> DebugAdaptor a
 exitWithMsg msg = do
   Output.important (T.pack msg)
-  exitCleanly
+  exitCleanly (Just msg)
 
-exitCleanly :: DebugAdaptor a
-exitCleanly = do
+exitCleanly :: Maybe String -> DebugAdaptor a
+exitCleanly mm = do
 
   sendTerminatedEvent (TerminatedEvent False)
 
   -- We exit here to guarantee the process is killed when
   -- terminated. Important! We want a new server process per
   -- session, which means at the end we must kill the server.
-  liftIO $ throwIO TerminateServer
+  liftIO $ do
+    case mm of
+      Nothing -> throwIO TerminateServer
+      Just em -> do
+        hPutStrLn stderr em
+        throwIO TerminateServer
 
 --- Utils ----------------------------------------------------------------------
 
@@ -106,5 +111,4 @@ displayExceptionWithContext ex = do
   case displayExceptionContext (someExceptionContext ex) of
     "" -> displayException ex
     cx -> displayException ex ++ "\n\n" ++ cx
-
 

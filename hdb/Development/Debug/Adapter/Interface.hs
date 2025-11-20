@@ -9,6 +9,7 @@ import DAP
 
 import GHC.Debugger.Interface.Messages as D
 import Development.Debug.Adapter
+import Development.Debug.Adapter.Exit
 import qualified Development.Debug.Adapter.Output as Output
 
 -- | Synchronously send a command to the debugger and await a response
@@ -29,7 +30,6 @@ sendInterleaved cmd action = do
 handleAbort :: Response -> DebugAdaptor Response
 handleAbort (Aborted e) = do
   Output.console (T.pack e)
-  sendTerminatedEvent defaultTerminatedEvent
-  return (Aborted e) -- will TerminatedEvent terminate this session before this happens?
+  exitCleanly (Just e)
 handleAbort r = return r
 
