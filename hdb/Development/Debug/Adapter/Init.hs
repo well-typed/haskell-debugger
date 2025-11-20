@@ -278,7 +278,7 @@ debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{.
     reply = liftIO . putMVar replies
     bad m = liftIO $ do
       hPutStrLn stderr m
-      putMVar replies (Aborted m)
+      putMVar replies (Aborted ("Aborted debugger thread: " ++ m))
 
 -- | Reads from the read end of the handle to which the debugger writes compiler messages.
 -- Writes the compiler messages to the client console

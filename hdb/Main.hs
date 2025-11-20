@@ -210,11 +210,11 @@ talk l support_rit_var pid_var client_proxy_signal = \ case
 
       Left (InitFailed err) -> do
         sendErrorResponse (ErrorMessage (T.pack err)) Nothing
-        exitCleanly
+        exitCleanly Nothing
 --------------------------------------------------------------------------------
   CommandAttach -> do
     sendErrorResponse (ErrorMessage (T.pack "hdb does not support \"attach\" mode yet")) Nothing
-    exitCleanly
+    exitCleanly Nothing
 --------------------------------------------------------------------------------
   CommandBreakpointLocations       -> commandBreakpointLocations
   CommandSetBreakpoints            -> commandSetBreakpoints
@@ -261,7 +261,7 @@ talk l support_rit_var pid_var client_proxy_signal = \ case
     pure ()
   other -> do
     sendErrorResponse (ErrorMessage (T.pack ("Unsupported command: " <> show other))) Nothing
-    exitCleanly
+    exitCleanly Nothing
 ----------------------------------------------------------------------------
 -- talk cmd = logInfo $ BL8.pack ("GOT cmd " <> show cmd)
 ----------------------------------------------------------------------------
