@@ -3,7 +3,7 @@ import * as cp from 'child_process';
 import * as net from 'net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdtempSync, cpSync, realpathSync, createWriteStream } from 'node:fs';
+import { mkdtempSync, cpSync, realpathSync, appendFileSync } from 'node:fs';
 import assert from 'assert';
 import { describe, beforeEach, afterEach, it } from 'mocha';
 
@@ -24,7 +24,8 @@ function getFreePort(): Promise<number> {
 }
 
 var dc: DebugClient;
-let debuggerProcess;
+// A map from test being run to debugger process:
+let debuggerProcesses = new Map<string, cp.ChildProcess>();
 
 describe("Debug Adapter Tests", function () {
     this.timeout(15000); // 15s
@@ -38,11 +39,11 @@ describe("Debug Adapter Tests", function () {
                 ...process.env, HDB_CACHE_DIR: cacheDir
             }
         };
-        debuggerProcess = cp.spawn('hdb', ['server', '--port', port.toString()], hdbEnv);
+        let debuggerProcess = cp.spawn('hdb', ['server', '--port', port.toString()], hdbEnv);
+        debuggerProcesses.set(this.fullTitle(), debuggerProcess);
 
-        const stream = createWriteStream(cacheDir + '/output.txt', { flags: 'a' });
         // NOTE: UNCOMMENT ME TO DEBUG
-        console.log("Writing output to " + cacheDir + "/output.txt")
+        // console.log("Writing output to " + cacheDir + "/output.txt")
 
         const ready: Promise<void> = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
@@ -51,22 +52,35 @@ describe("Debug Adapter Tests", function () {
 
             debuggerProcess.stdout.on('data', data => {
                 const text = data.toString();
-                stream.write(text)
+                // console.log("STDOUT:", text); // Log to console as well
+                appendFileSync(cacheDir+'/output.txt', text);
                 if (text.includes('Running')) {
+                    // console.log("Detected 'Running' message, server is ready");
                     clearTimeout(timeout);
-
-                    // Just a little delay, 50ms
-                    // Otherwise it may not yet be up as we only set up the
-                    // server directly after the message.
-                    // Alternatively, we could try-catch connect and retry a few times.
                     setTimeout(() => {
                         resolve();
-                    }, 50)
+                    }, 50);
                 }
             });
 
-            debuggerProcess.on('error', reject);
-        });
+            debuggerProcess.stderr.on('data', data => {
+                const text = data.toString();
+                // console.log("STDERR:", text);
+                appendFileSync(cacheDir+'/output.txt', "STDERR: " + text);
+            });
+
+            debuggerProcess.on('error', x => {
+                clearTimeout(timeout);
+                reject(x);
+            });
+
+            debuggerProcess.on('exit', (code, signal) => {
+                clearTimeout(timeout);
+                if (code !== null && code !== 0) {
+                    reject(new Error(`hdb server exited with code ${code}. See logs at: ${cacheDir}/output.txt`));
+                }
+            });
+       });
 
         return ready.then(function () {
             dc = new DebugClient(undefined, undefined, 'haskell');
@@ -76,9 +90,14 @@ describe("Debug Adapter Tests", function () {
     }));
 
     afterEach( () => {
-      if (!debuggerProcess.killed)
-        debuggerProcess.kill();
       dc.stop()
+      const debuggerProcess = debuggerProcesses.get(this.fullTitle());
+      setTimeout( () => {
+        if (!debuggerProcess.killed) {
+          debuggerProcess.kill();
+        }
+      }, 100); // Give it a bit of time to clean up
+      debuggerProcesses.delete(this.fullTitle());
     });
 
     const mkHermetic = (path: string) => {
@@ -774,8 +793,10 @@ describe("Debug Adapter Tests", function () {
 
             await dc.hitBreakpoint(config, { path: config.entryFile, line: 9 }, expected(9), expected(9));
 
-            await dc.stepOutRequest({threadId: 0});
-            await dc.assertStoppedLocation('step', expected(5));
+            await Promise.all([
+                dc.stepOutRequest({threadId: 0}),
+                dc.assertStoppedLocation('step', expected(5))
+            ])
         })
 
         let need_opt = true // Currently we depend on this to work around the fact that >>= is in library code because base is not being interpreted
@@ -796,16 +817,22 @@ describe("Debug Adapter Tests", function () {
             await dc.hitBreakpoint(config, { path: config.entryFile, line: 10 }, expected(10), expected(10));
 
             // foo to bar
-            await dc.stepOutRequest({threadId: 0});
-            await dc.assertStoppedLocation('step', expected(20));
+            await Promise.all([
+                dc.stepOutRequest({threadId: 0}),
+                dc.assertStoppedLocation('step', expected(20))
+            ])
 
             // bar back to foo
-            await dc.stepOutRequest({threadId: 0});
-            await dc.assertStoppedLocation('step', expected(14));
+            await Promise.all([
+                dc.stepOutRequest({threadId: 0}),
+                dc.assertStoppedLocation('step', expected(14))
+            ])
 
             // back to main
-            await dc.stepOutRequest({threadId: 0});
-            await dc.assertStoppedLocation('step', expected(5));
+            await Promise.all([
+                dc.stepOutRequest({threadId: 0}),
+                dc.assertStoppedLocation('step', expected(5))
+            ])
 
             // exit
             await dc.stepOutRequest({threadId: 0});
@@ -829,9 +856,10 @@ describe("Debug Adapter Tests", function () {
             // step out of foo True and observe that we have skipped its call in bar,
             // and the call of bar in foo False.
             // we go straight to `main`.
-            await dc.stepOutRequest({threadId: 0});
-
-            await dc.assertStoppedLocation('step', expected(5))
+            await Promise.all([
+                dc.stepOutRequest({threadId: 0}),
+                dc.assertStoppedLocation('step', expected(5))
+            ])
 
             // stepping out again exits
             await dc.stepOutRequest({threadId: 0});
