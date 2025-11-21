@@ -20,6 +20,12 @@ import GHC.Runtime.Eval
 import GHC.Types.SrcLoc
 import qualified GHC.Unit.Home.Graph as HUG
 
+import GHC.Utils.Trace
+
+import GHC.Stack.CloneStack
+import GHC.Exts.Heap
+import GHC.Exts.Stack
+
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Runtime
 import GHC.Debugger.Monad
@@ -52,22 +58,23 @@ because of the termination event we sent.
 
 -- | Get the stack frames at the point we're stopped at
 getStacktrace :: Debugger [StackFrame]
-getStacktrace = GHC.getResumeContext >>= \case
-  [] ->
-    -- See Note [Don't crash if not stopped]
-    return []
-  r:_
-    | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
-    -> return
-        [ StackFrame
-          { name = GHC.resumeDecl r
-          , sourceSpan = realSrcSpanToSourceSpan ss
-          }
-        ]
-    | otherwise ->
-        -- No resume span; which should mean we're stopped on an exception.
-        -- No info for now.
-        return []
+    -- See Note [Don't crash if not stopped], for why the resumeContext list may be empty
+getStacktrace = GHC.getResumeContext >>= fmap concat . mapM (\r ->
+    case r of
+      _ | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
+        -> do
+          -- decodeStack =<< cloneMyStack -- this has to happen in the other thread...
+          -- pprTraceM "stack:" (text (show mystack))
+          return
+            [ StackFrame
+              { name = GHC.resumeDecl r
+              , sourceSpan = realSrcSpanToSourceSpan ss
+              }
+            ]
+        | otherwise ->
+          -- No resume span; which should mean we're stopped on an exception.
+          -- No info for now.
+          return [])
 
 --------------------------------------------------------------------------------
 -- * Scopes

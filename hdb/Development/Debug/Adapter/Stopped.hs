@@ -14,6 +14,7 @@
 -- @
 module Development.Debug.Adapter.Stopped where
 
+import Control.Monad
 import qualified Data.Text as T
 
 import DAP
@@ -45,27 +46,23 @@ commandStackTrace :: DebugAdaptor ()
 commandStackTrace = do
   StackTraceArguments{..} <- getArguments
   GotStacktrace fs <- sendSync GetStacktrace
-  case fs of
-    []  ->
-      -- No frames; should be stopped on exception
-      sendStackTraceResponse StackTraceResponse { stackFrames = [], totalFrames = Nothing }
-    [f] -> do
-      source <- fileToSource f.sourceSpan.file
-      let
-        topStackFrame = defaultStackFrame
-          { stackFrameId = 0
-          , stackFrameName = T.pack f.name
-          , stackFrameLine = f.sourceSpan.startLine
-          , stackFrameColumn = f.sourceSpan.startCol
-          , stackFrameEndLine = Just f.sourceSpan.endLine
-          , stackFrameEndColumn = Just f.sourceSpan.endCol
-          , stackFrameSource = Just source
-          }
-      sendStackTraceResponse StackTraceResponse
-        { stackFrames = [topStackFrame]
-        , totalFrames = Just 1
-        }
-    _ -> error $ "Unexpected multiple frames since implementation doesn't support it yet: " ++ show fs
+  frames <- forM fs $ \f -> do 
+    source <- fileToSource f.sourceSpan.file
+    return defaultStackFrame
+      { stackFrameId = 0
+      , stackFrameName = T.pack f.name
+      , stackFrameLine = f.sourceSpan.startLine
+      , stackFrameColumn = f.sourceSpan.startCol
+      , stackFrameEndLine = Just f.sourceSpan.endLine
+      , stackFrameEndColumn = Just f.sourceSpan.endCol
+      , stackFrameSource = Just source
+      }
+  sendStackTraceResponse StackTraceResponse
+    { stackFrames = frames
+    , totalFrames = if null frames
+        then Nothing -- No frames; should be stopped on exception
+        else Just (length frames)
+    }
 
 
 --------------------------------------------------------------------------------
