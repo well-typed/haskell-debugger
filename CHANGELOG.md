@@ -1,5 +1,10 @@
 # Revision history for haskell-debugger
 
+## 0.10.1.0 -- 2025-11-21
+
+* Fixes critical bug which prevented debugger from being used with non-boot
+  dependencies!
+
 ## 0.10.0.0 -- 2025-11-18
 
 * Adds Custom Debug Visualisations!
