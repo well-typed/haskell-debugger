@@ -40,6 +40,9 @@ module GHC.Debugger.View.Class
   )
   where
 
+import Data.Int
+import Data.Word
+
 -- | Custom handling of debug terms (e.g. in the variables pane, or when
 -- inspecting a lazy variable)
 class DebugView a where
@@ -112,7 +115,15 @@ instance Show a => DebugView (BoringTy a) where
   debugFields _           = VarFields []
 
 deriving via BoringTy Int     instance DebugView Int
+deriving via BoringTy Int8    instance DebugView Int8
+deriving via BoringTy Int16   instance DebugView Int16
+deriving via BoringTy Int32   instance DebugView Int32
+deriving via BoringTy Int64   instance DebugView Int64
 deriving via BoringTy Word    instance DebugView Word
+deriving via BoringTy Word8   instance DebugView Word8
+deriving via BoringTy Word16  instance DebugView Word16
+deriving via BoringTy Word32  instance DebugView Word32
+deriving via BoringTy Word64  instance DebugView Word64
 deriving via BoringTy Double  instance DebugView Double
 deriving via BoringTy Float   instance DebugView Float
 deriving via BoringTy Integer instance DebugView Integer
