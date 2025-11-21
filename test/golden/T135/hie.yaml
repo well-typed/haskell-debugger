@@ -1,0 +1,6 @@
+cradle:
+  cabal:
+    - path: "./mylib"
+      component: "lib:mylib"
+    - path: "./myapp/"
+      component: "myapp"
