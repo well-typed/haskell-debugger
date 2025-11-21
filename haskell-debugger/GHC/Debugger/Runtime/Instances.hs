@@ -1,38 +1,18 @@
 {-# LANGUAGE TemplateHaskell, LambdaCase, BlockArguments #-}
 module GHC.Debugger.Runtime.Instances where
 
-import Control.Exception
 import Control.Monad
 import Control.Monad.Reader
 
 import GHC
-import GHC.Builtin.Names
-import GHC.Core.TyCon
-import GHC.Core.Type
-import GHC.Driver.Config
 import GHC.Driver.Env
-import GHC.Driver.Main
-import GHC.HsToCore.Expr
-import GHC.HsToCore.Monad
 import GHC.Plugins
-import GHC.Rename.Env
-import GHC.Rename.Expr
 import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as Interp
-import GHC.Tc.Gen.Expr
-import GHC.Tc.Solver
-import GHC.Tc.Types.Evidence
-import GHC.Tc.Utils.Env
-import GHC.Tc.Utils.Monad
-import GHC.Tc.Utils.TcType
-import GHC.Tc.Zonk.Type
-import GHCi.Message
 
 import GHC.Debugger.Monad
-import GHC.Debugger.Session.Builtin
 import GHC.Debugger.View.Class
-import GHC.Debugger.Logger as Logger
 
 import GHC.Debugger.Runtime.Instances.Discover
 
