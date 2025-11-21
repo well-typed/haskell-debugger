@@ -69,7 +69,7 @@ runIDM logger entryPoint entryFile entryArgs extraGhcArgs act = do
                    (entryFile, entryPoint, entryArgs) Nothing
   where
     exitWithMsg txt = do
-      putStrLn txt
+      hPutStrLn stderr txt
       exitWith (ExitFailure 33)
 
   --   completeF = completeWordWithPrev Nothing filenameWordBreakChars $
