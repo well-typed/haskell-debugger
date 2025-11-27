@@ -128,15 +128,26 @@ tuple2Of :: TermParser a -> TermParser b -> TermParser (a, b)
 tuple2Of parserA parserB = (,) <$> subtermWith 0 parserA <*> subtermWith 1 parserB
 
 boolParser :: TermParser Bool
-boolParser = do
+boolParser =
+  matchOccNameTerm "False" False
+    <|> matchOccNameTerm "True" True
+    <|> matchDataConTerm falseDataCon False
+    <|> matchDataConTerm trueDataCon True
+    <|> parseError (TermParseError "expected Bool term")
+
+matchOccNameTerm :: String -> a -> TermParser a
+matchOccNameTerm occName result = do
   Term{dc} <- ensureTerm
   case dc of
-    Left "False" -> pure False
-    Left "True"  -> pure True
-    Right dc'
-      | dc' == falseDataCon -> pure False
-      | dc' == trueDataCon  -> pure True
-    _ -> parseError (TermParseError "expected Bool term")
+    Left name | name == occName -> pure result
+    _ -> empty
+
+matchDataConTerm :: DataCon -> a -> TermParser a
+matchDataConTerm dataCon result = do
+  Term{dc} <- ensureTerm
+  case dc of
+    Right dc' | dc' == dataCon -> pure result
+    _ -> empty
 
 newtypeWrapParser :: TermParser Term
 newtypeWrapParser = do
