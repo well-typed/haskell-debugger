@@ -217,7 +217,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
 
     -- Setup base HomeUnitGraph
     setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
-    -- Downsweep user-given modules first 
+    -- Downsweep user-given modules first
     mod_graph_base <- doDownsweep Nothing
 
     if_cache <- Just <$> liftIO newIfaceCache

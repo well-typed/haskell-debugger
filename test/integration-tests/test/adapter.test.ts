@@ -477,18 +477,22 @@ describe("Debug Adapter Tests", function () {
 
             await dc.hitBreakpoint(config, { path: config.entryFile, line: 5 }, expected, expected)
 
-            // Force only the 2nd "hello" and check the third is already there.
+            // Force only the 1st "hello" and check the 2nd is already there.
             // (Mimics reproducer in #11)
             let locals = await fetchLocalVars();
             const xVar = await forceLazy(locals.get('x'));
             const xChild = await expandVar(xVar);
-            const _2Var = await xChild.get('_2'); // NOTE: Doesn't need to be forced because of this seemingly weird `repeat` behavior where it looks like every other binding is shared but the others are not
-            const _2Child = await expandVar(_2Var);
-            const _2_1Var = await forceLazy(_2Child.get('_1'));
-            const _2_2Var = await _2Child.get('_2');
-            const _2_2Child = await expandVar(_2_2Var);
-            const _2_2_1Var = await _2_2Child.get('_1') // NOTE: doesn't need to be forced as above
-            assertIsString(_2_2_1Var, '"hello"');
+            // Force the zeroth element
+            const _0Var = await forceLazy(xChild.get('0'));
+
+            // Refresh the local variables
+            let locals_new = await fetchLocalVars();
+            const xChild_new = await expandVar(locals.get('x'));
+            // Force the zeroth element
+            const _0Var_new = await xChild_new.get('0');
+            const _1Var_new = await xChild_new.get('1');
+            assert.strictEqual(_0Var_new.value, '"hello"');
+            assert.strictEqual(_1Var_new.value, '"hello"');
         })
 
         it('labeled data structures can be expanded (issue #18)', async () => {
