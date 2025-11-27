@@ -20,6 +20,7 @@ module GHC.Debugger.View.Class
   , VarValue(..)
   , VarFields(..)
   , VarFieldValue(..)
+  , simpleValue
 
   -- * Utilities
   --
@@ -63,17 +64,30 @@ class DebugView a where
   --
   -- This method should only be called to get the fields if the corresponding
   -- @'VarValue'@ has @'varExpandable' = True@.
-  debugFields :: a -> VarFields
+  debugFields :: a -> Program VarFields
+
+data Program a where
+    PureProgram :: a -> Program a
+    ProgramAp :: Program (a -> b) -> Program a -> Program b
+
+instance Functor Program where
+   fmap f x = ProgramAp (PureProgram f) x
+
+instance Applicative Program where
+   pure = PureProgram
+   fx <*> fy = ProgramAp fx fy
+
+simpleValue :: String -> Bool -> VarValue
+simpleValue s b = VarValue (PureProgram s) b
 
 -- | The representation of the value for some variable on the debugger
 data VarValue = VarValue
   { -- | The value to display inline for this variable
-    varValue      :: String
+    varValue      :: Program String
 
     -- | Can this variable further be expanded (s.t. @'debugFields'@ is not null?)
   , varExpandable :: Bool
   }
-  deriving (Show, Read)
 
 -- | The representation for fields of a value which is expandable in the debugger
 newtype VarFields = VarFields
@@ -111,8 +125,8 @@ data VarFieldValue = forall a. VarFieldValue a
 newtype BoringTy a = BoringTy a
 
 instance Show a => DebugView (BoringTy a) where
-  debugValue (BoringTy x) = VarValue (show x) False
-  debugFields _           = VarFields []
+  debugValue (BoringTy x) = simpleValue (show x) False
+  debugFields _           = pure $ VarFields []
 
 deriving via BoringTy Int     instance DebugView Int
 deriving via BoringTy Int8    instance DebugView Int8
@@ -131,8 +145,8 @@ deriving via BoringTy Char    instance DebugView Char
 deriving via BoringTy String  instance DebugView String
 
 instance DebugView (a, b) where
-  debugValue _ = VarValue "( , )" True
-  debugFields (x, y) = VarFields
+  debugValue _ = simpleValue "( , )" True
+  debugFields (x, y) = pure $ VarFields
     [ ("fst", VarFieldValue x)
     , ("snd", VarFieldValue y) ]
 
@@ -142,20 +156,24 @@ instance DebugView (a, b) where
 
 -- | Wrapper to make evaluating from debugger easier
 data VarValueIO = VarValueIO
-  { varValueIO :: IO String
+  { varValueIO :: Program (IO String)
   , varExpandableIO :: Bool
   }
 
 debugValueIOWrapper :: DebugView a => a -> IO [VarValueIO]
 debugValueIOWrapper x = case debugValue x of
   VarValue str b ->
-    pure [VarValueIO (pure str) b]
+    pure [VarValueIO (pure <$> str) b]
 
 newtype VarFieldsIO = VarFieldsIO
   { varFieldsIO :: [(IO String, VarFieldValue)]
   }
 
-debugFieldsIOWrapper :: DebugView a => a -> IO [VarFieldsIO]
-debugFieldsIOWrapper x = case debugFields x of
-  VarFields fls ->
-    pure [VarFieldsIO [ (pure fl_s, b) | (fl_s, b) <- fls]]
+debugFieldsIOWrapper :: DebugView a => a -> IO (Program [VarFieldsIO])
+debugFieldsIOWrapper x = pure (toVarFieldsIO <$>  debugFields x)
+
+toVarFieldsIO :: VarFields -> [VarFieldsIO]
+toVarFieldsIO x = 
+  case x of
+    VarFields fls -> [VarFieldsIO [ (pure fl_s, b) | (fl_s, b) <- fls]]
+                 

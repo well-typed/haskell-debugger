@@ -6,6 +6,6 @@ import GHC.Debugger.View.Class
 import qualified Data.Text          as T
 
 instance DebugView T.Text where
-  debugValue  t = VarValue (show (T.unpack t)) False
-  debugFields _ = VarFields []
+  debugValue  t = simpleValue (show (T.unpack t)) False
+  debugFields _ = pure $ VarFields []
 
