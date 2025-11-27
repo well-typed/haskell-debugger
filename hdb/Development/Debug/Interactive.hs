@@ -122,6 +122,7 @@ printResponse recd = \case
   DidContinue er -> outputStrLn $ show er
   DidStep er -> printEvalResult recd er
   DidExec er -> outputStrLn $ show er
+  GotThreads threads -> outputStrLn $ show threads
   GotStacktrace stackframes -> outputStrLn $ show stackframes
   GotScopes scopeinfos -> outputStrLn $ show scopeinfos
   GotVariables vis -> outputStrLn $ show vis -- (Either VarInfo [VarInfo])
