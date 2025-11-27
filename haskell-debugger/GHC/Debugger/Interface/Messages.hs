@@ -234,6 +234,16 @@ data BreakFound
   | ManyBreaksFound [BreakFound]
   deriving (Show)
 
+-- | A reference to a remote thread by remote id
+-- See 'getRemoteThreadId'.
+newtype RemoteThreadId = RemoteThreadId
+    { remoteThreadIntRef :: Int
+    -- ^ The number identifier of the thread on the (remote) interpreter. To
+    -- find the proper remote 'ThreadId' corresponding to this numeric
+    -- identifier, lookup the 'remoteThreadIntRef' in the 'ThreadMap'
+    }
+    deriving Show
+
 data EvalResult
   = EvalCompleted { resultVal :: String
                   , resultType :: String
@@ -243,7 +253,11 @@ data EvalResult
                   -- that the user can expand as a normal variable.
                   }
   | EvalException { resultVal :: String, resultType :: String }
-  | EvalStopped   { breakId :: Maybe GHC.InternalBreakpointId {-^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)? -} }
+  | EvalStopped   { breakId :: Maybe GHC.InternalBreakpointId
+                  -- ^ Did we stop at an exception (@Nothing@) or at a breakpoint (@Just@)?
+                  , breakThread :: RemoteThreadId
+                  -- ^ In which thread did we hit the breakpoint?
+                  }
   -- | Evaluation failed for some reason other than completed/completed-with-exception/stopped.
   | EvalAbortedWith String
   deriving (Show)

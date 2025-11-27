@@ -62,7 +62,7 @@ library
                       GHC.Debugger.Logger,
                       GHC.Debugger.Stopped,
                       GHC.Debugger.Stopped.Variables,
-                      GHC.Debugger.Utils,
+
                       GHC.Debugger.Runtime,
                       GHC.Debugger.Runtime.Instances,
                       GHC.Debugger.Runtime.Instances.Discover,
@@ -70,7 +70,11 @@ library
                       GHC.Debugger.Runtime.Term.Key,
                       GHC.Debugger.Runtime.Term.Cache,
 
+                      GHC.Debugger.Runtime.Thread,
+                      GHC.Debugger.Runtime.Thread.Map,
+
                       GHC.Debugger.Monad,
+                      GHC.Debugger.Utils,
 
                       GHC.Debugger.Session,
                       GHC.Debugger.Session.Builtin,
