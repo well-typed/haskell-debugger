@@ -39,8 +39,11 @@ data Command
   -- | Clear all function breakpoints
   | ClearFunctionBreakpoints
 
+  -- | Get all threads
+  | GetThreads
+
   -- | Get the evaluation stacktrace until the current breakpoint.
-  | GetStacktrace
+  | GetStacktrace RemoteThreadId
 
   -- | Get the list of available scopes at the current breakpoint
   | GetScopes
@@ -208,6 +211,7 @@ data Response
   | DidContinue EvalResult
   | DidStep EvalResult
   | DidExec EvalResult
+  | GotThreads [DebuggeeThread]
   | GotStacktrace [StackFrame]
   | GotScopes [ScopeInfo]
   | GotVariables (Either VarInfo [VarInfo])
@@ -261,6 +265,15 @@ data EvalResult
   -- | Evaluation failed for some reason other than completed/completed-with-exception/stopped.
   | EvalAbortedWith String
   deriving (Show)
+
+data DebuggeeThread
+  = DebuggeeThread
+    { tId :: !RemoteThreadId
+    -- ^ An identifier for a thread on the (possibly remote) debuggee process
+    , tName :: !(Maybe String)
+    -- ^ Thread label, if there is one
+    }
+    deriving (Show)
 
 data StackFrame
   = StackFrame

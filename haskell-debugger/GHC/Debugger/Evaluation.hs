@@ -260,5 +260,5 @@ getRemoteThreadIdFromContext :: Debugger RemoteThreadId
 getRemoteThreadIdFromContext = do
   GHC.getResumeContext >>= \case
     resume1:_ ->
-      getRemoteThreadId $ GHC.resumeContext resume1
+      getRemoteThreadIdFromRemoteContext $ GHC.resumeContext resume1
     _ -> error "No resumes but stopped?!?"
