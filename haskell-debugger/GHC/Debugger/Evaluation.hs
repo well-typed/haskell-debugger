@@ -43,6 +43,7 @@ import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Logger as Logger
 import qualified GHC.Debugger.Breakpoint.Map as BM
+import GHC.Debugger.Runtime.Thread
 
 data EvalLog
   = LogEvalModule GHC.Module
@@ -207,10 +208,12 @@ handleExecResult = \case
           Just VarInfo{varValue, varType, varRef} -> do
             return (EvalCompleted varValue varType varRef)
           Nothing     -> liftIO $ fail "doEval failed"
-    ExecBreak {breakNames = _, breakPointId = Nothing} ->
+    ExecBreak {breakNames = _, breakPointId = Nothing} -> do
       -- Stopped at an exception
       -- TODO: force the exception to display string with Backtrace?
-      return EvalStopped{breakId = Nothing}
+      rt_id <- getRemoteThreadIdFromContext
+      return EvalStopped{ breakId = Nothing
+                        , breakThread = rt_id }
     ExecBreak {breakNames = _, breakPointId = Just bid} -> do
       bm <- liftIO . readIORef =<< asks activeBreakpoints
       case BM.lookup bid bm of
@@ -222,8 +225,10 @@ handleExecResult = \case
             EvalStopped{} -> error "impossible for doEval"
             EvalCompleted { resultVal, resultType } ->
               if resultType == "Bool" then do
-                if resultVal == "True" then
-                  return EvalStopped{breakId = Just bid}
+                if resultVal == "True" then do
+                  rt_id <- getRemoteThreadIdFromContext
+                  return EvalStopped{ breakId = Just bid
+                                    , breakThread = rt_id }
                 else
                   resume
               else do
@@ -237,7 +242,10 @@ handleExecResult = \case
               resume
 
         -- Unconditionally 'EvalStopped' in all other cases
-        _ -> return EvalStopped{breakId = Just bid}
+        _ -> do
+          rt_id <- getRemoteThreadIdFromContext
+          return EvalStopped{ breakId = Just bid
+                            , breakThread = rt_id }
 
 -- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
 inspectName :: Name -> Debugger (Maybe VarInfo)
@@ -248,3 +256,9 @@ inspectName n = do
       pure Nothing
     Just tt -> Just <$> tyThingToVarInfo tt
 
+getRemoteThreadIdFromContext :: Debugger RemoteThreadId
+getRemoteThreadIdFromContext = do
+  GHC.getResumeContext >>= \case
+    resume1:_ ->
+      getRemoteThreadIdFromRemoteContext $ GHC.resumeContext resume1
+    _ -> error "No resumes but stopped?!?"

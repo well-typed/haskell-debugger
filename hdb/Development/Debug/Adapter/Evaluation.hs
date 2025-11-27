@@ -90,14 +90,15 @@ handleEvalResult stepping er = case er of
     Output.stderr (T.pack resultVal)
     sendTerminatedEvent defaultTerminatedEvent
     sendExitedEvent (ExitedEvent 42)
-  EvalStopped {breakId = Nothing} ->
+  EvalStopped {breakId = Nothing, breakThread} ->
     sendStoppedEvent
       defaultStoppedEvent {
         stoppedEventAllThreadsStopped = True
       , stoppedEventReason = StoppedEventReasonException
       , stoppedEventHitBreakpointIds = []
+      , stoppedEventThreadId = Just $ remoteThreadIntRef breakThread
       }
-  EvalStopped {breakId = Just bid} -> do
+  EvalStopped {breakId = Just bid, breakThread} -> do
     DAS{breakpointMap} <- getDebugSession
     sendStoppedEvent
       defaultStoppedEvent {
@@ -108,5 +109,6 @@ handleEvalResult stepping er = case er of
                         else StoppedEventReasonBreakpoint
       , stoppedEventHitBreakpointIds
           = maybe [] IS.toList (M.lookup bid breakpointMap)
+      , stoppedEventThreadId = Just $ remoteThreadIntRef breakThread
       }
 

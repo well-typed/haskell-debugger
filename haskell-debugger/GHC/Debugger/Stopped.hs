@@ -4,6 +4,7 @@
 module GHC.Debugger.Stopped where
 
 import Control.Monad.Reader
+import Data.IORef
 
 import GHC
 import GHC.Types.Unique.FM
@@ -22,6 +23,8 @@ import qualified GHC.Unit.Home.Graph as HUG
 
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Runtime
+import GHC.Debugger.Runtime.Thread
+import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Utils
@@ -47,18 +50,57 @@ because of the termination event we sent.
 -}
 
 --------------------------------------------------------------------------------
+-- * Threads
+--------------------------------------------------------------------------------
+
+getThreads :: Debugger [DebuggeeThread]
+getThreads = do
+  -- TODO: we want something more like 'listThreads', but ensure that we only
+  -- report the threads of the debuggee (and not the debugger, if they
+  -- are the same process). Perhaps the solution is to not allow them to be in
+  -- the same process, in which case 'listThreads' would be correct as is by
+  -- construction.
+  --
+  -- For now, we approximate by just listing out the ThreadsMap, under the
+  -- assumption the debugger client will only care about threads we've already
+  -- stopped at (which are the only ones we've inserted in the threads map),
+  -- but for full multi threaded debugging we need the listThreads.
+  --
+  -- tmap <- liftIO . readIORef =<< asks threadMap
+  -- let (t_ids, remote_refs) = unzip (threadMapToList tmap)
+  --
+  -- Oh, try the listThreads just for fun.
+  (t_ids, remote_refs) <- unzip <$> listAllLiveRemoteThreads
+  t_labels <- getRemoteThreadsLabels remote_refs
+  return $ zipWith
+    (\tid tlbl ->
+      DebuggeeThread
+        { tId = tid
+        , tName = tlbl
+        }
+    ) t_ids t_labels
+
+--------------------------------------------------------------------------------
 -- * Stack trace
 --------------------------------------------------------------------------------
 
 -- | Get the stack frames at the point we're stopped at
-getStacktrace :: Debugger [StackFrame]
-getStacktrace = GHC.getResumeContext >>= \case
+getStacktrace :: RemoteThreadId -> Debugger [StackFrame]
+getStacktrace tODO_USE_ME = GHC.getResumeContext >>= \case
   [] ->
     -- See Note [Don't crash if not stopped]
     return []
   r:_
     | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
-    -> return
+    -> do
+      -- debug things:
+      tm <- liftIO . readIORef =<< asks threadMap
+      case lookupThreadMap (remoteThreadIntRef tODO_USE_ME) tm of
+        Nothing -> pure ()
+        Just f_tid -> do
+          x <- getRemoteThreadStackCopy f_tid
+          pprTraceM "WHT" (ppr x)
+      return
         [ StackFrame
           { name = GHC.resumeDecl r
           , sourceSpan = realSrcSpanToSourceSpan ss
@@ -185,7 +227,7 @@ getVariables vk = do
 
       -- (VARR)(a) from here onwards
 
-      LocalVariables -> fmap Right $
+      LocalVariables -> fmap Right $ do
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
         mapM tyThingToVarInfo =<< GHC.getBindings
 
