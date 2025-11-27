@@ -20,6 +20,15 @@ module GHC.Debugger.View.Class
   , VarValue(..)
   , VarFields(..)
   , VarFieldValue(..)
+  , simpleValue
+
+
+    -- * A 'Program' can describe a more complicated visualisation method which
+    -- can query some information from the debugger.
+  , Program(..)
+  , isThunk
+  , ifP
+
 
   -- * Utilities
   --
@@ -63,17 +72,52 @@ class DebugView a where
   --
   -- This method should only be called to get the fields if the corresponding
   -- @'VarValue'@ has @'varExpandable' = True@.
-  debugFields :: a -> VarFields
+  debugFields :: a -> Program VarFields
+
+-- | The 'Program' abstraction allows more complicated 'DebugView' instances
+-- to be constructed. The debugger will interpreter a 'Program' lazily when
+-- determining how to display a variable.
+--
+-- At the moment the only interesting query when constructing a program is determining
+-- if a value is already evaluated or not. This can be used to only display the evaluated
+-- prefix of a list for example.
+data Program a where
+    -- | Lift a value to a program
+    PureProgram :: a -> Program a
+    -- | Program application
+    ProgramAp :: Program (a -> b) -> Program a -> Program b
+    -- | Evaluate the conditional, and branch on the result
+    ProgramBranch :: Program Bool -> Program a -> Program a -> Program a
+    -- | Is the value a thunk or evaluated?
+    ProgramAskThunk :: a -> Program Bool
+
+instance Functor Program where
+   fmap f x = ProgramAp (PureProgram f) x
+
+instance Applicative Program where
+   pure = PureProgram
+   fx <*> fy = ProgramAp fx fy
+
+-- | Construct a 'VarValue' which doesn't require a 'Program'.
+simpleValue :: String -> Bool -> VarValue
+simpleValue s b = VarValue (pure s) b
+
+-- | Construct a 'Program' which determines if 'a' is a thunk or not.
+isThunk :: a -> Program Bool
+isThunk = ProgramAskThunk
+
+-- | Construct a program which branches
+ifP :: Program Bool -> Program a -> Program a -> Program a
+ifP = ProgramBranch
 
 -- | The representation of the value for some variable on the debugger
 data VarValue = VarValue
   { -- | The value to display inline for this variable
-    varValue      :: String
+    varValue      :: Program String
 
     -- | Can this variable further be expanded (s.t. @'debugFields'@ is not null?)
   , varExpandable :: Bool
   }
-  deriving (Show, Read)
 
 -- | The representation for fields of a value which is expandable in the debugger
 newtype VarFields = VarFields
@@ -111,8 +155,8 @@ data VarFieldValue = forall a. VarFieldValue a
 newtype BoringTy a = BoringTy a
 
 instance Show a => DebugView (BoringTy a) where
-  debugValue (BoringTy x) = VarValue (show x) False
-  debugFields _           = VarFields []
+  debugValue (BoringTy x) = simpleValue (show x) False
+  debugFields _           = pure $ VarFields []
 
 deriving via BoringTy Int     instance DebugView Int
 deriving via BoringTy Int8    instance DebugView Int8
@@ -131,10 +175,23 @@ deriving via BoringTy Char    instance DebugView Char
 deriving via BoringTy String  instance DebugView String
 
 instance DebugView (a, b) where
-  debugValue _ = VarValue "( , )" True
-  debugFields (x, y) = VarFields
+  debugValue _ = simpleValue "( , )" True
+  debugFields (x, y) = pure $ VarFields
     [ ("fst", VarFieldValue x)
     , ("snd", VarFieldValue y) ]
+
+-- | This instance will display up to the first 50 forced elements of a list.
+instance {-# OVERLAPPABLE #-} DebugView [a] where
+  debugValue [] = simpleValue "[]" False
+  debugValue (_:_) = simpleValue "[...]" True
+  debugFields v = VarFields <$> go 0 v
+    where
+      go :: Int -> [a] -> Program [(String, VarFieldValue)]
+      go 50 xs = pure [("tail", VarFieldValue xs)]
+      go _ [] = pure []
+      go n (x:xs) = ((show n, VarFieldValue x) :) <$>
+                      (ifP (isThunk xs) (pure $ [("tail", VarFieldValue xs)])
+                                        (go (n + 1) xs))
 
 --------------------------------------------------------------------------------
 -- * (Internal) Wrappers required to call `evalStmt` on methods more easily
@@ -142,20 +199,24 @@ instance DebugView (a, b) where
 
 -- | Wrapper to make evaluating from debugger easier
 data VarValueIO = VarValueIO
-  { varValueIO :: IO String
+  { varValueIO :: Program (IO String)
   , varExpandableIO :: Bool
   }
 
 debugValueIOWrapper :: DebugView a => a -> IO [VarValueIO]
 debugValueIOWrapper x = case debugValue x of
   VarValue str b ->
-    pure [VarValueIO (pure str) b]
+    pure [VarValueIO (pure <$> str) b]
 
 newtype VarFieldsIO = VarFieldsIO
-  { varFieldsIO :: [(IO String, VarFieldValue)]
+  { varFieldsIO :: Program [(IO String, VarFieldValue)]
   }
 
 debugFieldsIOWrapper :: DebugView a => a -> IO [VarFieldsIO]
-debugFieldsIOWrapper x = case debugFields x of
-  VarFields fls ->
-    pure [VarFieldsIO [ (pure fl_s, b) | (fl_s, b) <- fls]]
+debugFieldsIOWrapper x = pure [VarFieldsIO (toVarFieldsIO <$> (debugFields x))]
+
+toVarFieldsIO :: VarFields -> [(IO String, VarFieldValue)]
+toVarFieldsIO x =
+  case x of
+    VarFields fls -> [ (pure fl_s, b) | (fl_s, b) <- fls]
+

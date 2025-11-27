@@ -6,6 +6,6 @@ import GHC.Debugger.View.Class
 import qualified Data.ByteString    as BS
 
 instance DebugView BS.ByteString where
-  debugValue  t = VarValue (show t) False
-  debugFields _ = VarFields []
+  debugValue  t = simpleValue (show t) False
+  debugFields _ = pure (VarFields [])
 
