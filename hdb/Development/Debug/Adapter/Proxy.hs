@@ -17,6 +17,7 @@ import Control.Exception.Base
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Concurrent
+import GHC.Conc.Sync (labelThread)
 import qualified Data.List.NonEmpty as NE
 
 import qualified Data.Text as T
@@ -63,6 +64,7 @@ serverSideHdbProxy l client_conn_signal = do
   port <- liftIO $ socketPort sock
 
   _ <- liftIO $ forkIO $ ignoreIOException $ do
+    myThreadId >>= \tid -> labelThread tid "Debug/Adapter/Proxy: TCP Server"
     runTCPServerWithSocket sock $ \scket -> do
 
       logWith l Info $ ProxyLog $ T.pack $ "Connected to client on port " ++ show port ++ "...!"
@@ -70,6 +72,8 @@ serverSideHdbProxy l client_conn_signal = do
 
       -- -- Read stdout from chan and write to socket
       _ <- forkIO $ ignoreIOException $ do
+        tid <- myThreadId
+        labelThread tid "Debug/Adapter/Proxy: Forward stdout"
         forever $ do
           bs <- readChan dbOut
           logWith l Debug $ ProxyLog $ T.pack $ "Writing to socket: " ++ BS8.unpack bs
@@ -77,6 +81,8 @@ serverSideHdbProxy l client_conn_signal = do
 
       -- Read stderr from chan and write to socket
       _ <- forkIO $ ignoreIOException $ do
+        tid <- myThreadId
+        labelThread tid "Debug/Adapter/Proxy: Forward stderr"
         forever $ do
           bs <- readChan dbErr
           logWith l Debug $ ProxyLog $ T.pack $ "Writing to socket (from stderr): " ++ BS8.unpack bs
