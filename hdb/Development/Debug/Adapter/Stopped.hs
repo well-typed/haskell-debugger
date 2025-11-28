@@ -28,13 +28,15 @@ import Development.Debug.Adapter.Interface
 
 -- | Command to get thread information at current stopped point
 commandThreads :: DebugAdaptor ()
-commandThreads = do -- TODO
-  sendThreadsResponse [
+commandThreads = do
+  GotThreads ts <- sendSync GetThreads
+  sendThreadsResponse $
+    map (\t ->
       Thread
-        { threadId    = 0
-        , threadName  = T.pack "dummy thread"
+        { threadId    = remoteThreadIntRef t.tId
+        , threadName  = maybe (T.pack $ "Thread #" ++ show (remoteThreadIntRef t.tId)) T.pack t.tName
         }
-    ]
+      ) ts
 
 --------------------------------------------------------------------------------
 -- * StackTrace
@@ -44,7 +46,7 @@ commandThreads = do -- TODO
 commandStackTrace :: DebugAdaptor ()
 commandStackTrace = do
   StackTraceArguments{..} <- getArguments
-  GotStacktrace fs <- sendSync GetStacktrace
+  GotStacktrace fs <- sendSync (GetStacktrace (RemoteThreadId stackTraceArgumentsThreadId))
   case fs of
     []  ->
       -- No frames; should be stopped on exception
