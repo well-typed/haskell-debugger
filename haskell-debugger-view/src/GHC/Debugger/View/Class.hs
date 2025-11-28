@@ -21,6 +21,7 @@ module GHC.Debugger.View.Class
   , VarFields(..)
   , VarFieldValue(..)
   , simpleValue
+  , Program(..)
 
   -- * Utilities
   --
@@ -69,6 +70,10 @@ class DebugView a where
 data Program a where
     PureProgram :: a -> Program a
     ProgramAp :: Program (a -> b) -> Program a -> Program b
+    -- Evaluate the conditional, and branch on the result
+    ProgramBranch :: Program Bool -> Program a -> Program a -> Program a
+    -- Is the value a thunk or evaluated?
+    ProgramAskThunk :: a -> Program Bool
 
 instance Functor Program where
    fmap f x = ProgramAp (PureProgram f) x
@@ -79,6 +84,12 @@ instance Applicative Program where
 
 simpleValue :: String -> Bool -> VarValue
 simpleValue s b = VarValue (PureProgram s) b
+
+isThunk :: a -> Program Bool
+isThunk = ProgramAskThunk
+
+ifP :: Program Bool -> Program a -> Program a -> Program a
+ifP = ProgramBranch
 
 -- | The representation of the value for some variable on the debugger
 data VarValue = VarValue
@@ -150,6 +161,16 @@ instance DebugView (a, b) where
     [ ("fst", VarFieldValue x)
     , ("snd", VarFieldValue y) ]
 
+instance DebugView [a] where
+  debugValue _ = simpleValue "[]" True
+  debugFields v = VarFields <$> go 0 v
+    where
+      go :: Int -> [a] -> Program [(String, VarFieldValue)]
+      go _ [] = pure []
+      go n (x:xs) = ((show n, VarFieldValue x) :) <$>
+                      (ifP (isThunk xs) (pure $ [("tail", VarFieldValue xs)])
+                                        (go (n + 1) xs))
+
 --------------------------------------------------------------------------------
 -- * (Internal) Wrappers required to call `evalStmt` on methods more easily
 --------------------------------------------------------------------------------
@@ -166,14 +187,14 @@ debugValueIOWrapper x = case debugValue x of
     pure [VarValueIO (pure <$> str) b]
 
 newtype VarFieldsIO = VarFieldsIO
-  { varFieldsIO :: [(IO String, VarFieldValue)]
+  { varFieldsIO :: Program [(IO String, VarFieldValue)]
   }
 
-debugFieldsIOWrapper :: DebugView a => a -> IO (Program [VarFieldsIO])
-debugFieldsIOWrapper x = pure (toVarFieldsIO <$>  debugFields x)
+debugFieldsIOWrapper :: DebugView a => a -> IO [VarFieldsIO]
+debugFieldsIOWrapper x = pure [VarFieldsIO (toVarFieldsIO <$> (debugFields x))]
 
-toVarFieldsIO :: VarFields -> [VarFieldsIO]
-toVarFieldsIO x = 
+toVarFieldsIO :: VarFields -> [(IO String, VarFieldValue)]
+toVarFieldsIO x =
   case x of
-    VarFields fls -> [VarFieldsIO [ (pure fl_s, b) | (fl_s, b) <- fls]]
-                 
+    VarFields fls -> [ (pure fl_s, b) | (fl_s, b) <- fls]
+

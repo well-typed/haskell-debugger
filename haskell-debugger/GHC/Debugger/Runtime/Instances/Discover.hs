@@ -115,9 +115,6 @@ findDebugViewInstance needle_ty = do
         varFieldsIOTy   <-  fmap mkTyConTy . tcLookupTyCon
                         =<< lookupTypeOccRn (mkOrig modl (mkTcOcc "VarFieldsIO"))
 
-        programTy       <-  tcLookupTyCon
-                        =<< lookupTypeOccRn (mkOrig modl (mkTcOcc "Program"))
-
         ioTyCon <- tcLookupTyCon ioTyConName
 
         -- Try to compile and load an expression for all methods of `DebugView`
@@ -129,7 +126,7 @@ findDebugViewInstance needle_ty = do
                 mkTyConApp ioTyCon [mkListTy varValueIOTy]
             debugFieldsWrapperMT =
               mkVisFunTyMany needle_ty $
-                mkTyConApp ioTyCon [mkTyConApp programTy [mkListTy varFieldsIOTy]]
+                mkTyConApp ioTyCon [mkListTy varFieldsIOTy]
         !debugValue_fval  <- compileAndLoadMthd debugValueMN  debugValueWrapperMT
         !debugFields_fval <- compileAndLoadMthd debugFieldsMN debugFieldsWrapperMT
 

@@ -8,7 +8,7 @@ import Control.Monad.IO.Class (liftIO)
 import GHC
 import GHC.Driver.Env
 import GHC.Core.DataCon (DataCon, dataConName)
-import GHC.Plugins (falseDataCon, trueDataCon, splitFunTy)
+import GHC.Plugins (falseDataCon, trueDataCon, splitFunTy, boolTy)
 import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as Interp
@@ -32,10 +32,10 @@ data VarValueResult = VarValueResult { varValueResult :: String, varValueResultE
 -- * Term parser abstraction
 --------------------------------------------------------------------------------
 
-data TermParseError = TermParseError String
+data TermParseError = TermParseError { getTermErrorMessage :: String }
   deriving (Eq, Show)
 
-newtype TermParser a = TermParser { runTermParser :: Term -> Debugger (Either TermParseError a) }
+newtype TermParser a = TermParser { runTermParser :: Term -> Debugger (Either [TermParseError] a) }
 
 liftDebugger :: Debugger a -> TermParser a
 liftDebugger action = TermParser $ \_ -> Right <$> action
@@ -67,14 +67,20 @@ instance Alternative TermParser where
   TermParser p1 <|> TermParser p2 = TermParser $ \term -> do
     res <- p1 term
     case res of
-      Left _ -> p2 term
+      Left e1 -> attachErrors e1 $ p2 term
       success -> pure success
 
 instance MonadFail TermParser where
   fail s = parseError . TermParseError $ s
 
+attachErrors errs parser = do
+  res <- parser
+  case res of
+    Left new_errs -> pure (Left $ errs ++ new_errs)
+    Right res -> pure (Right res)
+
 parseError :: TermParseError -> TermParser a
-parseError err = TermParser $ \_ -> pure (Left err)
+parseError err = TermParser $ \_ -> pure (Left [err])
 
 termTag :: Term -> String
 termTag Term{}         = "Term"
@@ -100,29 +106,35 @@ checkType ty = do
 
 -- | Evaluate the currently focused term
 seqTermP :: TermParser a -> TermParser a
-seqTermP parser = do
+seqTermP term_parser = do
   t <- anyTerm
   hsc_env <- liftDebugger $ getSession
-  t' <- liftIO $ seqTerm hsc_env t
-  focus t' parser
+  focus (liftIO $ seqTerm hsc_env t)
+        term_parser
 
 -- | Change the focus of the term parser onto the specified term.
-focus :: Term -> TermParser a -> TermParser a
-focus t parser = TermParser $ \_ -> runTermParser parser t
+focus :: TermParser Term -> TermParser a -> TermParser a
+focus parse_term term_parser =
+  parse_term >>= \t ->
+    TermParser $ \_ -> runTermParser term_parser t
 
+-- | Focus on a new subtree, after forcing it to WHNF.
+focusSeq :: TermParser Term -> TermParser a -> TermParser a
+focusSeq parse_term term_parser = focus parse_term (seqTermP term_parser)
 
 subtermTerm :: Int -> TermParser Term
-subtermTerm idx = TermParser $ \case
-  Term{subTerms}
-    | idx < length subTerms -> do
-        pure (Right (subTerms !! idx))
-    | otherwise -> pure (Left (TermParseError $ "missing subterm index " <> show idx))
-  other -> pure (Left (TermParseError $ "expected Term with subterms, got " <> termTag other))
+subtermTerm idx = do
+  t <- anyTerm
+  case t of
+    Term{subTerms}
+      | idx < length subTerms -> do
+          pure (subTerms !! idx)
+      | otherwise -> parseError (TermParseError $ "missing subterm index " <> show idx)
+    other -> parseError (TermParseError $ "expected Term with subterms, got " <> termTag other)
 
 subtermWith :: Int -> TermParser a -> TermParser a
-subtermWith idx parser = do
-  t <- subtermTerm idx
-  focus t (seqTermP parser)
+subtermWith idx term_parser = do
+  focusSeq (subtermTerm idx) term_parser
 
 tuple2Of :: TermParser a -> TermParser b -> TermParser (a, b)
 tuple2Of parserA parserB = (,) <$> subtermWith 0 parserA <*> subtermWith 1 parserB
@@ -149,6 +161,24 @@ matchDataConTerm dataCon result = do
     Right dc' | dc' == dataCon -> pure result
     _ -> empty
 
+matchConstructorTerm :: String -> TermParser ()
+matchConstructorTerm ctorName = do
+  term <- anyTerm
+  case term of
+    t@Term{} | constructorName (dc t) == ctorName -> return ()
+             | otherwise ->
+                parseError (TermParseError ("expected: "
+                                            ++ ctorName
+                                            ++ " got: "
+                                            ++ constructorName (dc t)))
+    other ->
+      parseError (TermParseError ("expected Program term, got " <> termTag other))
+
+constructorName :: Either String DataCon -> String
+constructorName = \case
+  Left name -> name
+  Right dataCon -> occNameString . nameOccName $ dataConName dataCon
+
 newtypeWrapParser :: TermParser Term
 newtypeWrapParser = do
   t <- anyTerm
@@ -156,9 +186,51 @@ newtypeWrapParser = do
     NewtypeWrap{wrapped_term} -> pure wrapped_term
     other -> parseError (TermParseError $ "expected NewtypeWrap, got " <> termTag other)
 
+-- | Is the current focus a suspension?
+isSuspension :: TermParser Bool
+isSuspension = do
+  t <- anyTerm
+  case t of
+    Suspension{} -> pure True
+    other -> do
+      liftDebugger $ logSDoc Logger.Debug (text $ termTag other)
+      return False
+
+
+
+-- | Parse a term which is a 'ValValue'
 varValueParser :: TermParser (Term, Bool)
 varValueParser =
   (,) <$> subtermWith 0 programTermParser <*> subtermWith 1 boolParser
+
+-- | Parse a list, given a parser for each element.
+-- The whole list will be forced.
+parseList :: TermParser a -> TermParser [a]
+parseList item_parser =
+        (matchConstructorTerm "[]" *> pure [])
+    <|> (matchConstructorTerm ":" *> ((:) <$> subtermWith 0 item_parser <*> subtermWith 1 (parseList item_parser)))
+
+-- | Parse a term which is a 'Program VarFields'
+varFieldsParser :: TermParser [(String, Term)]
+varFieldsParser =
+  focusSeq newtypeWrapParser $
+    -- Program [(IO String, VarFieldValue)]
+    focusSeq programTermParser $
+        -- [(IO String, VarFieldValue)]
+        parseList parseFieldItem
+
+  where
+    -- Parses an item of type (IO String, VarFieldValue)
+    parseFieldItem :: TermParser (String, Term)
+    parseFieldItem = (,) <$> subtermWith 0 parseFieldLabel <*> subtermWith 1 varFieldValueParser
+
+
+    parseFieldLabel :: TermParser String
+    parseFieldLabel = do
+      ioStrTerm <- anyTerm
+      liftDebugger $ do
+        interp <- hscInterp <$> getSession
+        liftIO $ evalString interp (val ioStrTerm)
 
 varFieldTupleParser :: TermParser (Term, Term)
 varFieldTupleParser = tuple2Of anyTerm anyTerm
@@ -166,10 +238,7 @@ varFieldTupleParser = tuple2Of anyTerm anyTerm
 varFieldValueParser :: TermParser Term
 varFieldValueParser = subtermTerm 0
 
-data ProgramTerm
-  = ProgramPure Term
-  | ProgramAp ProgramTerm ProgramTerm
-
+-- | Evaluate `f x`.
 evalApplication :: ForeignHValue -> ForeignHValue -> Debugger ForeignHValue
 evalApplication fref aref = do
   hsc_env <- getSession
@@ -182,37 +251,56 @@ evalApplication fref aref = do
 
   liftIO $ handleStatus <$> (evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref)))
 
-
+reifyBool :: Bool -> Debugger ForeignHValue
+reifyBool b = compileExprRemote (show b ++ ":: Bool")
 
 -- Parses and evaluates a Term parser
 programTermParser :: TermParser Term
-programTermParser = do
-  term <- ensureTerm
-  case term of
-    t@Term{} ->
-      case constructorName (dc t) of
-        "PureProgram" -> subtermTerm 0
-        "ProgramAp" -> do
-          p1 <- subtermWith 0 programTermParser
-          p2 <- subtermWith 1 programTermParser
-          let fref1 = val p1
-          let fref2 = val p2
-          liftDebugger $ logSDoc Logger.Debug (ppr (termType p1))
-          liftDebugger $ logSDoc Logger.Debug (ppr (termType p2))
-          let (_, arg_ty, res_ty) = splitFunTy (termType p1)
-          res <- liftDebugger $ evalApplication fref1 fref2
-          hsc_env <- liftDebugger $ getSession
-          liftDebugger $ liftIO $ cvObtainTerm hsc_env 2 False res_ty res
-
-        other ->
-          parseError $ TermParseError ("expected Program term, got constructor " <> other)
-    other ->
-      parseError (TermParseError ("expected Program term, got " <> termTag other))
+programTermParser =
+        programPureParser
+    <|> programApParser
+    <|> programBranchParser
+    <|> programAskThunkParser
   where
-    constructorName :: Either String DataCon -> String
-    constructorName = \case
-      Left name -> name
-      Right dataCon -> occNameString . nameOccName $ dataConName dataCon
+    programPureParser = do
+      matchConstructorTerm "PureProgram"
+      subtermTerm 0
+
+    programApParser = do
+      matchConstructorTerm "ProgramAp"
+      p1 <- subtermWith 0 programTermParser
+      p2 <- subtermWith 1 programTermParser
+      let fref1 = val p1
+      let fref2 = val p2
+      liftDebugger $ logSDoc Logger.Debug (ppr (termType p1))
+      liftDebugger $ logSDoc Logger.Debug (ppr (termType p2))
+      let (_, _arg_ty, res_ty) = splitFunTy (termType p1)
+      res <- liftDebugger $ evalApplication fref1 fref2
+      hsc_env <- liftDebugger $ getSession
+      liftDebugger $ liftIO $ cvObtainTerm hsc_env 2 False res_ty res
+
+    programBranchParser = do
+      matchConstructorTerm "ProgramBranch"
+      cond <- subtermWith 0 (focusSeq programTermParser boolParser)
+      if cond then do
+            liftDebugger $ logSDoc Logger.Debug (text "T")
+            subtermWith 1 programTermParser
+           else do
+            liftDebugger $ logSDoc Logger.Debug (text "F")
+            subtermWith 2 programTermParser
+
+    programAskThunkParser = do
+      matchConstructorTerm "ProgramAskThunk"
+      -- Get what we need to check THUNKiness for
+      is_thunk <- focus (subtermTerm 0) isSuspension
+      liftDebugger $ logSDoc Logger.Debug (text "is_thunk" <+> ppr is_thunk )
+      bool_fv <- liftDebugger $ reifyBool is_thunk
+      hsc_env <- liftDebugger $ getSession
+      liftDebugger $ liftIO $ cvObtainTerm hsc_env 2 False boolTy bool_fv
+
+
+
+
 
 logTermParserMsg :: String -> String -> Debugger ()
 logTermParserMsg label msg =
@@ -222,14 +310,14 @@ runTermParserLogged
   :: String
   -> TermParser a
   -> Term
-  -> Debugger (Either TermParseError a)
-runTermParserLogged label parser term = do
+  -> Debugger (Either [TermParseError] a)
+runTermParserLogged label term_parser term = do
   logTermParserMsg label "start"
-  res <- runTermParser parser term
+  res <- runTermParser term_parser term
   case res of
-    Left err@(TermParseError errMsg) -> do
-      logTermParserMsg label ("failed: " ++ errMsg)
-      pure (Left err)
+    Left errs -> do
+      logTermParserMsg label ("failed: " ++ unlines (map getTermErrorMessage errs))
+      pure (Left errs)
     Right a -> do
       logTermParserMsg label "succeeded"
       pure (Right a)
@@ -241,11 +329,11 @@ obtainParsedTerm
   -> Type
   -> ForeignHValue
   -> TermParser a
-  -> Debugger (Either TermParseError a)
-obtainParsedTerm label depth force ty fhv parser = do
+  -> Debugger (Either [TermParseError] a)
+obtainParsedTerm label depth force ty fhv term_parser = do
   hsc_env <- getSession
   term <- liftIO $ cvObtainTerm hsc_env depth force ty fhv
-  runTermParserLogged label (checkType ty *> parser) term
+  runTermParserLogged label (checkType ty *> term_parser) term
 
 --------------------------------------------------------------------------------
 -- * High level interface for 'DebugView' on 'Term's
@@ -281,6 +369,8 @@ debugValueTerm term = do
                   , varValueResultExpandable = valBool
                   }
 
+
+
 -- | Get the custom representation of this 'Term' by applying a 'DebugView'
 -- instance 'debugFields' method if there is one.
 --
@@ -290,8 +380,6 @@ debugValueTerm term = do
 -- Returns @Nothing@ if no instance was found for the type of the given term
 debugFieldsTerm :: Term -> Debugger (Maybe [(String, Term)])
 debugFieldsTerm term = do
-  hsc_env <- getSession
-  let interp = hscInterp hsc_env
   let ty = termType term
   mbInst <- getDebugViewInstance ty
   case mbInst of
@@ -304,44 +392,6 @@ debugFieldsTerm term = do
             return Nothing
           Right transformed_v -> do
 
-            obtainParsedTerm "VarFields" 2 True varFieldsIOTy transformed_v newtypeWrapParser >>= \case
-              Left _ -> error "debugFields instance returned something other than VarFields"
-              Right fieldsListTerm -> do
-
-                fieldsTerms <- listTermToTermsList fieldsListTerm
-
-                -- Process each term for the instance fields
-                Just <$> forM fieldsTerms \fieldTerm0 -> do
-                  -- Expand @(IO String, VarFieldValue)@ tuple term for each field
-                  fieldTerm <- liftIO $ seqTerm hsc_env fieldTerm0
-                  runTermParserLogged "VarFieldTuple" varFieldTupleParser fieldTerm >>= \case
-                    Left _ -> error "impossible; expected 2-tuple term"
-                    Right (ioStrTerm, varFieldValTerm) -> do
-
-                      fieldStr <- liftIO $ evalString interp (val ioStrTerm)
-
-                      -- Expand VarFieldValue term
-                      varFieldValTerm' <- liftIO $ seqTerm hsc_env varFieldValTerm
-                      runTermParserLogged "VarFieldValueWrapper" varFieldValueParser varFieldValTerm' >>= \case
-                        Left _ -> error "impossible; expected VarFieldValue"
-                        Right unexpandedValueTerm -> do
-                          let val_ty = termType unexpandedValueTerm
-                          actualValueTerm <-
-                            obtainParsedTerm "VarFieldValue" defaultDepth False{-don't force-} val_ty (val unexpandedValueTerm) anyTerm >>= \case
-                              Left _ -> error "Failed to obtain VarFieldValue term"
-                              Right termValue -> pure termValue
-                          return (fieldStr, actualValueTerm)
-
--- | Convert a Term representing a list @[a]@ to a list of the terms of type
--- @a@, where @a@ is the given @'Type'@ arg.
---
--- PRE-CON: Term represents a @[a]@
-listTermToTermsList :: Term -> Debugger [Term]
-listTermToTermsList Term{subTerms=[head_term, tail_term]}
-  = do
-    hsc_env <- getSession
-    -- Expand next term:
-    tail_term' <- liftIO $
-      seqTerm hsc_env tail_term
-    (head_term:) <$> listTermToTermsList tail_term'
-listTermToTermsList _ = pure []
+            obtainParsedTerm "VarFields" 2 True varFieldsIOTy transformed_v varFieldsParser >>= \case
+              Left _ -> pure Nothing
+              Right res -> pure (Just res)
