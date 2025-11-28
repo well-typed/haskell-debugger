@@ -15,10 +15,12 @@ import GHC.Runtime.Interpreter as Interp
 import GHC.Types.Name (nameOccName)
 import GHC.Types.Name.Occurrence (occNameString)
 import qualified GHC.Debugger.Logger as Logger
-import GHC.Utils.Outputable (text, (<+>), ppr)
+import GHC.Utils.Outputable (text, (<+>), ppr, ($$))
+import GHC.Utils.Panic
 import Control.Monad.Reader
 import GHC.Core.TyCo.Compare
 import GHC.Driver.Config
+import GHC.Stack
 
 
 
@@ -104,13 +106,32 @@ checkType ty = do
   t <- anyTerm
   unless (termType t `eqType` ty) (parseError (TermParseError "ty mismatch"))
 
+traceTerm :: HasCallStack => TermParser ()
+traceTerm = do
+  t <- anyTerm
+  liftDebugger $ logSDoc Logger.Debug (ppr t $$ callStackDoc)
+
 -- | Evaluate the currently focused term
-seqTermP :: TermParser a -> TermParser a
+seqTermP :: HasCallStack => TermParser a -> TermParser a
 seqTermP term_parser = do
   t <- anyTerm
   hsc_env <- liftDebugger $ getSession
   focus (liftIO $ seqTerm hsc_env t)
         term_parser
+
+refreshTerm :: TermParser Term
+refreshTerm = do
+  t <- anyTerm
+  hsc_env <- liftDebugger $ getSession
+  case t of
+    Suspension {} -> do
+      liftDebugger $ logSDoc Logger.Debug (ppr t <+> ppr (ty t))
+      t' <- liftDebugger $ liftIO $ cvObtainTerm hsc_env 2 False (ty t) (val t)
+      liftDebugger $ logSDoc Logger.Debug (ppr t' <+> ppr (ty t'))
+      return t'
+    _ -> return t
+
+
 
 -- | Change the focus of the term parser onto the specified term.
 focus :: TermParser Term -> TermParser a -> TermParser a
@@ -119,7 +140,7 @@ focus parse_term term_parser =
     TermParser $ \_ -> runTermParser term_parser t
 
 -- | Focus on a new subtree, after forcing it to WHNF.
-focusSeq :: TermParser Term -> TermParser a -> TermParser a
+focusSeq :: HasCallStack => TermParser Term -> TermParser a -> TermParser a
 focusSeq parse_term term_parser = focus parse_term (seqTermP term_parser)
 
 subtermTerm :: Int -> TermParser Term
@@ -128,6 +149,7 @@ subtermTerm idx = do
   case t of
     Term{subTerms}
       | idx < length subTerms -> do
+          liftDebugger $ logSDoc Logger.Debug (ppr subTerms)
           pure (subTerms !! idx)
       | otherwise -> parseError (TermParseError $ "missing subterm index " <> show idx)
     other -> parseError (TermParseError $ "expected Term with subterms, got " <> termTag other)
@@ -188,8 +210,9 @@ newtypeWrapParser = do
 
 -- | Is the current focus a suspension?
 isSuspension :: TermParser Bool
-isSuspension = do
+isSuspension = focus refreshTerm $ do
   t <- anyTerm
+  traceTerm
   case t of
     Suspension{} -> pure True
     other -> do
@@ -292,7 +315,8 @@ programTermParser =
     programAskThunkParser = do
       matchConstructorTerm "ProgramAskThunk"
       -- Get what we need to check THUNKiness for
-      is_thunk <- focus (subtermTerm 0) isSuspension
+      traceTerm
+      is_thunk <- focus (subtermTerm 1) isSuspension
       liftDebugger $ logSDoc Logger.Debug (text "is_thunk" <+> ppr is_thunk )
       bool_fv <- liftDebugger $ reifyBool is_thunk
       hsc_env <- liftDebugger $ getSession

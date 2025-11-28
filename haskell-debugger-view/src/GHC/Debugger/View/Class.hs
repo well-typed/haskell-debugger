@@ -162,10 +162,12 @@ instance DebugView (a, b) where
     , ("snd", VarFieldValue y) ]
 
 instance DebugView [a] where
-  debugValue _ = simpleValue "[]" True
+  debugValue [] = simpleValue "[]" False
+  debugValue (x:xs) = simpleValue "[...]" True
   debugFields v = VarFields <$> go 0 v
     where
       go :: Int -> [a] -> Program [(String, VarFieldValue)]
+      go 50 xs = pure [("tail", VarFieldValue xs)]
       go _ [] = pure []
       go n (x:xs) = ((show n, VarFieldValue x) :) <$>
                       (ifP (isThunk xs) (pure $ [("tail", VarFieldValue xs)])

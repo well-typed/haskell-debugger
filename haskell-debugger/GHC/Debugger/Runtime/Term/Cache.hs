@@ -31,7 +31,7 @@ lookupTermCache = lookupTermKeyMap
 --
 -- Overwrites existing values.
 insertTermCache :: TermKey -> Term -> TermCache -> TermCache
-insertTermCache = insertTermKeyMap
+insertTermCache _ _ tc =  tc -- insertTermKeyMap
 
 --------------------------------------------------------------------------------
 -- * TermKeyMap
