@@ -70,7 +70,7 @@ getThreads = do
   -- let (t_ids, remote_refs) = unzip (threadMapToList tmap)
   --
   -- Oh, try the listThreads just for fun.
-  (t_ids, remote_refs) <- unzip <$> listAllRemoteThreads
+  (t_ids, remote_refs) <- unzip <$> listAllLiveRemoteThreads
   t_labels <- getRemoteThreadsLabels remote_refs
   return $ zipWith
     (\tid tlbl ->

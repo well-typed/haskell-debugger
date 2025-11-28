@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ViewPatterns #-}
 -- |
 -- TODO
 -- - [] Consider caching once and forall the expressions we dynamically compile and load in this module.
@@ -7,9 +8,10 @@ module GHC.Debugger.Runtime.Thread
   , getRemoteThreadId
   , getRemoteThreadsLabels
   , getRemoteThreadStackCopy
-  , listAllRemoteThreads
+  , listAllLiveRemoteThreads
   ) where
 
+import Data.Maybe
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
@@ -18,6 +20,8 @@ import Control.Monad.Reader
 import Data.IORef
 
 import GHC
+import GHC.Core.DataCon
+import GHC.Types.Name
 import GHC.Builtin.Types
 import GHC.Runtime.Heap.Inspect
 
@@ -80,10 +84,34 @@ getRemoteThreadId threadIdRef = do
           return (RemoteThreadId i_tid)
         _ -> liftIO $ fail $ "Unexpected term result from \"fromThreadId\""
 
--- | Call 'listThreads' on the (possibly) remote debuggee process to get the list of threads running on the debuggee.
+-- | Is the remote thread running or blocked (NOT finished NOR dead)?
+isRemoteThreadLive :: ForeignRef ThreadId -> Debugger Bool
+isRemoteThreadLive threadIdRef = do
+  hsc_env <- getSession
+
+  thread_status_fv <- compileExprRemote "fmap (:[]) . GHC.Conc.Sync.threadStatus"
+
+  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
+      interp    = hscInterp hsc_env
+
+  liftIO $ evalStmt interp eval_opts
+    (EvalApp (EvalThis thread_status_fv) (EvalThis (castForeignRef threadIdRef)))
+      >>= handleStatus hsc_env >>= \case
+        [status_fv] -> do
+          status_term <- cvObtainTerm hsc_env 2 True anyTy{-..no..-} status_fv
+          case status_term of
+            Term{dc=Left dc} -> return $ dc == "ThreadRunning" || dc == "ThreadBlocked"
+            Term{dc=Right (occNameString . nameOccName . dataConName -> dc)}
+                             -> return $ dc == "ThreadRunning" || dc == "ThreadBlocked"
+            _ -> return False
+        _ -> fail "Unexpected result from evaluating \"threadLabel\""
+
+
+-- | Call 'listThreads' on the (possibly) remote debuggee process to get the
+-- list of threads running on the debuggee. Filter by running threads
 -- This may include the debugger threads if using the internal interpreter.
-listAllRemoteThreads :: Debugger [(RemoteThreadId, ForeignRef ThreadId)]
-listAllRemoteThreads = do
+listAllLiveRemoteThreads :: Debugger [(RemoteThreadId, ForeignRef ThreadId)]
+listAllLiveRemoteThreads = do
   hsc_env <- getSession
 
   -- evalStmt will take this IO [ThreadId] and eval it to [ForeignHValue]
@@ -94,12 +122,16 @@ listAllRemoteThreads = do
 
   liftIO (evalStmt interp eval_opts (EvalThis list_threads_fv))
     >>= liftIO . handleStatus hsc_env >>= \case
-      threads_fvs -> do
+      threads_fvs -> catMaybes <$> do
 
-        forM threads_fvs $ \thread_fv -> do
-          -- TODO: awful to compile the expression to get the remote id every single time...
-          tid <- getRemoteThreadId (castForeignRef thread_fv)
-          pure (tid, castForeignRef thread_fv)
+        forM threads_fvs $ \(castForeignRef -> thread_fv) -> do
+          isLive <- isRemoteThreadLive thread_fv
+          if isLive then do
+            -- TODO: awful to compile the expression to get the remote id every single time...
+            tid <- getRemoteThreadId thread_fv
+            pure $ Just (tid, thread_fv)
+          else do
+            pure Nothing
 
 -- | Get the label of a Thread in a remote process. Returns one element per
 -- given Thread with @Just string@ if a label was found.
