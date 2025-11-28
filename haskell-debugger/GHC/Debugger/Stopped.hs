@@ -63,14 +63,19 @@ getThreads = do
   --
   -- For now, we approximate by just listing out the ThreadsMap, under the
   -- assumption the debugger client will only care about threads we've already
-  -- stopped at (which are the only ones we've inserted in the threads map)
-  tmap <- liftIO . readIORef =<< asks threadMap
-  let (t_ids, remote_refs) = unzip (threadMapToList tmap)
+  -- stopped at (which are the only ones we've inserted in the threads map),
+  -- but for full multi threaded debugging we need the listThreads.
+  --
+  -- tmap <- liftIO . readIORef =<< asks threadMap
+  -- let (t_ids, remote_refs) = unzip (threadMapToList tmap)
+  --
+  -- Oh, try the listThreads just for fun.
+  (t_ids, remote_refs) <- unzip <$> listAllRemoteThreads
   t_labels <- getRemoteThreadsLabels remote_refs
   return $ zipWith
     (\tid tlbl ->
       DebuggeeThread
-        { tId = RemoteThreadId tid
+        { tId = tid
         , tName = tlbl
         }
     ) t_ids t_labels
@@ -87,7 +92,15 @@ getStacktrace tODO_USE_ME = GHC.getResumeContext >>= \case
     return []
   r:_
     | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
-    -> return
+    -> do
+      -- debug things:
+      tm <- liftIO . readIORef =<< asks threadMap
+      case lookupThreadMap (remoteThreadIntRef tODO_USE_ME) tm of
+        Nothing -> pure ()
+        Just f_tid -> do
+          x <- getRemoteThreadStackCopy f_tid
+          pprTraceM "WHT" (ppr x)
+      return
         [ StackFrame
           { name = GHC.resumeDecl r
           , sourceSpan = realSrcSpanToSourceSpan ss
@@ -214,7 +227,7 @@ getVariables vk = do
 
       -- (VARR)(a) from here onwards
 
-      LocalVariables -> fmap Right $
+      LocalVariables -> fmap Right $ do
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
         mapM tyThingToVarInfo =<< GHC.getBindings
 

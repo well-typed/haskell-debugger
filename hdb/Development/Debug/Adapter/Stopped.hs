@@ -34,7 +34,7 @@ commandThreads = do
     map (\t ->
       Thread
         { threadId    = remoteThreadIntRef t.tId
-        , threadName  = maybe (T.pack $ show t.tId) T.pack t.tName
+        , threadName  = maybe (T.pack $ "Thread #" ++ show (remoteThreadIntRef t.tId)) T.pack t.tName
         }
       ) ts
 
