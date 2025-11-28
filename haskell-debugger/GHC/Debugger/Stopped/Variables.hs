@@ -16,8 +16,6 @@ import GHC.Core.TyCo.Rep
 import qualified GHC.Runtime.Debugger     as GHCD
 import qualified GHC.Runtime.Heap.Inspect as GHCI
 
-import GHC.Debugger.View.Class hiding (VarFields)
-
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime
@@ -164,7 +162,7 @@ termToVarInfo key term0 = do
             , isThunk = False
             , varValue, varRef }
 
-        Just VarValue{varExpandable, varValue=value} -> do
+        Just VarValueResult{varValueResultExpandable=varExpandable, varValueResult=value} -> do
 
           varRef <-
             if varExpandable

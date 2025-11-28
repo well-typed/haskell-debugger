@@ -8,8 +8,8 @@ data Y = Y String
     deriving Show
 
 instance DebugView X where
-    debugValue _ = VarValue "SDJFLSKDJFLKSDJFLSJDKFL" True
-    debugFields (X s) = VarFields
+    debugValue _ = simpleValue "SDJFLSKDJFLKSDJFLSJDKFL" True
+    debugFields (X s) = pure $ VarFields
         [ ("field1", (VarFieldValue s))
         , ("myfield2", (VarFieldValue (length s)))
         , ("field4", (VarFieldValue (2345 :: Int)))
