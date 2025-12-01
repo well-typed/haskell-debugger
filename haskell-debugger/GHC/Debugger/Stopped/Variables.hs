@@ -191,13 +191,8 @@ termToVarInfo key term0 = do
 -- | Forces a term to WHNF
 --
 -- The term is updated in the cache at the given key.
-forceTerm :: TermKey -> Term -> Debugger Term
-forceTerm key term = do
+forceTerm :: Term -> Debugger Term
+forceTerm term = do
   hsc_env <- getSession
-
-  term' <- liftIO $ seqTerm hsc_env term
-
-  -- update cache with the forced term right away instead of invalidating it.
-  asks termCache >>= \r -> liftIO $ modifyIORef' r (insertTermCache key term')
-  return term'
+  liftIO $ seqTerm hsc_env term
 
