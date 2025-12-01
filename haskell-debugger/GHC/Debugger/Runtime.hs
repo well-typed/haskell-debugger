@@ -1,7 +1,6 @@
 {-# LANGUAGE OrPatterns, GADTs, LambdaCase, NamedFieldPuns, TemplateHaskellQuotes #-}
 module GHC.Debugger.Runtime where
 
-import Data.IORef
 import Control.Monad.Reader
 import qualified Data.List as L
 
@@ -12,7 +11,6 @@ import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 
 import GHC.Debugger.Runtime.Term.Key
-import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Monad
 
 -- | Obtain the runtime 'Term' from a 'TermKey'.
@@ -23,39 +21,27 @@ import GHC.Debugger.Monad
 obtainTerm :: TermKey -> Debugger Term
 obtainTerm key = do
   hsc_env <- getSession
-  tc_ref  <- asks termCache
-  tc      <- liftIO $ readIORef tc_ref
-  case lookupTermCache key tc of
-    -- cache miss: reconstruct, then store.
-    Nothing ->
-      let
-        -- Recursively get terms until we hit the desired key.
-        getTerm = \case
-          FromId i -> GHC.obtainTermFromId defaultDepth False{-don't force-} i
-          FromPath k pf -> do
-            term <- obtainTerm k
-            liftIO $ expandTerm hsc_env $ case term of
-              Term{dc=Right dc, subTerms} -> case pf of
-                PositionalIndex ix -> subTerms !! (ix-1)
-                LabeledField fl    ->
-                  case L.findIndex (== fl) (map flSelector $ dataConFieldLabels dc) of
-                    Just ix -> subTerms !! ix
-                    Nothing -> error "Couldn't find labeled field in dataConFieldLabels"
-              NewtypeWrap{wrapped_term} ->
-                wrapped_term -- regardless of PathFragment
-              RefWrap{wrapped_term} ->
-                wrapped_term -- regardless of PathFragment
-              _ -> error ("Unexpected term for the given TermKey because <term> should have been expanded before and we're getting a path fragment!\n" ++ showPprUnsafe (ppr key <+> ppr k <+> ppr pf))
-          FromCustomTerm _key _name ctm -> do
-            -- For custom terms return them straightaway.
-            liftIO $ expandTerm hsc_env ctm
-       in do
-        term <- getTerm key
-        liftIO $ modifyIORef tc_ref (insertTermCache key term)
-        return term
+   -- Recursively get terms until we hit the desired key.
+  case key of
+     FromId i -> GHC.obtainTermFromId defaultDepth False{-don't force-} i
+     FromPath k pf -> do
+       term <- obtainTerm k
+       liftIO $ expandTerm hsc_env $ case term of
+         Term{dc=Right dc, subTerms} -> case pf of
+           PositionalIndex ix -> subTerms !! (ix-1)
+           LabeledField fl    ->
+             case L.findIndex (== fl) (map flSelector $ dataConFieldLabels dc) of
+               Just ix -> subTerms !! ix
+               Nothing -> error "Couldn't find labeled field in dataConFieldLabels"
+         NewtypeWrap{wrapped_term} ->
+           wrapped_term -- regardless of PathFragment
+         RefWrap{wrapped_term} ->
+           wrapped_term -- regardless of PathFragment
+         _ -> error ("Unexpected term for the given TermKey because <term> should have been expanded before and we're getting a path fragment!\n" ++ showPprUnsafe (ppr key <+> ppr k <+> ppr pf))
+     FromCustomTerm _key _name ctm -> do
+       -- For custom terms return them straightaway.
+       liftIO $ expandTerm hsc_env ctm
 
-    -- cache hit
-    Just hit -> return hit
 
 -- | Before returning a 'Term' we want to expand its heap representation up to the 'defaultDepth'
 --

@@ -167,7 +167,7 @@ getVariables vk = do
                 -- It is a "lazy" DAP variable: our reply can ONLY include
                 -- this single variable.
 
-                term' <- forceTerm key term
+                term' <- forceTerm term
 
                 vi <- termToVarInfo key term'
 

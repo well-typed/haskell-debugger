@@ -87,9 +87,6 @@ data DebuggerState = DebuggerState
       -- The TermKeyMap map is a reverse lookup map to find which references
       -- already exist for given names
 
-      , termCache         :: IORef TermCache
-      -- ^ TermCache
-
       , rtinstancesCache :: IORef RuntimeInstancesCache
       -- ^ RuntimeInstancesCache
 
@@ -479,7 +476,6 @@ freshInt = do
 initialDebuggerState :: Recorder (WithSeverity DebuggerMonadLog) -> Maybe UnitId -> GHC.Ghc DebuggerState
 initialDebuggerState l hsDbgViewUid =
   DebuggerState <$> liftIO (newIORef BM.empty)
-                <*> liftIO (newIORef mempty)
                 <*> liftIO (newIORef mempty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
                 <*> liftIO (newIORef 0)
