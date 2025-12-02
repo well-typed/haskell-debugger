@@ -7,7 +7,7 @@ import System.Exit
 import Control.Monad.IO.Class
 
 import GHC.Debugger.Breakpoint
-import GHC.Debugger.Evaluation
+import GHC.Debugger.Run
 import GHC.Debugger.Stopped
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
