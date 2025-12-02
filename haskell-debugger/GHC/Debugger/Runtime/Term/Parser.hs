@@ -19,13 +19,10 @@ import qualified GHC.Debugger.Logger as Logger
 import GHC.Utils.Outputable (text, (<+>), ppr)
 import Control.Monad.Reader
 import GHC.Core.TyCo.Compare
-import GHC.Driver.Config
 import GHC.Stack
-import GHCi.RemoteTypes
-
-
 
 import GHC.Debugger.Monad
+import GHC.Debugger.Runtime.Eval
 
 -- | The main entry point for running the 'TermParser'.
 obtainParsedTerm
@@ -237,34 +234,6 @@ foreignValueToTerm ty fhv =
     liftIO $ cvObtainTerm hsc_env 2 False ty fhv
 
 --------------------------------------------------------------------------------
--- * Evaluation
---------------------------------------------------------------------------------
-
--- | Evaluate `f x`.
-evalApplication :: ForeignHValue -> ForeignHValue -> Debugger (EvalStatus_ [ForeignHValue] [HValueRef])
-evalApplication fref aref = do
-  hsc_env <- getSession
-  mk_list_fv <- compileExprRemote "(pure @IO . (:[])) :: a -> IO [a]"
-
-  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-      interp = hscInterp hsc_env
-
-  liftIO $ (evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref)))
-
-handleStatusParser :: EvalStatus_ [ForeignHValue] [HValueRef] -> TermParser ForeignHValue
-handleStatusParser status =
-  case status of
-    EvalComplete _ (EvalSuccess [res]) -> pure res
-    EvalComplete _ (EvalSuccess []) ->
-      parseError (TermParseError "evaluation did not bind any values")
-    EvalComplete _ (EvalSuccess (_:_:_)) ->
-      parseError (TermParseError "evaluation produced more than one value")
-    EvalComplete _ (EvalException e) ->
-      parseError (TermParseError ("evaluation raised an exception: " ++ show e))
-    EvalBreak {} ->
-      parseError (TermParseError "evaluation unexpectedly hit a breakpoint")
-
---------------------------------------------------------------------------------
 -- * Logging parsers
 --------------------------------------------------------------------------------
 
@@ -378,8 +347,7 @@ programTermParser =
       let fref1 = val p1
       let fref2 = val p2
       let (_, _arg_ty, res_ty) = splitFunTy (termType p1)
-      eval_status <- liftDebugger $ evalApplication fref1 fref2
-      res <- handleStatusParser eval_status
+      res <- liftDebugger $ evalApplication fref1 fref2
       foreignValueToTerm res_ty res
 
     programBranchParser = do

@@ -64,6 +64,7 @@ library
                       GHC.Debugger.Stopped.Variables,
 
                       GHC.Debugger.Runtime,
+                      GHC.Debugger.Runtime.Eval,
                       GHC.Debugger.Runtime.Instances,
                       GHC.Debugger.Runtime.Instances.Discover,
 
