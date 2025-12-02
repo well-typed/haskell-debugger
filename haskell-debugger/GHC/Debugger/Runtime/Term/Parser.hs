@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase, BlockArguments #-}
 -- | This module contains the 'TermParser' abstraction, which provides utilities for
 -- interpreting and parsing 'Term's
-module GHC.Debugger.Runtime.TermParser where
+module GHC.Debugger.Runtime.Term.Parser where
 
 import Control.Applicative
 import Control.Monad
