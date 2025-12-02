@@ -10,7 +10,7 @@ import Control.Monad.Reader
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Runtime.Instances.Discover
-import GHC.Debugger.Runtime.TermParser
+import GHC.Debugger.Runtime.Term.Parser
 
 data VarValueResult = VarValueResult { varValueResult :: String, varValueResultExpandable :: Bool }
 
