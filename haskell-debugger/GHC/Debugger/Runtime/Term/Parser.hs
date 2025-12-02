@@ -210,6 +210,14 @@ newtypeWrapParser = do
     NewtypeWrap{wrapped_term} -> pure wrapped_term
     other -> parseError (TermParseError $ "expected NewtypeWrap, got " <> termTag other)
 
+-- | Parse a primitive value as a single word (Prim term)
+primParser :: TermParser Word
+primParser = do
+  t <- anyTerm
+  case t of
+    Prim{valRaw=[w64_tid]} -> pure w64_tid
+    other -> parseError (TermParseError $ "expected a Prim term, got " <> termTag other)
+
 -- | Is the current focus a suspension?
 isSuspension :: TermParser Bool
 isSuspension = focus refreshTerm $ do
@@ -301,6 +309,10 @@ parseList :: TermParser a -> TermParser [a]
 parseList item_parser =
         (matchConstructorTerm "[]" *> pure [])
     <|> (matchConstructorTerm ":" *> ((:) <$> subtermWith 0 item_parser <*> subtermWith 1 (parseList item_parser)))
+
+-- | Parse an 'Int'
+intParser :: TermParser Int
+intParser = fromIntegral <$> subtermWith 0 primParser
 
 --------------------------------------------------------------------------------
 -- * VarValue
