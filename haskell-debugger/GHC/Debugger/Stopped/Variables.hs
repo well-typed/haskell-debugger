@@ -3,7 +3,6 @@
    TypeApplications, ScopedTypeVariables, BangPatterns, DerivingVia, TypeAbstractions #-}
 module GHC.Debugger.Stopped.Variables where
 
-import Data.IORef
 import Control.Monad.Reader
 
 import GHC
@@ -21,7 +20,6 @@ import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Instances
 import GHC.Debugger.Runtime.Term.Key
-import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Utils
 
 -- | 'TyThing' to 'VarInfo'. The 'Bool' argument indicates whether to force the
