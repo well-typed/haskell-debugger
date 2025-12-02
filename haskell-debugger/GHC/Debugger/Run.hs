@@ -9,7 +9,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
-module GHC.Debugger.Evaluation where
+module GHC.Debugger.Run where
 
 import GHC.Utils.Outputable
 import Control.Monad.IO.Class

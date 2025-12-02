@@ -58,8 +58,8 @@ library
     exposed-modules:  GHC.Debugger,
                       GHC.Debugger.Breakpoint,
                       GHC.Debugger.Breakpoint.Map,
-                      GHC.Debugger.Evaluation,
                       GHC.Debugger.Logger,
+                      GHC.Debugger.Run,
                       GHC.Debugger.Stopped,
                       GHC.Debugger.Stopped.Variables,
 
