@@ -171,17 +171,6 @@ subtermWith :: Int -> TermParser a -> TermParser a
 subtermWith idx term_parser = do
   focusSeq (subtermTerm idx) term_parser
 
-tuple2Of :: TermParser a -> TermParser b -> TermParser (a, b)
-tuple2Of parserA parserB = (,) <$> subtermWith 0 parserA <*> subtermWith 1 parserB
-
-boolParser :: TermParser Bool
-boolParser =
-  matchOccNameTerm "False" False
-    <|> matchOccNameTerm "True" True
-    <|> matchDataConTerm falseDataCon False
-    <|> matchDataConTerm trueDataCon True
-    <|> parseError (TermParseError "expected Bool term")
-
 matchOccNameTerm :: String -> a -> TermParser a
 matchOccNameTerm occName result = do
   Term{dc} <- ensureTerm
@@ -239,12 +228,72 @@ foreignValueToTerm ty fhv =
     hsc_env <- getSession
     liftIO $ cvObtainTerm hsc_env 2 False ty fhv
 
+--------------------------------------------------------------------------------
+-- * Evaluation
+--------------------------------------------------------------------------------
 
+-- | Evaluate `f x`.
+evalApplication :: ForeignHValue -> ForeignHValue -> Debugger (EvalStatus_ [ForeignHValue] [HValueRef])
+evalApplication fref aref = do
+  hsc_env <- getSession
+  mk_list_fv <- compileExprRemote "(pure @IO . (:[])) :: a -> IO [a]"
 
--- | Parse a term which is a 'ValValue'
-varValueParser :: TermParser (Term, Bool)
-varValueParser =
-  (,) <$> subtermWith 0 programTermParser <*> subtermWith 1 boolParser
+  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
+      interp = hscInterp hsc_env
+
+  liftIO $ (evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref)))
+
+handleStatusParser :: EvalStatus_ [ForeignHValue] [HValueRef] -> TermParser ForeignHValue
+handleStatusParser status =
+  case status of
+    EvalComplete _ (EvalSuccess [res]) -> pure res
+    EvalComplete _ (EvalSuccess []) ->
+      parseError (TermParseError "evaluation did not bind any values")
+    EvalComplete _ (EvalSuccess (_:_:_)) ->
+      parseError (TermParseError "evaluation produced more than one value")
+    EvalComplete _ (EvalException e) ->
+      parseError (TermParseError ("evaluation raised an exception: " ++ show e))
+    EvalBreak {} ->
+      parseError (TermParseError "evaluation unexpectedly hit a breakpoint")
+
+--------------------------------------------------------------------------------
+-- * Logging parsers
+--------------------------------------------------------------------------------
+
+logTermParserMsg :: String -> String -> Debugger ()
+logTermParserMsg label msg =
+  logSDoc Logger.Debug (text "[TermParser]" <+> text label <+> text msg)
+
+runTermParserLogged
+  :: String
+  -> TermParser a
+  -> Term
+  -> Debugger (Either [TermParseError] a)
+runTermParserLogged label term_parser term = do
+  logTermParserMsg label "start"
+  res <- runTermParser term_parser term
+  case res of
+    Left errs -> do
+      logTermParserMsg label ("failed: " ++ unlines (map getTermErrorMessage errs))
+      pure (Left errs)
+    Right a -> do
+      logTermParserMsg label "succeeded"
+      pure (Right a)
+
+--------------------------------------------------------------------------------
+-- * Base parsers
+--------------------------------------------------------------------------------
+
+tuple2Of :: TermParser a -> TermParser b -> TermParser (a, b)
+tuple2Of parserA parserB = (,) <$> subtermWith 0 parserA <*> subtermWith 1 parserB
+
+boolParser :: TermParser Bool
+boolParser =
+  matchOccNameTerm "False" False
+    <|> matchOccNameTerm "True" True
+    <|> matchDataConTerm falseDataCon False
+    <|> matchDataConTerm trueDataCon True
+    <|> parseError (TermParseError "expected Bool term")
 
 -- | Parse a list, given a parser for each element.
 -- The whole list will be forced.
@@ -252,6 +301,19 @@ parseList :: TermParser a -> TermParser [a]
 parseList item_parser =
         (matchConstructorTerm "[]" *> pure [])
     <|> (matchConstructorTerm ":" *> ((:) <$> subtermWith 0 item_parser <*> subtermWith 1 (parseList item_parser)))
+
+--------------------------------------------------------------------------------
+-- * VarValue
+--------------------------------------------------------------------------------
+
+-- | Parse a term which is a 'ValValue'
+varValueParser :: TermParser (Term, Bool)
+varValueParser =
+  (,) <$> subtermWith 0 programTermParser <*> subtermWith 1 boolParser
+
+--------------------------------------------------------------------------------
+-- * VarFields
+--------------------------------------------------------------------------------
 
 -- | Parse a term which is a 'Program VarFields'
 varFieldsParser :: TermParser [(String, Term)]
@@ -281,34 +343,9 @@ varFieldTupleParser = tuple2Of anyTerm anyTerm
 varFieldValueParser :: TermParser Term
 varFieldValueParser = subtermTerm 0
 
--- | Evaluate `f x`.
-evalApplication :: ForeignHValue -> ForeignHValue -> Debugger (EvalStatus_ [ForeignHValue] [HValueRef])
-evalApplication fref aref = do
-  hsc_env <- getSession
-  mk_list_fv <- compileExprRemote "(pure @IO . (:[])) :: a -> IO [a]"
-
-  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-      interp = hscInterp hsc_env
-
-  liftIO $ (evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref)))
-
-handleStatusParser :: EvalStatus_ [ForeignHValue] [HValueRef] -> TermParser ForeignHValue
-handleStatusParser status =
-  case status of
-    EvalComplete _ (EvalSuccess [res]) -> pure res
-    EvalComplete _ (EvalSuccess []) ->
-      parseError (TermParseError "evaluation did not bind any values")
-    EvalComplete _ (EvalSuccess (_:_:_)) ->
-      parseError (TermParseError "evaluation produced more than one value")
-    EvalComplete _ (EvalException e) ->
-      parseError (TermParseError ("evaluation raised an exception: " ++ show e))
-    EvalBreak {} ->
-      parseError (TermParseError "evaluation unexpectedly hit a breakpoint")
-
-
-
-reifyBool :: Bool -> Debugger ForeignHValue
-reifyBool b = compileExprRemote (show b ++ ":: Bool")
+--------------------------------------------------------------------------------
+-- * Program Parser
+--------------------------------------------------------------------------------
 
 -- | Parses and evaluates a "Program" term.
 programTermParser :: TermParser Term
@@ -348,24 +385,6 @@ programTermParser =
       bool_fv <- liftDebugger $ reifyBool is_thunk
       foreignValueToTerm boolTy bool_fv
 
-
-logTermParserMsg :: String -> String -> Debugger ()
-logTermParserMsg label msg =
-  logSDoc Logger.Debug (text "[TermParser]" <+> text label <+> text msg)
-
-runTermParserLogged
-  :: String
-  -> TermParser a
-  -> Term
-  -> Debugger (Either [TermParseError] a)
-runTermParserLogged label term_parser term = do
-  logTermParserMsg label "start"
-  res <- runTermParser term_parser term
-  case res of
-    Left errs -> do
-      logTermParserMsg label ("failed: " ++ unlines (map getTermErrorMessage errs))
-      pure (Left errs)
-    Right a -> do
-      logTermParserMsg label "succeeded"
-      pure (Right a)
+reifyBool :: Bool -> Debugger ForeignHValue
+reifyBool b = compileExprRemote (show b ++ ":: Bool")
 
