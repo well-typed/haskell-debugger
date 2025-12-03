@@ -7,12 +7,17 @@ module GHC.Debugger.Utils
   , module GHC.Utils.Trace
   ) where
 
+import Control.Applicative
+
 import GHC
 import GHC.Data.FastString
 import GHC.Driver.DynFlags
 import GHC.Driver.Ppr
-import GHC.Utils.Outputable
+import GHC.Utils.Outputable hiding (char)
 import GHC.Utils.Trace
+import qualified Data.Text as T
+
+import Data.Attoparsec.Text
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
@@ -37,4 +42,36 @@ display x = do
   dflags <- getDynFlags
   return $ showSDoc dflags (ppr x)
 {-# INLINE display #-}
+
+-- | Takes a 'srcLoc' string from 'StackEntry' and returns a 'SourceSpan'.
+--
+-- === Example strings
+--
+-- - @hdb/Development/Debug/Adapter/Init.hs:(188,15)-(197,48)@
+-- - @hdb/Development/Debug/Adapter/Proxy.hs:93:34-37@
+srcSpanStringToSourceSpan :: String -> Either String SourceSpan
+srcSpanStringToSourceSpan s = parseOnly pSrcSpan (T.pack s)
+  where
+    pSrcSpan = do
+      fp <- pFile <* char ':'
+      pParenStyle fp <|> pColonStyle fp
+
+    -- file:(l1,c1)-(l2,c2)
+    pParenStyle fp = do
+      (l1, c1) <- (,) <$> (char '(' *> num <* char ',') <*> (num <* char ')') <* char '-'
+      (l2, c2) <- (,) <$> (char '(' *> num <* char ',') <*> (num <* char ')')
+      pure (SourceSpan fp l1 l2 c1 c2)
+
+    -- file:l1:c1-c2
+    pColonStyle fp = do
+      l1 <- num <* char ':'
+      c1 <- num <* char '-'
+      c2 <- num
+      pure (SourceSpan fp l1 l1 c1 c2)
+
+    pFile :: Parser FilePath
+    pFile = T.unpack <$> takeTill (== ':')
+
+    num :: Parser Int
+    num = decimal
 

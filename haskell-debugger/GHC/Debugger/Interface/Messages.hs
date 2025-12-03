@@ -246,7 +246,7 @@ newtype RemoteThreadId = RemoteThreadId
     -- find the proper remote 'ThreadId' corresponding to this numeric
     -- identifier, lookup the 'remoteThreadIntRef' in the 'ThreadMap'
     }
-    deriving Show
+    deriving (Show, Eq, Ord)
 
 data EvalResult
   = EvalCompleted { resultVal :: String

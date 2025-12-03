@@ -14,6 +14,7 @@
 -- @
 module Development.Debug.Adapter.Stopped where
 
+import Control.Monad
 import qualified Data.Text as T
 
 import DAP
@@ -46,29 +47,28 @@ commandThreads = do
 commandStackTrace :: DebugAdaptor ()
 commandStackTrace = do
   StackTraceArguments{..} <- getArguments
-  GotStacktrace fs <- sendSync (GetStacktrace (RemoteThreadId stackTraceArgumentsThreadId))
-  case fs of
-    []  ->
-      -- No frames; should be stopped on exception
-      sendStackTraceResponse StackTraceResponse { stackFrames = [], totalFrames = Nothing }
-    [f] -> do
-      source <- fileToSource f.sourceSpan.file
-      let
-        topStackFrame = defaultStackFrame
-          { stackFrameId = 0
-          , stackFrameName = T.pack f.name
-          , stackFrameLine = f.sourceSpan.startLine
-          , stackFrameColumn = f.sourceSpan.startCol
-          , stackFrameEndLine = Just f.sourceSpan.endLine
-          , stackFrameEndColumn = Just f.sourceSpan.endCol
-          , stackFrameSource = Just source
-          }
-      sendStackTraceResponse StackTraceResponse
-        { stackFrames = [topStackFrame]
-        , totalFrames = Just 1
-        }
-    _ -> error $ "Unexpected multiple frames since implementation doesn't support it yet: " ++ show fs
+  GotStacktrace stackFrames <- sendSync (GetStacktrace (RemoteThreadId stackTraceArgumentsThreadId))
+  responseFrames <- forM (zip stackFrames [1..]) $ \(stackFrame, stackFrameIx) -> do
+    source <- fileToSource stackFrame.sourceSpan.file
+    return defaultStackFrame
+      { stackFrameId = stackTraceArgumentsThreadId*1000000 + stackFrameIx
+      , stackFrameName = T.pack stackFrame.name
+      , stackFrameLine = stackFrame.sourceSpan.startLine
+      , stackFrameColumn = stackFrame.sourceSpan.startCol
+      , stackFrameEndLine = Just stackFrame.sourceSpan.endLine
+      , stackFrameEndColumn = Just stackFrame.sourceSpan.endCol
+      , stackFrameSource = Just source
+      }
+  sendStackTraceResponse StackTraceResponse
+    { stackFrames = responseFrames
+    , totalFrames = if null responseFrames then Nothing else Just (length responseFrames) }
 
+-- | Come up with a unique identifier for a stack frame (only valid while in
+-- this stopped environment, see "Lifetime of Objects References" in DAP
+-- overview).
+--
+-- The unique identifier is based on the threadId and index of the stack frame for this thread's stack.
+-- mkUniqueStackId ::
 
 --------------------------------------------------------------------------------
 -- * Scopes
@@ -77,7 +77,7 @@ commandStackTrace = do
 -- | Command to get scopes for current stopped point
 commandScopes :: DebugAdaptor ()
 commandScopes = do
-  ScopesArguments{scopesArgumentsFrameId=0} <- getArguments
+  ScopesArguments{scopesArgumentsFrameId=_IGNORED_BUT_NOW_WE_HAVE_TO_CARE} <- getArguments
   GotScopes scopes <- sendSync GetScopes
   sendScopesResponse . ScopesResponse =<<
     mapM scopeInfoToScope scopes

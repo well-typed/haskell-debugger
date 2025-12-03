@@ -3,8 +3,10 @@
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
 module GHC.Debugger.Stopped where
 
+import Control.Monad
 import Control.Monad.Reader
 import Data.IORef
+import GHC.Stack.CloneStack as Stack
 
 import GHC
 import GHC.Types.Unique.FM
@@ -14,11 +16,12 @@ import GHC.Types.Name.Reader
 import GHC.Unit.Home.ModInfo
 import GHC.Unit.Module.ModDetails
 import GHC.Types.TypeEnv
-import GHC.Data.Maybe (expectJust)
+import GHC.Data.Maybe
 import GHC.Driver.Env as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Runtime.Eval
 import GHC.Types.SrcLoc
+import GHC.Utils.Outputable as Ppr
 import qualified GHC.Unit.Home.Graph as HUG
 
 import GHC.Debugger.Stopped.Variables
@@ -28,6 +31,7 @@ import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Utils
+import qualified GHC.Debugger.Logger as Logger
 
 {-
 Note [Don't crash if not stopped]
@@ -86,30 +90,63 @@ getThreads = do
 
 -- | Get the stack frames at the point we're stopped at
 getStacktrace :: RemoteThreadId -> Debugger [StackFrame]
-getStacktrace tODO_USE_ME = GHC.getResumeContext >>= \case
-  [] ->
-    -- See Note [Don't crash if not stopped]
-    return []
-  r:_
-    | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
-    -> do
-      -- debug things:
-      tm <- liftIO . readIORef =<< asks threadMap
-      case lookupThreadMap (remoteThreadIntRef tODO_USE_ME) tm of
-        Nothing -> pure ()
-        Just f_tid -> do
-          x <- getRemoteThreadStackCopy f_tid
-          pprTraceM "WHT" (ppr x)
-      return
-        [ StackFrame
-          { name = GHC.resumeDecl r
-          , sourceSpan = realSrcSpanToSourceSpan ss
-          }
-        ]
-    | otherwise ->
-        -- No resume span; which should mean we're stopped on an exception.
-        -- No info for now.
-        return []
+getStacktrace req_tid = do
+
+  tm <- liftIO . readIORef =<< asks threadMap
+  ipe_stack <- case lookupThreadMap (remoteThreadIntRef req_tid) tm of
+    Nothing -> pure []
+    Just f_tid -> do
+      -- For now, assume that if we can get an IPE backtrace then this thread
+      -- is compiled and doesn't have any interpreter frames.
+      -- Of course, this isn't true since we should also be able to get an IPE
+      -- backtrace for interpreter threads. Just not yet.
+      --
+      -- If IPE is empty => it's not an interpreter thread => the IPE backtrace
+      --  is the best we can do, so just return that.
+      getRemoteThreadIPEStack f_tid
+
+  case ipe_stack of
+    [] -> do
+      -- Try decoding a stack with interpreter continuation frames (RetBCOs) and use the BRK_FUN src locations.
+      GHC.getResumeContext >>= \case
+        [] ->
+          -- See Note [Don't crash if not stopped]
+          return []
+        r:_
+          | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
+          -> do
+            r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
+            if r_tid == req_tid then
+              -- We're getting the stacktrace for the thread we're stopped at.
+              return
+                [ StackFrame
+                  { name = GHC.resumeDecl r
+                  , sourceSpan = realSrcSpanToSourceSpan ss
+                  }
+                ]
+            else
+             return []
+          | otherwise ->
+              -- No resume span; which should mean we're stopped on an exception.
+              -- No info for now.
+              return []
+    ipe_frames -> catMaybes <$> do
+      forM ipe_frames $ \stack_entry -> do
+        case srcSpanStringToSourceSpan (Stack.srcLoc stack_entry) of
+          Left err -> do
+            -- Couldn't parse. The srcLoc may be invalid so just keep this as info, not warning.
+            logSDoc Logger.Info $
+              text "Couldn't parse StackEntry srcLoc \"" Ppr.<> text (Stack.srcLoc stack_entry)
+                                                         Ppr.<> text "\":" <+> text err
+            return Nothing
+          Right sourceSpan ->
+            return $ Just StackFrame
+              { name = Stack.moduleName stack_entry ++ "." ++ Stack.functionName stack_entry
+              , sourceSpan = sourceSpan
+              }
+
+  -- x <- getRemoteThreadStackCopy f_tid
+  -- pprTraceM "WHT" (ppr x)
 
 --------------------------------------------------------------------------------
 -- * Scopes
