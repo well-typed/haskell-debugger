@@ -1,3 +1,4 @@
+{-# LANGUAGE OrPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
 -- |
@@ -12,100 +13,89 @@ module GHC.Debugger.Runtime.Thread
   ) where
 
 import Data.Maybe
+import Data.Functor
+import Control.Applicative
 import Control.Concurrent
-import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.IORef
+import GHC.Conc.Sync
 
 import GHC
-import GHC.Core.DataCon
-import GHC.Types.Name
 import GHC.Builtin.Types
 import GHC.Runtime.Heap.Inspect
 
 import GHC.Driver.Config
 import GHC.Driver.Env
 import GHC.Runtime.Interpreter as Interp
+import GHC.Utils.Outputable
 
 import GHCi.Message
 import GHCi.RemoteTypes
 
+import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
+import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Runtime.Thread.Map
+import GHC.Debugger.Runtime.Eval
 
 -- | Get a 'RemoteThreadId' from a remote 'ResumeContext' gotten from an 'ExecBreak'
 getRemoteThreadIdFromRemoteContext :: ForeignRef (ResumeContext [HValueRef]) -> Debugger RemoteThreadId
 getRemoteThreadIdFromRemoteContext fctxt = do
-  hsc_env <- getSession
-
   -- Get the ResumeContext term and fetch the resumeContextThreadId field
-  liftIO (cvObtainTerm hsc_env 2 True anyTy (castForeignRef fctxt)) >>= \case
-    Term{subTerms=[_mvar1, _mvar2, threadIdTerm@Term{}]} -> do
-
-      getRemoteThreadId (castForeignRef (val threadIdTerm))
-
-    _ -> error "Expecting ResumeContext term!!"
-
+  parsed_threadid <- obtainParsedTerm "RemoteContext's ThreadId" 2 True anyTy (castForeignRef fctxt)
+                        (subtermWith 2{-RemoteContext's ThreadId-} anyTerm)
+  case parsed_threadid of
+    Left errs -> do
+      logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
+      liftIO $ fail "Failed to parse remote ResumeContext's thread id"
+    Right Term{val=threadIdVal} -> do
+      getRemoteThreadId (castForeignRef threadIdVal)
+    _ -> liftIO $ fail "Expected threadIdTerm to be a Term!"
 
 getRemoteThreadId :: ForeignRef ThreadId -> Debugger RemoteThreadId
 getRemoteThreadId threadIdRef = do
-      hsc_env <- getSession
+  from_thread_id_fv <- compileExprRemote "GHC.Conc.Sync.fromThreadId"
+  thread_id_fv      <- evalApplication from_thread_id_fv (castForeignRef threadIdRef)
 
-      -- evalStmt takes an IO [a] and evals it into a [ForeignHValue]
-      from_thread_id_fv <- compileExprRemote "(pure @IO . (:[]) . GHC.Conc.Sync.fromThreadId)"
+  parsed_int <-
+    obtainParsedTerm "ThreadId's Int value" 2 True wordTy{-really, Word64, but we won't look at the type-} thread_id_fv intParser
 
-      let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-          interp    = hscInterp hsc_env
+  case parsed_int of
+    Left errs -> do
+      logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
+      liftIO $ fail "Failed to parse remote thread id on fromThreadId result!"
+    Right tid_int -> do
 
-          handleSingleStatus [func_fv] = return func_fv
-          handleSingleStatus l         = fail $
-            "Unexpected result when loading \"fromThreadId\" function (" ++ show (length l) ++ ")"
+      tmap_ref <- asks threadMap
+      -- unconditionally write to the map the foreign ref (it should always
+      -- refer to the same ThreadId as a possible existing entry)
+      liftIO $ modifyIORef' tmap_ref $
+        insertThreadMap tid_int threadIdRef
 
-      r_term <- liftIO $
-        cvObtainTerm hsc_env 2 True wordTy{-really, Word64, but we won't look at the type-}
-        =<< handleSingleStatus =<< handleStatus hsc_env =<<
-        evalStmt interp eval_opts
-          (EvalApp (EvalThis from_thread_id_fv) (EvalThis (castForeignRef threadIdRef)))
-
-      case r_term of
-        Term{subTerms=[Prim{valRaw=[w64_tid]}]} -> do
-
-          let i_tid = fromIntegral w64_tid :: Int
-
-          tmap_ref <- asks threadMap
-          -- unconditionally write to the map the foreign ref (it should always
-          -- refer to the same ThreadId as a possible existing entry)
-          liftIO $ modifyIORef' tmap_ref $
-            insertThreadMap i_tid threadIdRef
-
-          return (RemoteThreadId i_tid)
-        _ -> liftIO $ fail $ "Unexpected term result from \"fromThreadId\""
+      return (RemoteThreadId tid_int)
 
 -- | Is the remote thread running or blocked (NOT finished NOR dead)?
+getRemoteThreadStatus :: ForeignRef ThreadId -> Debugger ThreadStatus
+getRemoteThreadStatus threadIdRef = do
+  thread_status_fv <- compileExprRemote "GHC.Conc.Sync.threadStatus"
+
+  status_fv <- evalApplicationIO thread_status_fv (castForeignRef threadIdRef)
+  status_parsed <- obtainParsedTerm "ThreadStatus" 2 True anyTy{-..no..-} status_fv threadStatusParser
+
+  case status_parsed of
+    Left errs -> do
+      logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
+      liftIO $ fail "Failed to parse ThreadStatus"
+    Right thrdStatus ->
+      return thrdStatus
+
 isRemoteThreadLive :: ForeignRef ThreadId -> Debugger Bool
-isRemoteThreadLive threadIdRef = do
-  hsc_env <- getSession
-
-  thread_status_fv <- compileExprRemote "fmap (:[]) . GHC.Conc.Sync.threadStatus"
-
-  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-      interp    = hscInterp hsc_env
-
-  liftIO $ evalStmt interp eval_opts
-    (EvalApp (EvalThis thread_status_fv) (EvalThis (castForeignRef threadIdRef)))
-      >>= handleStatus hsc_env >>= \case
-        [status_fv] -> do
-          status_term <- cvObtainTerm hsc_env 2 True anyTy{-..no..-} status_fv
-          case status_term of
-            Term{dc=Left dc} -> return $ dc == "ThreadRunning" || dc == "ThreadBlocked"
-            Term{dc=Right (occNameString . nameOccName . dataConName -> dc)}
-                             -> return $ dc == "ThreadRunning" || dc == "ThreadBlocked"
-            _ -> return False
-        _ -> fail "Unexpected result from evaluating \"threadLabel\""
-
+isRemoteThreadLive r = getRemoteThreadStatus r <&> \case
+  (ThreadRunning ; ThreadBlocked{}) -> True
+  (ThreadDied    ; ThreadFinished)  -> False
 
 -- | Call 'listThreads' on the (possibly) remote debuggee process to get the
 -- list of threads running on the debuggee. Filter by running threads
@@ -114,20 +104,18 @@ listAllLiveRemoteThreads :: Debugger [(RemoteThreadId, ForeignRef ThreadId)]
 listAllLiveRemoteThreads = do
   hsc_env <- getSession
 
-  -- evalStmt will take this IO [ThreadId] and eval it to [ForeignHValue]
   list_threads_fv <- compileExprRemote "GHC.Conc.Sync.listThreads"
 
   let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
       interp    = hscInterp hsc_env
 
   liftIO (evalStmt interp eval_opts (EvalThis list_threads_fv))
-    >>= liftIO . handleStatus hsc_env >>= \case
+    >>= liftIO . handleMultiStatus >>= \case
       threads_fvs -> catMaybes <$> do
 
         forM threads_fvs $ \(castForeignRef -> thread_fv) -> do
           isLive <- isRemoteThreadLive thread_fv
           if isLive then do
-            -- TODO: awful to compile the expression to get the remote id every single time...
             tid <- getRemoteThreadId thread_fv
             pure $ Just (tid, thread_fv)
           else do
@@ -150,7 +138,7 @@ getRemoteThreadsLabels threadIdRefs = do
   forM threadIdRefs $ \threadIdRef -> liftIO $
     evalStmt interp eval_opts
       (EvalApp (EvalThis thread_label_fv) (EvalThis (castForeignRef threadIdRef)))
-        >>= handleStatus hsc_env >>= \case
+        >>= handleMultiStatus >>= \case
           []          -> pure Nothing
           [io_lbl_fv] -> Just <$> evalString interp io_lbl_fv
           _ -> fail "Unexpected result from evaluating \"threadLabel\""
@@ -160,35 +148,33 @@ getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger Term
 getRemoteThreadStackCopy threadIdRef = do
   hsc_env <- getSession
 
-  -- evalStmt takes an IO [a] and evals it into a [ForeignHValue]. Represent the Maybe as an empty list
-  thread_stack_fv <- compileExprRemote "fmap (:[]) . GHC.Exts.Stack.decodeStack Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
+  thread_stack_fv <- compileExprRemote "GHC.Exts.Stack.decodeStack Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
 
   -- TODO: Currently, GHC.Stack.CloneStack.decode, which uses the IPE
   -- information to report source locations of the callstacks, does not work
   -- for a stack with interpreter return frames. We would probably also like to
   -- use that.
 
-  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-      interp    = hscInterp hsc_env
+  stack_frames_fv <- evalApplicationIO thread_stack_fv (castForeignRef threadIdRef)
 
-  liftIO $ evalStmt interp eval_opts
-    (EvalApp (EvalThis thread_stack_fv) (EvalThis (castForeignRef threadIdRef)))
-      >>= handleStatus hsc_env >>= \case
-        [stack_frames_fv] ->
-          cvObtainTerm hsc_env 2 True anyTy{-todo:stackframety-} stack_frames_fv
-        _ -> fail "Unexpected result from evaluating \"threadLabel\""
+  liftIO $ cvObtainTerm hsc_env 2 True anyTy{-todo:stackframety-} stack_frames_fv
 
 --------------------------------------------------------------------------------
--- * Utilities
+-- * TermParsers
 --------------------------------------------------------------------------------
 
-handleStatus :: HscEnv -> EvalStatus_ [ForeignHValue] [HValueRef] -> IO [ForeignHValue]
-handleStatus hsc_env (EvalBreak _ _ resume_ctxt _) = do
-  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-      interp    = hscInterp hsc_env
-  resume_ctxt_fhv <- mkFinalizedHValue interp resume_ctxt
-  handleStatus hsc_env =<< Interp.resumeStmt interp eval_opts resume_ctxt_fhv
-handleStatus _ (EvalComplete _ (GHCi.Message.EvalException e)) =
-  throwIO (fromSerializableException e)
-handleStatus _ (EvalComplete _ (EvalSuccess ls)) =
-  return ls
+threadStatusParser :: TermParser ThreadStatus
+threadStatusParser = do
+        (matchConstructorTerm "ThreadRunning"  $> ThreadRunning)
+    <|> (matchConstructorTerm "ThreadFinished" $> ThreadFinished)
+    <|> (matchConstructorTerm "ThreadDied"     $> ThreadDied)
+    <|> (matchConstructorTerm "ThreadBlocked"  *> (ThreadBlocked <$> subtermWith 0 blockedReasonParser))
+
+blockedReasonParser :: TermParser BlockReason
+blockedReasonParser = do
+        (matchConstructorTerm "BlockedOnMVar"        $> BlockedOnMVar)
+    <|> (matchConstructorTerm "BlockedOnBlackHole"   $> BlockedOnBlackHole)
+    <|> (matchConstructorTerm "BlockedOnException"   $> BlockedOnException)
+    <|> (matchConstructorTerm "BlockedOnSTM"         $> BlockedOnSTM)
+    <|> (matchConstructorTerm "BlockedOnForeignCall" $> BlockedOnForeignCall)
+    <|> (matchConstructorTerm "BlockedOnOther"       $> BlockedOnOther)
