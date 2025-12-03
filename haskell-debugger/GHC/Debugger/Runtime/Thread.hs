@@ -9,6 +9,7 @@ module GHC.Debugger.Runtime.Thread
   , getRemoteThreadId
   , getRemoteThreadsLabels
   , getRemoteThreadStackCopy
+  , getRemoteThreadIPEStack
   , listAllLiveRemoteThreads
   ) where
 
@@ -21,6 +22,8 @@ import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.IORef
 import GHC.Conc.Sync
+import GHC.Stack.CloneStack
+import GHC.Exts.Heap.ClosureTypes
 
 import GHC
 import GHC.Builtin.Types
@@ -34,6 +37,7 @@ import GHC.Utils.Outputable
 import GHCi.Message
 import GHCi.RemoteTypes
 
+import GHC.Debugger.Utils
 import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
@@ -159,6 +163,28 @@ getRemoteThreadStackCopy threadIdRef = do
 
   liftIO $ cvObtainTerm hsc_env 2 True anyTy{-todo:stackframety-} stack_frames_fv
 
+-- | Try to get an IPE stacktrace.
+--
+-- At the moment, we assume IPE stacktraces are always empty @[]@ for threads
+-- with interpreter frames.
+--
+-- Really, as long as there is IPE information, this function should return
+-- StackEntries for all frames, including the interpreter ones, since these are
+-- typically be interleaved with "normal" frames.
+getRemoteThreadIPEStack :: ForeignRef ThreadId -> Debugger [StackEntry]
+getRemoteThreadIPEStack threadIdRef = do
+  !ipe_stack_fv <- compileExprRemote "GHC.Stack.CloneStack.decode Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
+  !entries_fvs  <- evalApplicationIOList ipe_stack_fv (castForeignRef threadIdRef)
+  mapM (\entry_fv -> do
+      stack_entry <- obtainParsedTerm "StackEntry" 2 True anyTy{-list of stackentry, but we won't look...-} entry_fv stackEntryParser
+      case stack_entry of
+        Left errs -> do
+          logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
+          liftIO $ fail "Failed to parse @StackEntry@ from decoding thread stack!"
+        Right se ->
+          pure se
+    ) entries_fvs
+
 --------------------------------------------------------------------------------
 -- * TermParsers
 --------------------------------------------------------------------------------
@@ -178,3 +204,7 @@ blockedReasonParser = do
     <|> (matchConstructorTerm "BlockedOnSTM"         $> BlockedOnSTM)
     <|> (matchConstructorTerm "BlockedOnForeignCall" $> BlockedOnForeignCall)
     <|> (matchConstructorTerm "BlockedOnOther"       $> BlockedOnOther)
+
+stackEntryParser :: TermParser StackEntry
+stackEntryParser = do
+    StackEntry <$> subtermWith 0 stringParser <*> subtermWith 1 stringParser <*> subtermWith 2 stringParser <*> pure INVALID_OBJECT{-this is a stub-}

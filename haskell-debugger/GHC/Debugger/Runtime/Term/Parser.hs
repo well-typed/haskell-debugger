@@ -283,6 +283,16 @@ parseList item_parser =
 intParser :: TermParser Int
 intParser = fromIntegral <$> subtermWith 0 primParser
 
+-- | God...
+stringParser :: TermParser String
+stringParser = do
+  Term{val=string_fv} <- anyTerm
+  liftDebugger $ do
+    pure_fv      <- compileExprRemote "(pure @IO) :: String -> IO String"
+    string_io_fv <- evalApplication pure_fv string_fv
+    hsc_env      <- getSession
+    liftIO $ evalString (hscInterp hsc_env) string_io_fv
+
 --------------------------------------------------------------------------------
 -- * VarValue
 --------------------------------------------------------------------------------
@@ -309,7 +319,6 @@ varFieldsParser =
     -- Parses an item of type (IO String, VarFieldValue)
     parseFieldItem :: TermParser (String, Term)
     parseFieldItem = (,) <$> subtermWith 0 parseFieldLabel <*> subtermWith 1 varFieldValueParser
-
 
     parseFieldLabel :: TermParser String
     parseFieldLabel = do

@@ -40,6 +40,18 @@ evalApplicationIO fref aref = do
   liftIO (evalStmt interp eval_opts $ (EvalThis fmap_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref)))
     >>= liftIO . handleSingStatus
 
+-- | Evaluate `f x` for any @f :: a -> IO [b]@ and any @x :: a@.
+-- The result is a list of foreign references to the heap values returned in the list of @b@s (the IO action is executed)
+evalApplicationIOList :: ForeignHValue -> ForeignHValue -> Debugger [ForeignHValue]
+evalApplicationIOList fref aref = do
+  hsc_env <- getSession
+
+  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
+      interp = hscInterp hsc_env
+
+  liftIO (evalStmt interp eval_opts $ (EvalThis fref) `EvalApp` (EvalThis aref))
+    >>= liftIO . handleMultiStatus
+
 -- | Handle the 'EvalStatus_' of an evaluation using 'EvalStepNone' which returns a single value
 handleSingStatus :: MonadFail m => EvalStatus_ [ForeignHValue] [HValueRef] -> m ForeignHValue
 handleSingStatus status =
