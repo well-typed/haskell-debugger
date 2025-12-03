@@ -87,7 +87,6 @@ library
                       mtl >= 2.3 && < 3,
                       binary >= 0.8.9 && < 0.11,
                       process >= 1.6.25 && < 1.7,
-                      unix >= 2.8.6 && < 2.9,
                       filepath >= 1.5.4 && < 1.6,
                       directory >= 1.3.9.0 && < 1.4,
                       exceptions >= 0.10.9 && < 0.11,
@@ -104,6 +103,9 @@ library
                       co-log-core >= 0.3.2.5 && < 0.4,
 
                       haskell-debugger-view >= 0.1 && < 1.0
+
+    if !os(windows)
+        build-depends: unix >= 2.8.6 && < 2.9,
 
     hs-source-dirs:   haskell-debugger
     default-language: GHC2021
@@ -137,7 +139,7 @@ executable hdb
         base, ghc,
         exceptions, aeson, bytestring,
         containers, filepath,
-        process, mtl, unix,
+        process, mtl,
         unordered-containers >= 0.2.19 && < 0.3,
 
         haskell-debugger,

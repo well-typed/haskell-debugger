@@ -20,7 +20,9 @@ import Data.IORef
 import Data.Maybe
 import Prelude hiding (mod)
 import System.IO
+#ifdef MIN_VERSION_unix
 import System.Posix.Signals
+#endif
 import qualified Data.IntMap as IM
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
@@ -161,8 +163,10 @@ runDebugger :: Recorder (WithSeverity DebuggerMonadLog)
 runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp conf (Debugger action) = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
   GHC.runGhc (Just libdir) $ do
+#ifdef MIN_VERSION_unix
     -- Workaround #4162
     _ <- liftIO $ installHandler sigINT Default Nothing
+#endif
     dflags0 <- GHC.getSessionDynFlags
     let dflags1 = dflags0
           { GHC.ghcMode = GHC.CompManager
