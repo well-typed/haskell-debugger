@@ -2,9 +2,11 @@ packages: . haskell-debugger-view
 
 allow-newer: ghc-bignum,containers,time,ghc,base,template-haskell
 
-package *
-    -- Speeds up a bit
-    library-vanilla: False
+if !os(windows)
+    package *
+        -- Speeds up a bit
+        library-vanilla: False
 
-executable-dynamic: True
+if !os(windows)
+    executable-dynamic: True
 

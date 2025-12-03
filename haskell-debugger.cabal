@@ -189,6 +189,7 @@ test-suite haskell-debugger-test
         tasty >= 1.5.3,
         tasty-golden >= 2.3.5,
         tasty-hunit >= 0.10.2,
+        tasty-expected-failure >= 0.12.3,
         regex >= 1.1
     build-tool-depends: haskell-debugger:hdb
     ghc-options: -threaded
