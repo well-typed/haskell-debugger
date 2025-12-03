@@ -25,7 +25,7 @@ name: Debugger CI
 jobs:
   build-vscode-extension:
     name: Build VSCode Extension
-    runs-on: ubuntu-latest # or macOS-latest, or windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -136,12 +136,13 @@ jobs:
 
   # Golden+Haskell tests are run on the git checkout
   build-n-more-test-haskell-debugger:
-    name: Build and Run Haskell Tests
-    runs-on: ubuntu-latest
-    # Run all jobs in the matrix to the end (IF NOT ON RELEASE)
+    name: Build and Run Haskell Tests (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    # Run all jobs in the matrix to the end (IF RELEASE, STOP ON FAILURE)
     continue-on-error: ${{ inputs.is-release == false }}
     strategy:
       matrix:
+        runner: [ubuntu-latest, macOS-latest, windows-latest] # it'd be good to also build-from-hackage on windows and macOS
         version: [9.14.0.20251104] #, latest-nightly] disable nightly while its broken
         include:
           # - channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
@@ -156,8 +157,7 @@ jobs:
       # Cabal store cache (main speed-up)
       - uses: actions/cache@v3
         with:
-          path: |
-            ~/.cabal/store
+          path: ~/.cabal/store
           key: ${{ runner.os }}-ghc-${{ matrix.version }}-cabal-${{ hashFiles('**/*.cabal', 'cabal.project*') }}
           restore-keys: |
             ${{ runner.os }}-ghc-${{ matrix.version }}-cabal-
@@ -168,11 +168,11 @@ jobs:
           cabal-version: 3.14
           ghcup-release-channel: ${{ matrix.channel }}
 
-      - uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - name: Build and Run integration tests
+      - name: Build and Run Haskell tests
+        shell: bash
         run: |
-          echo "Running Haskell Testsuite now..."
-          cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cabal run haskell-debugger-test --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell
+          else
+            cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell
+          fi

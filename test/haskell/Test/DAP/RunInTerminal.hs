@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE CPP #-}
 module Test.DAP.RunInTerminal (runInTerminalTests) where
 
 import Control.Concurrent
@@ -17,6 +18,7 @@ import System.Random
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.ExpectedFailure
 import Test.Utils
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as LB8
@@ -26,7 +28,11 @@ import qualified System.Process as P
 
 runInTerminalTests =
   testGroup "DAP.RunInTerminal"
-    [ testCase "runInTerminal: proxy forwards stdin correctly" runInTerminal1
+    [
+#ifdef mingw32_HOST_OS
+      ignoreTestBecause "Needs to be fixed for Windows" $
+#endif
+      testCase "runInTerminal: proxy forwards stdin correctly" runInTerminal1
     ]
 
 rit_keep_tmp_dirs :: Bool

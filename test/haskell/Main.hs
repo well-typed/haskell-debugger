@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase, OverloadedStrings, ViewPatterns, QuasiQuotes #-}
+{-# LANGUAGE LambdaCase, OverloadedStrings, ViewPatterns, QuasiQuotes, CPP #-}
 module Main (main) where
 
 import Text.RE.TDFA.Text.Lazy
@@ -15,6 +15,7 @@ import System.IO
 import Control.Exception
 
 import Test.Tasty
+import Test.Tasty.ExpectedFailure
 import Test.Tasty.Golden as G
 import Test.Tasty.Golden.Advanced as G
 
@@ -25,6 +26,9 @@ main :: IO ()
 main = do
   goldens <- mapM (mkGoldenTest False) =<< findByExtension [".hdb-test"] "test/golden"
   defaultMain $
+#ifdef mingw32_HOST_OS
+    ignoreTestBecause "Testsuite is not enabled on Windows (#149)" $
+#endif
     testGroup "Tests"
       [ testGroup "Golden tests" goldens
       , testGroup "Unit tests" unitTests
