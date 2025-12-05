@@ -53,6 +53,22 @@ evalApplicationIOList fref aref = do
 
   handleMultiStatus <$> liftIO (evalStmt interp eval_opts $ (EvalThis fref) `EvalApp` (EvalThis aref))
 
+-- | Evaluate `x` for any @x :: a@.
+-- The result is the foreign reference to a heap value of type @a@
+evalThis :: ForeignHValue -> Debugger (Either BadEvalStatus ForeignHValue)
+evalThis aref = do
+  hsc_env <- getSession
+  mk_list_fv <- compileExprRemote "(pure @IO . (:[])) :: a -> IO [a]"
+
+  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
+      interp = hscInterp hsc_env
+
+  handleSingStatus <$> liftIO (
+    evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` (EvalThis aref)
+    )
+
+-- ** Handling evaluation results ----------------------------------------------
+
 -- | Handle the 'EvalStatus_' of an evaluation using 'EvalStepNone' which returns a single value
 handleSingStatus :: EvalStatus_ [ForeignHValue] [HValueRef] -> Either BadEvalStatus ForeignHValue
 handleSingStatus status =

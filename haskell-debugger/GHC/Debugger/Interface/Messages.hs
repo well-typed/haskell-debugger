@@ -212,7 +212,7 @@ data Response
   | DidStep EvalResult
   | DidExec EvalResult
   | GotThreads [DebuggeeThread]
-  | GotStacktrace [StackFrame]
+  | GotStacktrace [DbgStackFrame]
   | GotScopes [ScopeInfo]
   | GotVariables (Either VarInfo [VarInfo])
   | Aborted String
@@ -275,8 +275,8 @@ data DebuggeeThread
     }
     deriving (Show)
 
-data StackFrame
-  = StackFrame
+data DbgStackFrame
+  = DbgStackFrame
     { name :: String
     -- ^ Title of stack frame
     , sourceSpan :: SourceSpan

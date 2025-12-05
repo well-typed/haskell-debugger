@@ -24,6 +24,7 @@ import Data.IORef
 import GHC.Conc.Sync
 import GHC.Stack.CloneStack
 import GHC.Exts.Heap.ClosureTypes
+import GHC.Exts.Heap.Closures (GenStackFrame(..))
 
 import GHC
 import GHC.Builtin.Types
@@ -148,18 +149,13 @@ getRemoteThreadsLabels threadIdRefs = do
         _ -> liftIO $ fail "Unexpected result from evaluating \"threadLabel\""
 
 -- | Clone the stack of the given remote thread and get the Term
-getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger Term
+-- TODO: Rename to refer to it returning the RetBCOs
+getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [Term]
 getRemoteThreadStackCopy threadIdRef = do
-  hsc_env <- getSession
+  thread_stack_fv <- compileExprRemote "fmap GHC.Exts.Heap.Closures.ssc_stack . \
+                                          GHC.Exts.Stack.decodeStack Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
 
-  thread_stack_fv <- compileExprRemote "GHC.Exts.Stack.decodeStack Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
-
-  -- TODO: Currently, GHC.Stack.CloneStack.decode, which uses the IPE
-  -- information to report source locations of the callstacks, does not work
-  -- for a stack with interpreter return frames. We would probably also like to
-  -- use that.
-
-  evalApplicationIO thread_stack_fv (castForeignRef threadIdRef)
+  evalApplicationIOList thread_stack_fv (castForeignRef threadIdRef)
     >>= \case
       Left (EvalRaisedException e) -> do
         logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace will be returned...")
@@ -167,8 +163,15 @@ getRemoteThreadStackCopy threadIdRef = do
       Left e -> do
         logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
         return []
-      Right stack_frames_fv ->
-        liftIO $ cvObtainTerm hsc_env 2 True anyTy{-todo:stackframety?-} stack_frames_fv
+      Right stack_frames_fvs -> fmap catMaybes $
+        forM stack_frames_fvs $ \stack_frame_fv ->
+          obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} stack_frame_fv
+            stackFrameParser >>= \case
+              Left errs -> do
+                logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
+                return Nothing
+              Right tm ->
+                return (Just tm)
 
 -- | Try to get an IPE stacktrace.
 --
@@ -178,6 +181,7 @@ getRemoteThreadStackCopy threadIdRef = do
 -- Really, as long as there is IPE information, this function should return
 -- StackEntries for all frames, including the interpreter ones, since these are
 -- typically be interleaved with "normal" frames.
+--
 getRemoteThreadIPEStack :: ForeignRef ThreadId -> Debugger [StackEntry]
 getRemoteThreadIPEStack threadIdRef = do
   !ipe_stack_fv <- compileExprRemote "GHC.Stack.CloneStack.decode Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
@@ -191,7 +195,7 @@ getRemoteThreadIPEStack threadIdRef = do
         return []
       Right entries_fvs -> do
         mapM (\entry_fv -> do
-            stack_entry <- obtainParsedTerm "StackEntry" 2 True anyTy{-list of stackentry, but we won't look...-} entry_fv stackEntryParser
+            stack_entry <- obtainParsedTerm "StackEntry" 2 True anyTy{-stackentry, but we won't look at the ty...-} entry_fv stackEntryParser
             case stack_entry of
               Left errs -> do
                 logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
@@ -203,6 +207,8 @@ getRemoteThreadIPEStack threadIdRef = do
 --------------------------------------------------------------------------------
 -- * TermParsers
 --------------------------------------------------------------------------------
+
+-- ** Threads ------------------------------------------------------------------
 
 threadStatusParser :: TermParser ThreadStatus
 threadStatusParser = do
@@ -220,6 +226,20 @@ blockedReasonParser = do
     <|> (matchConstructorTerm "BlockedOnForeignCall" $> BlockedOnForeignCall)
     <|> (matchConstructorTerm "BlockedOnOther"       $> BlockedOnOther)
 
+-- ** Stack Frames -------------------------------------------------------------
+
 stackEntryParser :: TermParser StackEntry
 stackEntryParser = do
     StackEntry <$> subtermWith 0 stringParser <*> subtermWith 1 stringParser <*> subtermWith 2 stringParser <*> pure INVALID_OBJECT{-this is a stub-}
+
+stackFrameParser :: TermParser Term
+stackFrameParser = do
+  Suspension{ty, val, ctype, bound_to, infoprov}{-why is it always suspension and does not suffice to `seq` it?-} <- matchConstructorTerm "RetBCO" *> subtermWith 1 (subtermWith 0{-take from box-} anyTerm)
+  pprTraceM "what ty:" $ ppr ty <+> text (show ctype) <+> ppr bound_to <+> text (show infoprov)
+  liftDebugger $ do
+    hsc_env <- getSession
+    bcoFVal <- expectRight =<< evalThis val
+    x <- liftIO $ cvObtainTerm hsc_env maxBound True anyTy bcoFVal
+    pprTraceM "did obtain" (ppr x)
+    return x
+
