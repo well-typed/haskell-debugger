@@ -181,6 +181,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
           }
           -- Default debugger settings
           `GHC.xopt_set` LangExt.PackageImports
+          `GHC.xopt_set` LangExt.MagicHash -- needed for some of the expressions we compile
           `GHC.gopt_set` GHC.Opt_ImplicitImportQualified
           `GHC.gopt_set` GHC.Opt_IgnoreOptimChanges
           `GHC.gopt_set` GHC.Opt_IgnoreHpcChanges
