@@ -8,6 +8,8 @@ module GHC.Debugger.Utils
   ) where
 
 import Control.Applicative
+import Control.Monad.IO.Class
+import Control.Exception
 
 import GHC
 import GHC.Data.FastString
@@ -20,6 +22,7 @@ import qualified Data.Text as T
 import Data.Attoparsec.Text
 
 import GHC.Debugger.Monad
+import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Interface.Messages
 
 --------------------------------------------------------------------------------
@@ -42,6 +45,22 @@ display x = do
   dflags <- getDynFlags
   return $ showSDoc dflags (ppr x)
 {-# INLINE display #-}
+
+--------------------------------------------------------------------------------
+-- * More utils
+--------------------------------------------------------------------------------
+
+expectRight :: Exception e => Either e a -> Debugger a
+expectRight s = case s of
+  Left e -> do
+    logSDoc Logger.Error (text $ displayException e)
+    liftIO $ throwIO e
+  Right a -> do
+    pure a
+
+--------------------------------------------------------------------------------
+-- * Parsing
+--------------------------------------------------------------------------------
 
 -- | Takes a 'srcLoc' string from 'StackEntry' and returns a 'SourceSpan'.
 --

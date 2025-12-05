@@ -16,6 +16,7 @@ module GHC.Debugger.Runtime.Thread
 import Data.Maybe
 import Data.Functor
 import Control.Applicative
+import Control.Exception
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
@@ -62,8 +63,8 @@ getRemoteThreadIdFromRemoteContext fctxt = do
 getRemoteThreadId :: ForeignRef ThreadId -> Debugger RemoteThreadId
 getRemoteThreadId threadIdRef = do
   from_thread_id_fv <- compileExprRemote "GHC.Conc.Sync.fromThreadId"
-  thread_id_fv      <- evalApplication from_thread_id_fv (castForeignRef threadIdRef)
-
+  thread_id_fv      <- expectRight =<<
+                       evalApplication from_thread_id_fv (castForeignRef threadIdRef)
   parsed_int <-
     obtainParsedTerm "ThreadId's Int value" 2 True wordTy{-really, Word64, but we won't look at the type-} thread_id_fv intParser
 
@@ -85,9 +86,9 @@ getRemoteThreadId threadIdRef = do
 getRemoteThreadStatus :: ForeignRef ThreadId -> Debugger ThreadStatus
 getRemoteThreadStatus threadIdRef = do
   thread_status_fv <- compileExprRemote "GHC.Conc.Sync.threadStatus"
-
-  status_fv <- evalApplicationIO thread_status_fv (castForeignRef threadIdRef)
-  status_parsed <- obtainParsedTerm "ThreadStatus" 2 True anyTy{-..no..-} status_fv threadStatusParser
+  status_fv        <- expectRight =<<
+                      evalApplicationIO thread_status_fv (castForeignRef threadIdRef)
+  status_parsed    <- obtainParsedTerm "ThreadStatus" 2 True anyTy{-..no..-} status_fv threadStatusParser
 
   case status_parsed of
     Left errs -> do
@@ -113,17 +114,16 @@ listAllLiveRemoteThreads = do
   let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
       interp    = hscInterp hsc_env
 
-  liftIO (evalStmt interp eval_opts (EvalThis list_threads_fv))
-    >>= liftIO . handleMultiStatus >>= \case
-      threads_fvs -> catMaybes <$> do
-
-        forM threads_fvs $ \(castForeignRef -> thread_fv) -> do
-          isLive <- isRemoteThreadLive thread_fv
-          if isLive then do
-            tid <- getRemoteThreadId thread_fv
-            pure $ Just (tid, thread_fv)
-          else do
-            pure Nothing
+  threads_fvs <- expectRight =<< handleMultiStatus <$>
+                 liftIO (evalStmt interp eval_opts (EvalThis list_threads_fv))
+  catMaybes <$> do
+    forM threads_fvs $ \(castForeignRef -> thread_fv) -> do
+      isLive <- isRemoteThreadLive thread_fv
+      if isLive then do
+        tid <- getRemoteThreadId thread_fv
+        pure $ Just (tid, thread_fv)
+      else do
+        pure Nothing
 
 -- | Get the label of a Thread in a remote process. Returns one element per
 -- given Thread with @Just string@ if a label was found.
@@ -139,13 +139,14 @@ getRemoteThreadsLabels threadIdRefs = do
   let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
       interp    = hscInterp hsc_env
 
-  forM threadIdRefs $ \threadIdRef -> liftIO $
-    evalStmt interp eval_opts
-      (EvalApp (EvalThis thread_label_fv) (EvalThis (castForeignRef threadIdRef)))
-        >>= handleMultiStatus >>= \case
-          []          -> pure Nothing
-          [io_lbl_fv] -> Just <$> evalString interp io_lbl_fv
-          _ -> fail "Unexpected result from evaluating \"threadLabel\""
+  forM threadIdRefs $ \threadIdRef ->
+    handleMultiStatus <$>
+    liftIO (evalStmt interp eval_opts (EvalApp (EvalThis thread_label_fv) (EvalThis (castForeignRef threadIdRef))))
+      >>= expectRight
+      >>= \case
+        []          -> pure Nothing
+        [io_lbl_fv] -> Just <$> liftIO (evalString interp io_lbl_fv)
+        _ -> liftIO $ fail "Unexpected result from evaluating \"threadLabel\""
 
 -- | Clone the stack of the given remote thread and get the Term
 getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger Term
@@ -159,9 +160,16 @@ getRemoteThreadStackCopy threadIdRef = do
   -- for a stack with interpreter return frames. We would probably also like to
   -- use that.
 
-  stack_frames_fv <- evalApplicationIO thread_stack_fv (castForeignRef threadIdRef)
-
-  liftIO $ cvObtainTerm hsc_env 2 True anyTy{-todo:stackframety-} stack_frames_fv
+  evalApplicationIO thread_stack_fv (castForeignRef threadIdRef)
+    >>= \case
+      Left (EvalRaisedException e) -> do
+        logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace will be returned...")
+        return []
+      Left e -> do
+        logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
+        return []
+      Right stack_frames_fv ->
+        liftIO $ cvObtainTerm hsc_env 2 True anyTy{-todo:stackframety?-} stack_frames_fv
 
 -- | Try to get an IPE stacktrace.
 --
@@ -174,16 +182,24 @@ getRemoteThreadStackCopy threadIdRef = do
 getRemoteThreadIPEStack :: ForeignRef ThreadId -> Debugger [StackEntry]
 getRemoteThreadIPEStack threadIdRef = do
   !ipe_stack_fv <- compileExprRemote "GHC.Stack.CloneStack.decode Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
-  !entries_fvs  <- evalApplicationIOList ipe_stack_fv (castForeignRef threadIdRef)
-  mapM (\entry_fv -> do
-      stack_entry <- obtainParsedTerm "StackEntry" 2 True anyTy{-list of stackentry, but we won't look...-} entry_fv stackEntryParser
-      case stack_entry of
-        Left errs -> do
-          logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
-          liftIO $ fail "Failed to parse @StackEntry@ from decoding thread stack!"
-        Right se ->
-          pure se
-    ) entries_fvs
+  evalApplicationIOList ipe_stack_fv (castForeignRef threadIdRef)
+    >>= \case
+      Left (EvalRaisedException e) -> do
+        logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace could be produced...")
+        return []
+      Left e -> do
+        logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
+        return []
+      Right entries_fvs -> do
+        mapM (\entry_fv -> do
+            stack_entry <- obtainParsedTerm "StackEntry" 2 True anyTy{-list of stackentry, but we won't look...-} entry_fv stackEntryParser
+            case stack_entry of
+              Left errs -> do
+                logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
+                liftIO $ fail "Failed to parse @StackEntry@ from decoding thread stack!"
+              Right se ->
+                pure se
+          ) entries_fvs
 
 --------------------------------------------------------------------------------
 -- * TermParsers

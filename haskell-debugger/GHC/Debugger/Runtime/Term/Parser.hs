@@ -5,6 +5,7 @@ module GHC.Debugger.Runtime.Term.Parser where
 
 import Control.Applicative
 import Control.Monad
+import Control.Exception
 
 import GHC
 import GHC.Driver.Env
@@ -23,6 +24,7 @@ import GHC.Stack
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Runtime.Eval
+import GHC.Debugger.Utils (expectRight)
 
 -- | The main entry point for running the 'TermParser'.
 obtainParsedTerm
@@ -289,7 +291,7 @@ stringParser = do
   Term{val=string_fv} <- anyTerm
   liftDebugger $ do
     pure_fv      <- compileExprRemote "(pure @IO) :: String -> IO String"
-    string_io_fv <- evalApplication pure_fv string_fv
+    string_io_fv <- expectRight =<< evalApplication pure_fv string_fv
     hsc_env      <- getSession
     liftIO $ evalString (hscInterp hsc_env) string_io_fv
 
@@ -356,7 +358,7 @@ programTermParser =
       let fref1 = val p1
       let fref2 = val p2
       let (_, _arg_ty, res_ty) = splitFunTy (termType p1)
-      res <- liftDebugger $ evalApplication fref1 fref2
+      res <- liftDebugger $ expectRight =<< evalApplication fref1 fref2
       foreignValueToTerm res_ty res
 
     programBranchParser = do
