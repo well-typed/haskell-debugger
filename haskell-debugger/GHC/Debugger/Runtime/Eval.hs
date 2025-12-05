@@ -7,6 +7,8 @@ import GHC.Runtime.Interpreter as Interp
 import Control.Monad.Reader
 import GHC.Driver.Config
 import GHCi.RemoteTypes
+import GHCi.Message
+import Control.Exception
 
 import GHC.Debugger.Monad
 
@@ -16,7 +18,7 @@ import GHC.Debugger.Monad
 
 -- | Evaluate `f x` for any @f :: a -> b@ and any @x :: a@.
 -- The result is the foreign reference to a heap value of type @b@
-evalApplication :: ForeignHValue -> ForeignHValue -> Debugger ForeignHValue
+evalApplication :: ForeignHValue -> ForeignHValue -> Debugger (Either BadEvalStatus ForeignHValue)
 evalApplication fref aref = do
   hsc_env <- getSession
   mk_list_fv <- compileExprRemote "(pure @IO . (:[])) :: a -> IO [a]"
@@ -24,12 +26,13 @@ evalApplication fref aref = do
   let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
       interp = hscInterp hsc_env
 
-  liftIO (evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref)))
-    >>= liftIO . handleSingStatus
+  handleSingStatus <$> liftIO (
+    evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref))
+    )
 
 -- | Evaluate `f x` for any @f :: a -> IO b@ and any @x :: a@.
 -- The result is the foreign reference to a heap value of type @b@ (the IO action is executed)
-evalApplicationIO :: ForeignHValue -> ForeignHValue -> Debugger ForeignHValue
+evalApplicationIO :: ForeignHValue -> ForeignHValue -> Debugger (Either BadEvalStatus ForeignHValue)
 evalApplicationIO fref aref = do
   hsc_env <- getSession
   fmap_list_fv <- compileExprRemote "(fmap (:[])) :: IO a -> IO [a]"
@@ -37,43 +40,53 @@ evalApplicationIO fref aref = do
   let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
       interp = hscInterp hsc_env
 
-  liftIO (evalStmt interp eval_opts $ (EvalThis fmap_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref)))
-    >>= liftIO . handleSingStatus
+  handleSingStatus <$> liftIO (evalStmt interp eval_opts $ (EvalThis fmap_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref)))
 
 -- | Evaluate `f x` for any @f :: a -> IO [b]@ and any @x :: a@.
 -- The result is a list of foreign references to the heap values returned in the list of @b@s (the IO action is executed)
-evalApplicationIOList :: ForeignHValue -> ForeignHValue -> Debugger [ForeignHValue]
+evalApplicationIOList :: ForeignHValue -> ForeignHValue -> Debugger (Either BadEvalStatus [ForeignHValue])
 evalApplicationIOList fref aref = do
   hsc_env <- getSession
 
   let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
       interp = hscInterp hsc_env
 
-  liftIO (evalStmt interp eval_opts $ (EvalThis fref) `EvalApp` (EvalThis aref))
-    >>= liftIO . handleMultiStatus
+  handleMultiStatus <$> liftIO (evalStmt interp eval_opts $ (EvalThis fref) `EvalApp` (EvalThis aref))
 
 -- | Handle the 'EvalStatus_' of an evaluation using 'EvalStepNone' which returns a single value
-handleSingStatus :: MonadFail m => EvalStatus_ [ForeignHValue] [HValueRef] -> m ForeignHValue
+handleSingStatus :: EvalStatus_ [ForeignHValue] [HValueRef] -> Either BadEvalStatus ForeignHValue
 handleSingStatus status =
   case status of
-    EvalComplete _ (EvalSuccess [res]) -> pure res
+    EvalComplete _ (EvalSuccess [res]) -> Right res
     EvalComplete _ (EvalSuccess []) ->
-      fail "evaluation did not bind any values"
+      Left EvalReturnedNoResults
     EvalComplete _ (EvalSuccess (_:_:_)) ->
-      fail "evaluation produced more than one value"
+      Left EvalReturnedTooManyResults
     EvalComplete _ (EvalException e) ->
-      fail ("evaluation raised an exception: " ++ show e)
+      Left (EvalRaisedException (fromSerializableException e))
     EvalBreak {} ->
       --TODO: Could we accidentally hit this if we set a breakpoint regardless of whether EvalStep=None? perhaps.
-      fail "evaluation unexpectedly hit a breakpoint"
+      Left EvalHitUnexpectedBreakpoint
 
 -- | Handle the 'EvalStatus_' of an evaluation using 'EvalStepNone' which returns a list of values
-handleMultiStatus :: MonadFail m => EvalStatus_ [ForeignHValue] [HValueRef] -> m [ForeignHValue]
+handleMultiStatus :: EvalStatus_ [ForeignHValue] [HValueRef] -> Either BadEvalStatus [ForeignHValue]
 handleMultiStatus status =
   case status of
-    EvalComplete _ (EvalSuccess res) -> pure res
+    EvalComplete _ (EvalSuccess res) -> Right res
     EvalComplete _ (EvalException e) ->
-      fail ("evaluation raised an exception: " ++ show e)
-      -- TODO?: throwIO (fromSerializableException e)
+      Left (EvalRaisedException (fromSerializableException e))
     EvalBreak {} ->
-      fail "evaluation unexpectedly hit a breakpoint"
+      Left EvalHitUnexpectedBreakpoint
+
+--------------------------------------------------------------------------------
+-- * Exceptions
+--------------------------------------------------------------------------------
+
+data BadEvalStatus
+  = EvalRaisedException SomeException
+  | EvalHitUnexpectedBreakpoint
+  | EvalReturnedNoResults
+  | EvalReturnedTooManyResults
+  deriving Show
+
+instance Exception BadEvalStatus
