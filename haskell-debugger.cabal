@@ -58,12 +58,13 @@ library
     exposed-modules:  GHC.Debugger,
                       GHC.Debugger.Breakpoint,
                       GHC.Debugger.Breakpoint.Map,
-                      GHC.Debugger.Evaluation,
                       GHC.Debugger.Logger,
+                      GHC.Debugger.Run,
                       GHC.Debugger.Stopped,
                       GHC.Debugger.Stopped.Variables,
-                      GHC.Debugger.Utils,
+
                       GHC.Debugger.Runtime,
+                      GHC.Debugger.Runtime.Eval,
                       GHC.Debugger.Runtime.Instances,
                       GHC.Debugger.Runtime.Instances.Discover,
 
@@ -71,7 +72,11 @@ library
                       GHC.Debugger.Runtime.Term.Key,
                       GHC.Debugger.Runtime.Term.Cache,
 
+                      GHC.Debugger.Runtime.Thread,
+                      GHC.Debugger.Runtime.Thread.Map,
+
                       GHC.Debugger.Monad,
+                      GHC.Debugger.Utils,
 
                       GHC.Debugger.Session,
                       GHC.Debugger.Session.Builtin,
@@ -82,6 +87,7 @@ library
                       ghc >= 9.14 && < 9.16, ghci >= 9.14 && < 9.16,
                       ghc-boot-th >= 9.14 && < 9.16,
                       ghc-boot >= 9.14 && < 9.16,
+                      ghc-heap >= 9.14 && < 9.16,
                       array >= 0.5.8 && < 0.6,
                       containers >= 0.7 && < 0.9,
                       mtl >= 2.3 && < 3,
@@ -96,6 +102,7 @@ library
                       aeson >= 2.2.3 && < 2.3,
                       hie-bios >= 0.15 && < 0.18,
                       file-embed >= 0.0.16 && < 0.1,
+                      attoparsec >= 0.13 && < 0.15,
                       -- Logger dependencies
                       time >= 1.14 && < 2,
                       prettyprinter >= 1.7.1 && < 2,

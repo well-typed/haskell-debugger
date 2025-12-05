@@ -26,6 +26,7 @@ import GHC.IO.Encoding
 import Control.Monad.Catch
 import Control.Exception (SomeAsyncException, throwIO)
 import Control.Concurrent
+import GHC.Conc.Sync (labelThread)
 import Control.Monad
 import Data.Aeson as Aeson
 import GHC.Generics
@@ -34,7 +35,7 @@ import System.FilePath
 
 import Development.Debug.Adapter
 import Development.Debug.Adapter.Exit
-import GHC.Debugger.Logger
+import GHC.Debugger.Logger as Logger
 import qualified Development.Debug.Adapter.Output as Output
 
 import qualified GHC.Debugger as Debugger
@@ -167,6 +168,8 @@ initDebugger l supportsRunInTerminal
 -- write to stdout, but always write to the appropiate handle.
 stdoutCaptureThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
 stdoutCaptureThread runInTerminal syncOut withAdaptor = do
+  tid <- myThreadId
+  labelThread tid "Stdin Capture Thread"
   withInterceptedStdout $ \_ interceptedStdout -> do
     forever $ do
       line <- liftIO $ T.hGetLine interceptedStdout
@@ -179,6 +182,8 @@ stdoutCaptureThread runInTerminal syncOut withAdaptor = do
 -- | Like 'stdoutCaptureThread' but for stderr
 stderrCaptureThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
 stderrCaptureThread runInTerminal syncErr withAdaptor = do
+  tid <- myThreadId
+  labelThread tid "Stderr Capture Thread"
   withInterceptedStderr $ \_ interceptedStderr -> do
     forever $ do
       line <- liftIO $ T.hGetLine interceptedStderr
@@ -198,6 +203,8 @@ instance Exception FailedToWriteToAdaptor
 
 stdinForwardThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
 stdinForwardThread runInTerminal syncIn _withAdaptor = do
+  tid <- myThreadId
+  labelThread tid "Stdin Forward Thread"
   when runInTerminal $ do
     -- We need to hijack stdin to write to it
 
@@ -257,7 +264,16 @@ debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{.
 
   catches
     (do
-      Debugger.runDebugger (cmapWithSev DebuggerMonadLog recorder) writeDebuggerOutput rootDir componentDir libdir units ghcInvocation extraGhcArgs mainFp runConf $ do
+      -- The logger should log things starting from Info to the debugger output
+      -- handle as well, so the user sees it in the Console.
+      debugAdapterLogger <- handleLogger writeDebuggerOutput
+      let final_logger = cmapWithSev DebuggerMonadLog recorder <>
+                         applyVerbosity (Verbosity Logger.Info)
+                          (cmap renderPrettyWithSeverity (fromCologAction debugAdapterLogger))
+      Debugger.runDebugger final_logger writeDebuggerOutput rootDir componentDir libdir units ghcInvocation extraGhcArgs mainFp runConf $ do
+        liftIO $ do
+          tid <- myThreadId
+          labelThread tid "Main Debugger Thread"
         liftIO $ signalInitialized (Right ())
         forever $ do
           req <- takeMVar requests & liftIO

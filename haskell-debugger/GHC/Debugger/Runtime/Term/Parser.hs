@@ -5,6 +5,7 @@ module GHC.Debugger.Runtime.Term.Parser where
 
 import Control.Applicative
 import Control.Monad
+import Control.Exception
 
 import GHC
 import GHC.Driver.Env
@@ -19,13 +20,11 @@ import qualified GHC.Debugger.Logger as Logger
 import GHC.Utils.Outputable (text, (<+>), ppr)
 import Control.Monad.Reader
 import GHC.Core.TyCo.Compare
-import GHC.Driver.Config
 import GHC.Stack
-import GHCi.RemoteTypes
-
-
 
 import GHC.Debugger.Monad
+import GHC.Debugger.Runtime.Eval
+import GHC.Debugger.Utils (expectRight)
 
 -- | The main entry point for running the 'TermParser'.
 obtainParsedTerm
@@ -210,6 +209,14 @@ newtypeWrapParser = do
     NewtypeWrap{wrapped_term} -> pure wrapped_term
     other -> parseError (TermParseError $ "expected NewtypeWrap, got " <> termTag other)
 
+-- | Parse a primitive value as a single word (Prim term)
+primParser :: TermParser Word
+primParser = do
+  t <- anyTerm
+  case t of
+    Prim{valRaw=[w64_tid]} -> pure w64_tid
+    other -> parseError (TermParseError $ "expected a Prim term, got " <> termTag other)
+
 -- | Is the current focus a suspension?
 isSuspension :: TermParser Bool
 isSuspension = focus refreshTerm $ do
@@ -227,34 +234,6 @@ foreignValueToTerm ty fhv =
   liftDebugger $ do
     hsc_env <- getSession
     liftIO $ cvObtainTerm hsc_env 2 False ty fhv
-
---------------------------------------------------------------------------------
--- * Evaluation
---------------------------------------------------------------------------------
-
--- | Evaluate `f x`.
-evalApplication :: ForeignHValue -> ForeignHValue -> Debugger (EvalStatus_ [ForeignHValue] [HValueRef])
-evalApplication fref aref = do
-  hsc_env <- getSession
-  mk_list_fv <- compileExprRemote "(pure @IO . (:[])) :: a -> IO [a]"
-
-  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-      interp = hscInterp hsc_env
-
-  liftIO $ (evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref)))
-
-handleStatusParser :: EvalStatus_ [ForeignHValue] [HValueRef] -> TermParser ForeignHValue
-handleStatusParser status =
-  case status of
-    EvalComplete _ (EvalSuccess [res]) -> pure res
-    EvalComplete _ (EvalSuccess []) ->
-      parseError (TermParseError "evaluation did not bind any values")
-    EvalComplete _ (EvalSuccess (_:_:_)) ->
-      parseError (TermParseError "evaluation produced more than one value")
-    EvalComplete _ (EvalException e) ->
-      parseError (TermParseError ("evaluation raised an exception: " ++ show e))
-    EvalBreak {} ->
-      parseError (TermParseError "evaluation unexpectedly hit a breakpoint")
 
 --------------------------------------------------------------------------------
 -- * Logging parsers
@@ -302,6 +281,20 @@ parseList item_parser =
         (matchConstructorTerm "[]" *> pure [])
     <|> (matchConstructorTerm ":" *> ((:) <$> subtermWith 0 item_parser <*> subtermWith 1 (parseList item_parser)))
 
+-- | Parse an 'Int'
+intParser :: TermParser Int
+intParser = fromIntegral <$> subtermWith 0 primParser
+
+-- | God...
+stringParser :: TermParser String
+stringParser = do
+  Term{val=string_fv} <- anyTerm
+  liftDebugger $ do
+    pure_fv      <- compileExprRemote "(pure @IO) :: String -> IO String"
+    string_io_fv <- expectRight =<< evalApplication pure_fv string_fv
+    hsc_env      <- getSession
+    liftIO $ evalString (hscInterp hsc_env) string_io_fv
+
 --------------------------------------------------------------------------------
 -- * VarValue
 --------------------------------------------------------------------------------
@@ -328,7 +321,6 @@ varFieldsParser =
     -- Parses an item of type (IO String, VarFieldValue)
     parseFieldItem :: TermParser (String, Term)
     parseFieldItem = (,) <$> subtermWith 0 parseFieldLabel <*> subtermWith 1 varFieldValueParser
-
 
     parseFieldLabel :: TermParser String
     parseFieldLabel = do
@@ -366,8 +358,7 @@ programTermParser =
       let fref1 = val p1
       let fref2 = val p2
       let (_, _arg_ty, res_ty) = splitFunTy (termType p1)
-      eval_status <- liftDebugger $ evalApplication fref1 fref2
-      res <- handleStatusParser eval_status
+      res <- liftDebugger $ expectRight =<< evalApplication fref1 fref2
       foreignValueToTerm res_ty res
 
     programBranchParser = do
