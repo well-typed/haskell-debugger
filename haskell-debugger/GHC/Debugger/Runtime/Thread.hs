@@ -16,7 +16,6 @@ module GHC.Debugger.Runtime.Thread
 import Data.Maybe
 import Data.Functor
 import Control.Applicative
-import Control.Exception
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class

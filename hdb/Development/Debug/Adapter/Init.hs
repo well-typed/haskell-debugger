@@ -35,7 +35,7 @@ import System.FilePath
 
 import Development.Debug.Adapter
 import Development.Debug.Adapter.Exit
-import GHC.Debugger.Logger
+import GHC.Debugger.Logger as Logger
 import qualified Development.Debug.Adapter.Output as Output
 
 import qualified GHC.Debugger as Debugger
@@ -264,7 +264,13 @@ debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{.
 
   catches
     (do
-      Debugger.runDebugger (cmapWithSev DebuggerMonadLog recorder) writeDebuggerOutput rootDir componentDir libdir units ghcInvocation extraGhcArgs mainFp runConf $ do
+      -- The logger should log things starting from Info to the debugger output
+      -- handle as well, so the user sees it in the Console.
+      debugAdapterLogger <- handleLogger writeDebuggerOutput
+      let final_logger = cmapWithSev DebuggerMonadLog recorder <>
+                         applyVerbosity (Verbosity Logger.Info)
+                          (cmap renderPrettyWithSeverity (fromCologAction debugAdapterLogger))
+      Debugger.runDebugger final_logger writeDebuggerOutput rootDir componentDir libdir units ghcInvocation extraGhcArgs mainFp runConf $ do
         liftIO $ do
           tid <- myThreadId
           labelThread tid "Main Debugger Thread"
