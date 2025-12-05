@@ -1,4 +1,5 @@
 {-# LANGUAGE OrPatterns #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
 -- |
@@ -8,8 +9,6 @@ module GHC.Debugger.Runtime.Thread
   ( getRemoteThreadIdFromRemoteContext
   , getRemoteThreadId
   , getRemoteThreadsLabels
-  , getRemoteThreadStackCopy
-  , getRemoteThreadIPEStack
   , listAllLiveRemoteThreads
   ) where
 
@@ -22,13 +21,10 @@ import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.IORef
 import GHC.Conc.Sync
-import GHC.Stack.CloneStack
-import GHC.Exts.Heap.ClosureTypes
 
 import GHC
 import GHC.Builtin.Types
 import GHC.Runtime.Heap.Inspect
-
 import GHC.Driver.Config
 import GHC.Driver.Env
 import GHC.Runtime.Interpreter as Interp
@@ -135,6 +131,7 @@ getRemoteThreadsLabels threadIdRefs = do
                                            . GHC.Conc.Sync.threadLabel \
                                             ) :: GHC.Conc.Sync.ThreadId -> IO [IO String]"
 
+  -- TODO: Refactor to use Debugger.Runtime.Eval
   let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
       interp    = hscInterp hsc_env
 
@@ -147,62 +144,11 @@ getRemoteThreadsLabels threadIdRefs = do
         [io_lbl_fv] -> Just <$> liftIO (evalString interp io_lbl_fv)
         _ -> liftIO $ fail "Unexpected result from evaluating \"threadLabel\""
 
--- | Clone the stack of the given remote thread and get the Term
-getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger Term
-getRemoteThreadStackCopy threadIdRef = do
-  hsc_env <- getSession
-
-  thread_stack_fv <- compileExprRemote "GHC.Exts.Stack.decodeStack Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
-
-  -- TODO: Currently, GHC.Stack.CloneStack.decode, which uses the IPE
-  -- information to report source locations of the callstacks, does not work
-  -- for a stack with interpreter return frames. We would probably also like to
-  -- use that.
-
-  evalApplicationIO thread_stack_fv (castForeignRef threadIdRef)
-    >>= \case
-      Left (EvalRaisedException e) -> do
-        logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace will be returned...")
-        return []
-      Left e -> do
-        logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
-        return []
-      Right stack_frames_fv ->
-        liftIO $ cvObtainTerm hsc_env 2 True anyTy{-todo:stackframety?-} stack_frames_fv
-
--- | Try to get an IPE stacktrace.
---
--- At the moment, we assume IPE stacktraces are always empty @[]@ for threads
--- with interpreter frames.
---
--- Really, as long as there is IPE information, this function should return
--- StackEntries for all frames, including the interpreter ones, since these are
--- typically be interleaved with "normal" frames.
-getRemoteThreadIPEStack :: ForeignRef ThreadId -> Debugger [StackEntry]
-getRemoteThreadIPEStack threadIdRef = do
-  !ipe_stack_fv <- compileExprRemote "GHC.Stack.CloneStack.decode Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
-  evalApplicationIOList ipe_stack_fv (castForeignRef threadIdRef)
-    >>= \case
-      Left (EvalRaisedException e) -> do
-        logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace could be produced...")
-        return []
-      Left e -> do
-        logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
-        return []
-      Right entries_fvs -> do
-        mapM (\entry_fv -> do
-            stack_entry <- obtainParsedTerm "StackEntry" 2 True anyTy{-list of stackentry, but we won't look...-} entry_fv stackEntryParser
-            case stack_entry of
-              Left errs -> do
-                logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
-                liftIO $ fail "Failed to parse @StackEntry@ from decoding thread stack!"
-              Right se ->
-                pure se
-          ) entries_fvs
-
 --------------------------------------------------------------------------------
 -- * TermParsers
 --------------------------------------------------------------------------------
+
+-- ** Threads ------------------------------------------------------------------
 
 threadStatusParser :: TermParser ThreadStatus
 threadStatusParser = do
@@ -220,6 +166,3 @@ blockedReasonParser = do
     <|> (matchConstructorTerm "BlockedOnForeignCall" $> BlockedOnForeignCall)
     <|> (matchConstructorTerm "BlockedOnOther"       $> BlockedOnOther)
 
-stackEntryParser :: TermParser StackEntry
-stackEntryParser = do
-    StackEntry <$> subtermWith 0 stringParser <*> subtermWith 1 stringParser <*> subtermWith 2 stringParser <*> pure INVALID_OBJECT{-this is a stub-}

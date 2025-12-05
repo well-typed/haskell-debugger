@@ -27,6 +27,7 @@ import qualified GHC.Unit.Home.Graph as HUG
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Thread
+import GHC.Debugger.Runtime.Thread.Stack
 import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
@@ -89,11 +90,12 @@ getThreads = do
 --------------------------------------------------------------------------------
 
 -- | Get the stack frames at the point we're stopped at
-getStacktrace :: RemoteThreadId -> Debugger [StackFrame]
+getStacktrace :: RemoteThreadId -> Debugger [DbgStackFrame]
 getStacktrace req_tid = do
 
   tm <- liftIO . readIORef =<< asks threadMap
-  ipe_stack <- case lookupThreadMap (remoteThreadIntRef req_tid) tm of
+  let m_f_tid = lookupThreadMap (remoteThreadIntRef req_tid) tm
+  ipe_stack <- case m_f_tid of
     Nothing -> pure []
     Just f_tid -> do
       -- For now, assume that if we can get an IPE backtrace then this thread
@@ -107,29 +109,52 @@ getStacktrace req_tid = do
 
   case ipe_stack of
     [] -> do
+      decoded_frames <- case m_f_tid of
+        Nothing -> pure []
+        Just f_tid -> do
+          hsc_env <- getSession
+          ibis <- getRemoteThreadStackCopy f_tid
+          let hug = hsc_HUG hsc_env
+          forM ibis $ \ibi -> do
+            info_brks <- liftIO $ readIModBreaks hug ibi
+            let modl  = getBreakSourceMod ibi info_brks
+            srcSpan   <- liftIO $ getBreakLoc (readIModModBreaks hug) ibi info_brks
+
+            -- Find function name
+            -- TODO: Cache moduleLineMap?
+            ticks <- fromMaybe (error "getStacktrace:getTicks") <$> makeModuleLineMap modl
+            let current_toplevel_decl = enclosingTickSpan ticks srcSpan
+
+            modl_str  <- display modl
+            return DbgStackFrame
+              { name = modl_str ++ "." -- ++ Stack.functionName stack_entry
+              , sourceSpan = realSrcSpanToSourceSpan $ current_toplevel_decl -- realSrcSpan srcSpan
+              }
+
       -- Try decoding a stack with interpreter continuation frames (RetBCOs) and use the BRK_FUN src locations.
-      GHC.getResumeContext >>= \case
+      -- Add the latest resume context at the head.
+      head_frame <- GHC.getResumeContext >>= \case
         [] ->
           -- See Note [Don't crash if not stopped]
-          return []
+          return Nothing
         r:_
           | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
           -> do
             r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
             if r_tid == req_tid then
               -- We're getting the stacktrace for the thread we're stopped at.
-              return
-                [ StackFrame
+              return $
+                Just DbgStackFrame
                   { name = GHC.resumeDecl r
                   , sourceSpan = realSrcSpanToSourceSpan ss
                   }
-                ]
             else
-             return []
+             return Nothing
           | otherwise ->
               -- No resume span; which should mean we're stopped on an exception.
               -- No info for now.
-              return []
+              return Nothing
+      return (maybe id (:) head_frame $ decoded_frames)
     ipe_frames -> catMaybes <$> do
       forM ipe_frames $ \stack_entry -> do
         case srcSpanStringToSourceSpan (Stack.srcLoc stack_entry) of
@@ -140,13 +165,10 @@ getStacktrace req_tid = do
                                                          Ppr.<> text "\":" <+> text err
             return Nothing
           Right sourceSpan ->
-            return $ Just StackFrame
+            return $ Just DbgStackFrame
               { name = Stack.moduleName stack_entry ++ "." ++ Stack.functionName stack_entry
               , sourceSpan = sourceSpan
               }
-
-  -- x <- getRemoteThreadStackCopy f_tid
-  -- pprTraceM "WHT" (ppr x)
 
 --------------------------------------------------------------------------------
 -- * Scopes
