@@ -166,12 +166,12 @@ getRemoteThreadStackCopy threadIdRef = do
       Right stack_frames_fvs -> fmap catMaybes $
         forM stack_frames_fvs $ \stack_frame_fv ->
           obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} stack_frame_fv
-            stackFrameParser >>= \case
+            ((Just <$> retBCOParser) <|> pure Nothing) >>= \case
               Left errs -> do
                 logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
                 return Nothing
               Right tm ->
-                return (Just tm)
+                return tm
 
 -- | Try to get an IPE stacktrace.
 --
@@ -232,14 +232,21 @@ stackEntryParser :: TermParser StackEntry
 stackEntryParser = do
     StackEntry <$> subtermWith 0 stringParser <*> subtermWith 1 stringParser <*> subtermWith 2 stringParser <*> pure INVALID_OBJECT{-this is a stub-}
 
-stackFrameParser :: TermParser Term
-stackFrameParser = do
-  Suspension{ty, val, ctype, bound_to, infoprov}{-why is it always suspension and does not suffice to `seq` it?-} <- matchConstructorTerm "RetBCO" *> subtermWith 1 (subtermWith 0{-take from box-} anyTerm)
-  pprTraceM "what ty:" $ ppr ty <+> text (show ctype) <+> ppr bound_to <+> text (show infoprov)
+retBCOParser :: TermParser Term
+retBCOParser = do
+  -- Match against "RetBCO" frames and extract the BCOClosure information
+  Suspension{val, ctype=BCO}
+    {-"the otherwise case: Unknown closure", hence Suspension-}
+      <- matchConstructorTerm "RetBCO" *> subtermWith 1 (subtermWith 0{-take from Box-} anyTerm)
   liftDebugger $ do
+
+    -- Decode the BCO closure using 'getClosureData' on the foreign heap
+    get_closure_fv <- compileExprRemote "GHC.Exts.Heap.getClosureData"
+    bco_closure_fv <- expectRight =<< evalApplicationIO get_closure_fv val
+
     hsc_env <- getSession
-    bcoFVal <- expectRight =<< evalThis val
-    x <- liftIO $ cvObtainTerm hsc_env maxBound True anyTy bcoFVal
-    pprTraceM "did obtain" (ppr x)
+    x <- liftIO $ cvObtainTerm hsc_env maxBound True anyTy bco_closure_fv
+    -- pprTraceM "did obtain" (ppr x)
+
     return x
 
