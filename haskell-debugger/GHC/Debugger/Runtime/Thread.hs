@@ -24,7 +24,6 @@ import Data.IORef
 import GHC.Conc.Sync
 import GHC.Stack.CloneStack
 import GHC.Exts.Heap.ClosureTypes
-import GHC.Exts.Heap.Closures (GenStackFrame(..))
 
 import GHC
 import GHC.Builtin.Types
@@ -150,7 +149,7 @@ getRemoteThreadsLabels threadIdRefs = do
 
 -- | Clone the stack of the given remote thread and get the Term
 -- TODO: Rename to refer to it returning the RetBCOs
-getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [Term]
+getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [Maybe BCOBreakPointInfo]
 getRemoteThreadStackCopy threadIdRef = do
   thread_stack_fv <- compileExprRemote "fmap GHC.Exts.Heap.Closures.ssc_stack . \
                                           GHC.Exts.Stack.decodeStack Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
@@ -232,7 +231,7 @@ stackEntryParser :: TermParser StackEntry
 stackEntryParser = do
     StackEntry <$> subtermWith 0 stringParser <*> subtermWith 1 stringParser <*> subtermWith 2 stringParser <*> pure INVALID_OBJECT{-this is a stub-}
 
-retBCOParser :: TermParser Term
+retBCOParser :: TermParser (Maybe BCOBreakPointInfo)
 retBCOParser = do
   -- Match against "RetBCO" frames and extract the BCOClosure information
   Suspension{val, ctype=BCO}
@@ -244,9 +243,59 @@ retBCOParser = do
     get_closure_fv <- compileExprRemote "GHC.Exts.Heap.getClosureData"
     bco_closure_fv <- expectRight =<< evalApplicationIO get_closure_fv val
 
+    obtainParsedTerm "BCO BRK_FUN info" 2 True anyTy bco_closure_fv bcoBreakPointInfoParser >>= \case
+      Left err -> liftIO $ fail (show err)
+      Right Nothing -> return Nothing
+      Right (Just (BCOBreakPointInfo _brk_arr_ix info_mod_name_ix info_mod_id_ix info_ix)) -> do
+        obtainParsedTerm "BCO literals" 2 True anyTy bco_closure_fv (bcoLiteral info_mod_name_ix) >>= \case
+
+--------------------------------------------------------------------------------
+-- BCOs
+
+data BCOBreakPointInfo = BCOBreakPointInfo
+  { brk_array_ix     :: Int
+  , info_mod_name_ix :: Int
+  , info_mod_id_ix   :: Int
+  , brk_info_ix      :: Int
+  }
+  deriving Show
+
+-- | Parse a literal from a BCO given a valid index into the literals array
+bcoLiteral :: Int -> TermParser Term
+bcoLiteral ix = do
+  -- Term{val} <- anyTerm
+  -- liftDebugger $ do
+  --   hsc_env <- getSession
+  --   pprTraceM "hi" . ppr =<< liftIO (cvObtainTerm hsc_env maxBound True anyTy val)
+  --   liftIO $ fail "HI"
+  literals_fv <- subtermWith 2 (subtermWith 0{-Unbox-} anyTerm)
+
+-- | Parses a 'BCOBreakPoint' if the current term is a 'BCOClosure' headed by a
+-- BRK_FUN bytecode instruction.
+-- Returns Nothing if the 'BCOClosure' instructions are headed by a BRK_FUN.
+bcoBreakPointInfoParser :: TermParser (Maybe BCOBreakPointInfo)
+bcoBreakPointInfoParser = do
+  Term{val=instrs_array_fv} <- subtermWith 1{-instrs field-} (subtermWith 0{-Box's field-} anyTerm)
+  -- highly internals dependent...
+  -- find the BCI at index 0. bci is word16. the first 8bits are for flags
+  -- something something BCO_READ_LARGE_ARG with (index_at 0#) rather than always BCO_NEXT?
+  liftDebugger $ do
+    find_ixs_fv <- compileExprRemote
+      "\\x -> let index_at n = GHC.Word.W16# (GHC.Base.indexWord16Array# x n) \
+               in if (index_at 0# Data.Bits..&. 0xFF) == 66{-bci_BRK_FUN-} then \
+                    Just (index_at 1#, index_at 2#, index_at 3#, index_at 4#) \
+                  else Nothing \
+              "
+    rs_fv <- expectRight =<< evalApplication find_ixs_fv instrs_array_fv
+
     hsc_env <- getSession
-    x <- liftIO $ cvObtainTerm hsc_env maxBound True anyTy bco_closure_fv
-    -- pprTraceM "did obtain" (ppr x)
+    pprTraceM "term" . ppr =<< liftIO (cvObtainTerm hsc_env maxBound True anyTy rs_fv) 
 
-    return x
-
+    mparsed_bco_brk <- obtainParsedTerm "Ixs" maxBound True anyTy rs_fv $
+      maybeParser $ BCOBreakPointInfo <$>
+        subtermWith 0 intParser <*> subtermWith 1 intParser <*> subtermWith 2 intParser <*> subtermWith 3 intParser
+    case mparsed_bco_brk of
+      Left errs -> do
+        logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
+        liftIO $ fail "Failed to parse BCOClosure's BRK_FUN"
+      Right r -> return r

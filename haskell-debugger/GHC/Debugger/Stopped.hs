@@ -112,7 +112,7 @@ getStacktrace req_tid = do
         Nothing -> pure []
         Just f_tid -> do
           x <- getRemoteThreadStackCopy f_tid
-          pprTraceM "what" (ppr x)
+          pprTraceM "what" (text $ show x)
           return []
 
       -- Try decoding a stack with interpreter continuation frames (RetBCOs) and use the BRK_FUN src locations.

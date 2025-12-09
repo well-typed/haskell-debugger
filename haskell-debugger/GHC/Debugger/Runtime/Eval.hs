@@ -19,7 +19,17 @@ import GHC.Debugger.Monad
 -- | Evaluate `f x` for any @f :: a -> b@ and any @x :: a@.
 -- The result is the foreign reference to a heap value of type @b@
 evalApplication :: ForeignHValue -> ForeignHValue -> Debugger (Either BadEvalStatus ForeignHValue)
-evalApplication fref aref = do
+evalApplication fref aref = evalApplicationExpr ((EvalThis fref) `EvalApp` (EvalThis aref))
+
+-- | Evaluate `f x y` for any @f :: a -> b ->@ and any @x :: a, y :: b@.
+-- The result is the foreign reference to a heap value of type @c@
+evalApplication2 :: ForeignHValue -> ForeignHValue -> ForeignHValue -> Debugger (Either BadEvalStatus ForeignHValue)
+evalApplication2 fref aref bref = evalApplicationExpr ((EvalThis fref) `EvalApp` (EvalThis aref) `EvalApp` (EvalThis bref))
+
+-- | Evaluate the given 'EvalExpr' of type @b@ in the debuggee process.
+-- The result is the foreign reference to a heap value of type @b@
+evalApplicationExpr :: EvalExpr ForeignHValue -> Debugger (Either BadEvalStatus ForeignHValue)
+evalApplicationExpr eval_expr = do
   hsc_env <- getSession
   mk_list_fv <- compileExprRemote "(pure @IO . (:[])) :: a -> IO [a]"
 
@@ -27,7 +37,7 @@ evalApplication fref aref = do
       interp = hscInterp hsc_env
 
   handleSingStatus <$> liftIO (
-    evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref))
+    evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` eval_expr
     )
 
 -- | Evaluate `f x` for any @f :: a -> IO b@ and any @x :: a@.

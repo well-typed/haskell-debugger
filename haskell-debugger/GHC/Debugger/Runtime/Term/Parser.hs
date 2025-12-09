@@ -3,9 +3,9 @@
 -- interpreting and parsing 'Term's
 module GHC.Debugger.Runtime.Term.Parser where
 
+import Data.Functor
 import Control.Applicative
 import Control.Monad
-import Control.Exception
 
 import GHC
 import GHC.Driver.Env
@@ -215,7 +215,8 @@ primParser = do
   t <- anyTerm
   case t of
     Prim{valRaw=[w64_tid]} -> pure w64_tid
-    other -> parseError (TermParseError $ "expected a Prim term, got " <> termTag other)
+    other -> do
+      parseError (TermParseError $ "expected a Prim term, got " <> termTag other)
 
 -- | Is the current focus a suspension?
 isSuspension :: TermParser Bool
@@ -294,6 +295,12 @@ stringParser = do
     string_io_fv <- expectRight =<< evalApplication pure_fv string_fv
     hsc_env      <- getSession
     liftIO $ evalString (hscInterp hsc_env) string_io_fv
+
+-- | Parse a 'Maybe' something
+maybeParser :: TermParser a -> TermParser (Maybe a)
+maybeParser just_p = do
+  (matchConstructorTerm "Nothing" $> Nothing)
+  <|> (matchConstructorTerm "Just" *> (Just <$> subtermWith 0 just_p))
 
 --------------------------------------------------------------------------------
 -- * VarValue
