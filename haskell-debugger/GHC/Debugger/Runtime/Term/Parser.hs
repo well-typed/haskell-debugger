@@ -161,7 +161,7 @@ subtermTerm idx = do
     Term{subTerms}
       | idx < length subTerms -> do
           liftDebugger $ logSDoc Logger.Debug (ppr subTerms)
-          pure (subTerms !! idx)
+          focus (pure (subTerms !! idx)) refreshTerm
       | otherwise -> parseError (TermParseError $ "missing subterm index " <> show idx)
     other -> parseError (TermParseError $ "expected Term with subterms, got " <> termTag other)
 
@@ -284,17 +284,18 @@ parseList item_parser =
 
 -- | Parse an 'Int'
 intParser :: TermParser Int
-intParser = fromIntegral <$> subtermWith 0 primParser
+intParser = fromIntegral <$> wordParser
 
--- | God...
+-- | Parse a 'Word'
+wordParser :: TermParser Word
+wordParser = subtermWith 0 primParser
+
+-- | Parse a 'String' term
 stringParser :: TermParser String
 stringParser = do
   Term{val=string_fv} <- anyTerm
-  liftDebugger $ do
-    pure_fv      <- compileExprRemote "(pure @IO) :: String -> IO String"
-    string_io_fv <- expectRight =<< evalApplication pure_fv string_fv
-    hsc_env      <- getSession
-    liftIO $ evalString (hscInterp hsc_env) string_io_fv
+  liftDebugger $
+    expectRight =<< evalStringValue string_fv
 
 -- | Parse a 'Maybe' something
 maybeParser :: TermParser a -> TermParser (Maybe a)

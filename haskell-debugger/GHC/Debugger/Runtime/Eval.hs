@@ -1,4 +1,6 @@
--- | Lower-level interface to evaluating things in the (possibly remote) debuggee process
+{-# LANGUAGE LambdaCase #-}
+
+-- | Higher-level interface to evaluating things in the (possibly remote) debuggee process
 module GHC.Debugger.Runtime.Eval where
 
 import GHC
@@ -62,6 +64,16 @@ evalApplicationIOList fref aref = do
       interp = hscInterp hsc_env
 
   handleMultiStatus <$> liftIO (evalStmt interp eval_opts $ (EvalThis fref) `EvalApp` (EvalThis aref))
+
+-- | Evaluate `x` of type `String` on the debuggee process and return it on the debugger.
+evalStringValue :: ForeignHValue -> Debugger (Either BadEvalStatus String)
+evalStringValue string_fv = do
+  pure_fv      <- compileExprRemote "(pure @IO) :: String -> IO String"
+  evalApplication pure_fv string_fv >>= \case
+    Left err -> return (Left err)
+    Right string_io_fv -> Right <$> do
+      hsc_env <- getSession
+      liftIO $ evalString (hscInterp hsc_env) string_io_fv
 
 -- | Evaluate `x` for any @x :: a@.
 -- The result is the foreign reference to a heap value of type @a@

@@ -111,9 +111,18 @@ getStacktrace req_tid = do
       decoded_frames <- case m_f_tid of
         Nothing -> pure []
         Just f_tid -> do
-          x <- getRemoteThreadStackCopy f_tid
-          pprTraceM "what" (text $ show x)
-          return []
+          hsc_env <- getSession
+          ibis <- getRemoteThreadStackCopy f_tid
+          let hug = hsc_HUG hsc_env
+          forM ibis $ \ibi -> do
+            info_brks <- liftIO $ readIModBreaks hug ibi
+            let modl  = getBreakSourceMod ibi info_brks
+            srcSpan   <- liftIO $ getBreakLoc (readIModModBreaks hug) ibi info_brks
+            modl_str  <- display modl
+            return DbgStackFrame
+              { name = modl_str ++ "." -- ++ Stack.functionName stack_entry
+              , sourceSpan = realSrcSpanToSourceSpan $ realSrcSpan srcSpan
+              }
 
       -- Try decoding a stack with interpreter continuation frames (RetBCOs) and use the BRK_FUN src locations.
       -- Add the latest resume context at the head.
