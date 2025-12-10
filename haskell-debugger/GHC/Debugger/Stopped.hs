@@ -27,6 +27,7 @@ import qualified GHC.Unit.Home.Graph as HUG
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Thread
+import GHC.Debugger.Runtime.Thread.Stack
 import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
@@ -118,10 +119,16 @@ getStacktrace req_tid = do
             info_brks <- liftIO $ readIModBreaks hug ibi
             let modl  = getBreakSourceMod ibi info_brks
             srcSpan   <- liftIO $ getBreakLoc (readIModModBreaks hug) ibi info_brks
+
+            -- Find function name
+            -- TODO: Cache moduleLineMap?
+            ticks <- fromMaybe (error "getStacktrace:getTicks") <$> makeModuleLineMap modl
+            let current_toplevel_decl = enclosingTickSpan ticks srcSpan
+
             modl_str  <- display modl
             return DbgStackFrame
               { name = modl_str ++ "." -- ++ Stack.functionName stack_entry
-              , sourceSpan = realSrcSpanToSourceSpan $ realSrcSpan srcSpan
+              , sourceSpan = realSrcSpanToSourceSpan $ current_toplevel_decl -- realSrcSpan srcSpan
               }
 
       -- Try decoding a stack with interpreter continuation frames (RetBCOs) and use the BRK_FUN src locations.

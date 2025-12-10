@@ -173,7 +173,7 @@ doLocalStep = do
       GHC.resumeExec SingleStep Nothing >>= handleExecResult
     Just loc -> do
       md <- fromMaybe (error "doLocalStep") <$> getCurrentBreakModule
-      -- TODO: Cache moduleLineMap.
+      -- TODO: Cache moduleLineMap?
       ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
       let current_toplevel_decl = enclosingTickSpan ticks loc
       GHC.resumeExec (LocalStep (RealSrcSpan current_toplevel_decl mempty)) Nothing >>= handleExecResult
