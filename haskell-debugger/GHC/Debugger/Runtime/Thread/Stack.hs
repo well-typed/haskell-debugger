@@ -35,9 +35,11 @@ import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Monad
 import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Runtime.Eval
+import GHC.Debugger.Runtime.Eval.RemoteExpr (RemoteExpr)
+import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 
-remCloneThreadStack :: ForeignRef ThreadId -> RemoteExpr StackSnapshot
-remCloneThreadStack r = RemVar (mkModuleName "GHC.Stack.CloneStack") "cloneThreadStack" `RemApp` RemRef r
+remote_cloneThreadStack :: RemoteExpr (ThreadId -> IO StackSnapshot)
+remote_cloneThreadStack = Remote.var (mkModuleName "GHC.Stack.CloneStack") "cloneThreadStack"
 
 -- | Clone the stack of the given remote thread and get the breakpoint ids of available frames
 getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [InternalBreakpointId]
@@ -45,28 +47,28 @@ getRemoteThreadStackCopy threadIdRef = do
   thread_stack_fv <- compileExprRemote "fmap GHC.Exts.Heap.Closures.ssc_stack . \
                                           GHC.Exts.Stack.decodeStack Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
   evalApplicationIOList thread_stack_fv (castForeignRef threadIdRef)
-  -- -- evalIOList :: RemoteExpr (IO [a]) -> Debugger [ForeignHValue] ---- [pointer to debuggee heap]
-  -- evalIOList $ do
-  --   clonedStack <- remCloneThreadStack (RemoteRef threadIdRef)
-  --   frames      <- decodeStack clonedStack
-  --   return (ssc_stack `RemApp` frames)
-  --
-    >>= \case
-      Left (EvalRaisedException e) -> do
-        logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace will be returned...")
-        return []
-      Left e -> do
-        logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
-        return []
-      Right stack_frames_fvs -> fmap (catMaybes . catMaybes) $
-        forM stack_frames_fvs $ \stack_frame_fv ->
-          obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} stack_frame_fv
-            ((Just <$> retBCOParser) <|> pure Nothing) >>= \case
-              Left errs -> do
-                logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
-                return Nothing
-              Right tm ->
-                return tm
+
+  l <- evalIOList $ do
+    clonedStack <- remCloneThreadStack (RemoteRef threadIdRef)
+    frames      <- decodeStack clonedStack
+    return (ssc_stack `RemApp` frames)
+
+  case l of
+    Left (EvalRaisedException e) -> do
+      logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace will be returned...")
+      return []
+    Left e -> do
+      logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
+      return []
+    Right stack_frames_fvs -> fmap (catMaybes . catMaybes) $
+      forM stack_frames_fvs $ \stack_frame_fv ->
+        obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} stack_frame_fv
+          ((Just <$> retBCOParser) <|> pure Nothing) >>= \case
+            Left errs -> do
+              logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
+              return Nothing
+            Right tm ->
+              return tm
 
 -- | Try to get an IPE stacktrace.
 --
