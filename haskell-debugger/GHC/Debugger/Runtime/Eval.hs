@@ -1,8 +1,13 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase, DataKinds, TypeFamilies #-}
 
 -- | Higher-level interface to evaluating things in the (possibly remote) debuggee process
 module GHC.Debugger.Runtime.Eval where
 
+import GHC.TypeError
+import GHC.TypeLits
+import Data.Typeable
+import Data.String
+import qualified Data.List as L
 import GHC
 import GHC.Driver.Env
 import GHC.Runtime.Interpreter as Interp
@@ -13,9 +18,81 @@ import GHCi.Message
 import Control.Exception
 
 import GHC.Debugger.Monad
+import GHC.Debugger.Utils
 
 --------------------------------------------------------------------------------
--- * Evaluation on Foreign Heap Values
+-- * Higher-level: eDSL for (possibly) remote evaluation on the debuggee
+--------------------------------------------------------------------------------
+
+data RemoteExpr t where
+  -- | A top-level or in-another-module name (aka external name) in the debuggee process.
+  RemVar   :: Typeable a => ModuleName -> String -> RemoteExpr a
+
+  -- | A reference to a value in the debuggee heap
+  RemRef   :: ForeignRef a -> RemoteExpr a
+
+  -- | Apply a remote function to a remote argument to get a remote result
+  RemApp   :: (Typeable a) => RemoteExpr (a -> b) -> RemoteExpr a -> RemoteExpr b
+
+  -- | IO monadic bind on the remote process
+  RemBind  :: RemoteExpr (IO a) -> (RemoteExpr a -> RemoteExpr (IO b)) -> RemoteExpr (IO b)
+
+  -- | IO pure on the remote process
+  RemPure  :: RemoteExpr a      -> RemoteExpr (IO a)
+
+x <- (something :: RemoteExpr a)
+f x , f :: (a{-remote-} -> RemoteExpr{-guards that the `a` doesn't escape to debugger-} a)
+
+
+(>>=) :: RemoteExpr (IO a) -> (RemoteExpr a -> RemoteExpr (IO b)) -> RemoteExpr (IO b)
+
+remote_cloneThreadStack :: ForeignRef ThreadId -> RemoteExprM (IO StackSnapshot)
+remote_cloneThreadStack r =
+  RemVar (mkModuleName "GHC.Stack.CloneStack") "cloneThreadStack" `RemApp` RemRef r
+
+{-
+Evaluate a 'RemoteExprM' of a remote @IO [a]@ and return a list of
+'ForeignHValue' with one element per returned @a@.
+
+=== __Example__
+
+@
+evalIOList $ RemoteExpr.do
+  clonedStack :: RemoteExpr a <- remote_cloneThreadStack threadIdRef :: RemoteExpr (IO a)
+  frames      <- remote_decodeStack      clonedStack
+  return (remote_ssc_stack frames)
+@
+-}
+evalIOList :: RemoteExprM (IO [a]) -> Debugger [ForeignHValue]
+evalIOList
+
+
+--------------------------------------------------------------------------------
+
+instance Typeable a => Show (RemoteExpr a) where
+  show (RemVar mod_name var_name) = moduleNameString mod_name ++ "." ++ var_name ++ " :: " ++ show (typeOf (undefined :: a))
+  show (RemRef _)                 = "RemRef <foreign ref>"
+  show (RemApp a b)               = "RemApp (" ++ show a ++ ") (" ++ show b ++ ")"
+
+-- | Get the foreign reference to a heap value of type @a@ in the debuggee process from the given remote expr.
+-- This function does not serve to get a remote lambda (@RemoteExpr (a -> b)@).
+debuggeeHValue :: forall a. Typeable a => RemoteExpr a -> Debugger (ForeignRef a)
+debuggeeHValue expr = case expr of
+  RemVar mod_name var_name -> do
+    -- TODO: Lookup mod_var var_name and type in a cache first rather than compile.
+    fhv <- compileExprRemote (moduleNameString mod_name ++ "." ++ var_name ++ " :: " ++ show (typeOf (undefined :: a)))
+    return (castForeignRef fhv)
+  RemRef ref -> return ref
+  RemApp f arg -> do
+    arg_fv <- debuggeeHValue arg
+    f_fv   <- debuggeeHValue arg
+    r <- expectRight =<< evalApplication (castForeignRef f_fv) (castForeignRef arg_fv)
+    return (castForeignRef r)
+
+debuggeeEvalIOList = undefined
+
+--------------------------------------------------------------------------------
+-- * Lower-level: Evaluation on Foreign Heap Values
 --------------------------------------------------------------------------------
 
 -- | Evaluate `f x` for any @f :: a -> b@ and any @x :: a@.

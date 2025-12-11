@@ -36,13 +36,21 @@ import GHC.Debugger.Monad
 import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Runtime.Eval
 
+remCloneThreadStack :: ForeignRef ThreadId -> RemoteExpr StackSnapshot
+remCloneThreadStack r = RemVar (mkModuleName "GHC.Stack.CloneStack") "cloneThreadStack" `RemApp` RemRef r
+
 -- | Clone the stack of the given remote thread and get the breakpoint ids of available frames
 getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [InternalBreakpointId]
 getRemoteThreadStackCopy threadIdRef = do
   thread_stack_fv <- compileExprRemote "fmap GHC.Exts.Heap.Closures.ssc_stack . \
                                           GHC.Exts.Stack.decodeStack Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
-
   evalApplicationIOList thread_stack_fv (castForeignRef threadIdRef)
+  -- -- evalIOList :: RemoteExpr (IO [a]) -> Debugger [ForeignHValue] ---- [pointer to debuggee heap]
+  -- evalIOList $ do
+  --   clonedStack <- remCloneThreadStack (RemoteRef threadIdRef)
+  --   frames      <- decodeStack clonedStack
+  --   return (ssc_stack `RemApp` frames)
+  --
     >>= \case
       Left (EvalRaisedException e) -> do
         logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace will be returned...")
