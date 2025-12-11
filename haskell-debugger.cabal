@@ -65,6 +65,8 @@ library
 
                       GHC.Debugger.Runtime,
                       GHC.Debugger.Runtime.Eval,
+                      GHC.Debugger.Runtime.Eval.RemoteExpr,
+                      GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin,
                       GHC.Debugger.Runtime.Instances,
                       GHC.Debugger.Runtime.Instances.Discover,
 

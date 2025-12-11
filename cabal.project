@@ -2,7 +2,6 @@ packages: . haskell-debugger-view
 
 allow-newer: ghc-bignum,containers,time,ghc,base,template-haskell
 
-ghc-options: -finfo-table-map
 package *
     ghc-options: -finfo-table-map
 
