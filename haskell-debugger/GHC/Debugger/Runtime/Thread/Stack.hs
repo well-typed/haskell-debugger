@@ -1,4 +1,6 @@
 {-# LANGUAGE OrPatterns #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE QualifiedDo #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -35,30 +37,34 @@ import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Monad
 import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Runtime.Eval
+import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
+import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
 
 -- | Clone the stack of the given remote thread and get the breakpoint ids of available frames
 getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [InternalBreakpointId]
 getRemoteThreadStackCopy threadIdRef = do
-  thread_stack_fv <- compileExprRemote "fmap GHC.Exts.Heap.Closures.ssc_stack . \
-                                          GHC.Exts.Stack.decodeStack Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
 
-  evalApplicationIOList thread_stack_fv (castForeignRef threadIdRef)
-    >>= \case
-      Left (EvalRaisedException e) -> do
-        logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace will be returned...")
-        return []
-      Left e -> do
-        logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
-        return []
-      Right stack_frames_fvs -> fmap (catMaybes . catMaybes) $
-        forM stack_frames_fvs $ \stack_frame_fv ->
-          obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} stack_frame_fv
-            ((Just <$> retBCOParser) <|> pure Nothing) >>= \case
-              Left errs -> do
-                logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
-                return Nothing
-              Right tm ->
-                return tm
+  l <- Remote.evalIOList $ Remote.do
+    clonedStack <- Remote.cloneThreadStack (Remote.ref threadIdRef)
+    frames      <- Remote.decodeStack      clonedStack
+    Remote.return (Remote.ssc_stack frames)
+
+  case l of
+    Left (EvalRaisedException e) -> do
+      logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace will be returned...")
+      return []
+    Left e -> do
+      logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
+      return []
+    Right stack_frames_fvs -> fmap (catMaybes . catMaybes) $
+      forM stack_frames_fvs $ \stack_frame_fv ->
+        obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} (castForeignRef stack_frame_fv)
+          ((Just <$> retBCOParser) <|> pure Nothing) >>= \case
+            Left errs -> do
+              logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
+              return Nothing
+            Right tm ->
+              return tm
 
 -- | Try to get an IPE stacktrace.
 --
@@ -71,25 +77,26 @@ getRemoteThreadStackCopy threadIdRef = do
 --
 getRemoteThreadIPEStack :: ForeignRef ThreadId -> Debugger [StackEntry]
 getRemoteThreadIPEStack threadIdRef = do
-  !ipe_stack_fv <- compileExprRemote "GHC.Stack.CloneStack.decode Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
-  evalApplicationIOList ipe_stack_fv (castForeignRef threadIdRef)
-    >>= \case
-      Left (EvalRaisedException e) -> do
-        logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace could be produced...")
-        return []
-      Left e -> do
-        logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
-        return []
-      Right entries_fvs -> do
-        mapM (\entry_fv -> do
-            stack_entry <- obtainParsedTerm "StackEntry" 2 True anyTy{-stackentry, but we won't look at the ty...-} entry_fv stackEntryParser
-            case stack_entry of
-              Left errs -> do
-                logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
-                liftIO $ fail "Failed to parse @StackEntry@ from decoding thread stack!"
-              Right se ->
-                pure se
-          ) entries_fvs
+  l <- Remote.evalIOList $ Remote.do
+    clonedStack <- Remote.cloneThreadStack (Remote.ref threadIdRef)
+    Remote.decode clonedStack
+  case l of
+    Left (EvalRaisedException e) -> do
+      logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace could be produced...")
+      return []
+    Left e -> do
+      logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
+      return []
+    Right entries_fvs -> do
+      mapM (\entry_fv -> do
+          stack_entry <- obtainParsedTerm "StackEntry" 2 True anyTy{-stackentry, but we won't look at the ty...-} entry_fv stackEntryParser
+          case stack_entry of
+            Left errs -> do
+              logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
+              liftIO $ fail "Failed to parse @StackEntry@ from decoding thread stack!"
+            Right se ->
+              pure se
+        ) (map castForeignRef entries_fvs)
 
 --------------------------------------------------------------------------------
 -- ** Decoding Stack Frames ----------------------------------------------------
@@ -108,10 +115,10 @@ retBCOParser = do
   liftDebugger $ do
 
     -- Decode the BCO closure using 'getClosureData' on the foreign heap
-    get_closure_fv <- compileExprRemote "GHC.Exts.Heap.getClosureData"
-    bco_closure_fv <- expectRight =<< evalApplicationIO get_closure_fv val
+    bco_closure_fv <- expectRight =<< Remote.evalIO
+      (Remote.getClosureData (Remote.ref (castForeignRef val)))
 
-    r <- obtainParsedTerm "BCO BRK_FUN info" 2 True anyTy bco_closure_fv bcoInternalBreakpointId
+    r <- obtainParsedTerm "BCO BRK_FUN info" 2 True anyTy (castForeignRef bco_closure_fv) bcoInternalBreakpointId
     case r of
       Left err -> liftIO $ fail (show err)
       Right t  -> return t
@@ -137,13 +144,13 @@ bcoLiteralString :: Word -> TermParser String
 bcoLiteralString ix = do
   Term{val=literals_fv} <- subtermWith 2 (subtermTerm 0{-Box's field-})
   liftDebugger $ do
-    index_arr_fv <- compileExprRemote $
-        "\\arr -> Foreign.C.String.peekCString (GHC.Ptr.Ptr (GHC.Base.indexAddrArray# arr " ++ show ix ++ "#))"
-    
-    evalApplicationIO index_arr_fv literals_fv
-      >>= expectRight
-      >>= evalStringValue
-      >>= expectRight
+
+    r <- Remote.evalIOString $
+        Remote.peekCString $
+          Remote.withUnboxed (Remote.lit (fromIntegral ix))
+            (Remote.indexAddrArray (Remote.untypedRef literals_fv))
+
+    expectRight r
 
 -- | The indexes found in the BRK_FUN instruction
 data BCOBreakPointInfo = BCOBreakPointInfo
@@ -173,12 +180,13 @@ bcoBreakPointInfoParser = do
           | gopt Opt_AddBcoName (hsc_dflags hsc_env) = 2 -- BCO_NAME + ptrs ix.
           | otherwise = 0 :: Int
 
-    find_ixs_fv <- compileExprRemote $
-      "\\x -> let index_at n = GHC.Word.W16# (GHC.Base.indexWord16Array# x (n GHC.Exts.+# " ++ show bRK_FUN_offset ++ "#)) " ++
-               "in if (index_at 0# Data.Bits..&. 0xFF) == 66{-bci_BRK_FUN-} then \
-                    Just (index_at 1#, index_at 2#, index_at 3#, index_at 4#, index_at 5#) \
-                  else Nothing"
-    rs_fv <- expectRight =<< evalApplication find_ixs_fv instrs_array_fv
+    let find_ixs_fv = Remote.raw $
+          "\\x -> let index_at n = GHC.Word.W16# (GHC.Base.indexWord16Array# x (n GHC.Exts.+# " ++ show bRK_FUN_offset ++ "#)) " ++
+                   "in if (index_at 0# Data.Bits..&. 0xFF) == 66{-bci_BRK_FUN-} then \
+                        Just (index_at 1#, index_at 2#, index_at 3#, index_at 4#, index_at 5#) \
+                      else Nothing"
+    rs_fv <- expectRight =<< Remote.eval
+      (find_ixs_fv `Remote.app` Remote.untypedRef instrs_array_fv)
 
     mparsed_bco_brk <- obtainParsedTerm "Ixs" maxBound True anyTy rs_fv $
       maybeParser $ BCOBreakPointInfo <$>

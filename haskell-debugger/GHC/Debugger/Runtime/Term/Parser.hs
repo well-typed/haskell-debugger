@@ -23,8 +23,9 @@ import GHC.Core.TyCo.Compare
 import GHC.Stack
 
 import GHC.Debugger.Monad
-import GHC.Debugger.Runtime.Eval
 import GHC.Debugger.Utils (expectRight)
+
+import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 
 -- | The main entry point for running the 'TermParser'.
 obtainParsedTerm
@@ -295,7 +296,7 @@ stringParser :: TermParser String
 stringParser = do
   Term{val=string_fv} <- anyTerm
   liftDebugger $
-    expectRight =<< evalStringValue string_fv
+    expectRight =<< Remote.evalString (Remote.untypedRef string_fv)
 
 -- | Parse a 'Maybe' something
 maybeParser :: TermParser a -> TermParser (Maybe a)
@@ -366,7 +367,9 @@ programTermParser =
       let fref1 = val p1
       let fref2 = val p2
       let (_, _arg_ty, res_ty) = splitFunTy (termType p1)
-      res <- liftDebugger $ expectRight =<< evalApplication fref1 fref2
+      res <- liftDebugger $
+        expectRight =<< Remote.eval
+          (Remote.untypedRef fref1 `Remote.app` Remote.untypedRef fref2)
       foreignValueToTerm res_ty res
 
     programBranchParser = do

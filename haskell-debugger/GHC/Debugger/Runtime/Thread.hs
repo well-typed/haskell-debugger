@@ -1,3 +1,4 @@
+{-# LANGUAGE QualifiedDo #-}
 {-# LANGUAGE OrPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
@@ -22,12 +23,8 @@ import Control.Monad.Reader
 import Data.IORef
 import GHC.Conc.Sync
 
-import GHC
 import GHC.Builtin.Types
 import GHC.Runtime.Heap.Inspect
-import GHC.Driver.Config
-import GHC.Driver.Env
-import GHC.Runtime.Interpreter as Interp
 import GHC.Utils.Outputable
 
 import GHCi.Message
@@ -39,7 +36,9 @@ import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Runtime.Thread.Map
-import GHC.Debugger.Runtime.Eval
+
+import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
+import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
 
 -- | Get a 'RemoteThreadId' from a remote 'ResumeContext' gotten from an 'ExecBreak'
 getRemoteThreadIdFromRemoteContext :: ForeignRef (ResumeContext [HValueRef]) -> Debugger RemoteThreadId
@@ -57,11 +56,11 @@ getRemoteThreadIdFromRemoteContext fctxt = do
 
 getRemoteThreadId :: ForeignRef ThreadId -> Debugger RemoteThreadId
 getRemoteThreadId threadIdRef = do
-  from_thread_id_fv <- compileExprRemote "GHC.Conc.Sync.fromThreadId"
-  thread_id_fv      <- expectRight =<<
-                       evalApplication from_thread_id_fv (castForeignRef threadIdRef)
+  thread_id_fv <- expectRight =<< Remote.eval
+    (Remote.fromThreadId (Remote.ref threadIdRef))
+
   parsed_int <-
-    obtainParsedTerm "ThreadId's Int value" 2 True wordTy{-really, Word64, but we won't look at the type-} thread_id_fv intParser
+    obtainParsedTerm "ThreadId's Int value" 2 True wordTy{-really, Word64, but we won't look at the type-} (castForeignRef thread_id_fv) intParser
 
   case parsed_int of
     Left errs -> do
@@ -80,10 +79,10 @@ getRemoteThreadId threadIdRef = do
 -- | Is the remote thread running or blocked (NOT finished NOR dead)?
 getRemoteThreadStatus :: ForeignRef ThreadId -> Debugger ThreadStatus
 getRemoteThreadStatus threadIdRef = do
-  thread_status_fv <- compileExprRemote "GHC.Conc.Sync.threadStatus"
-  status_fv        <- expectRight =<<
-                      evalApplicationIO thread_status_fv (castForeignRef threadIdRef)
-  status_parsed    <- obtainParsedTerm "ThreadStatus" 2 True anyTy{-..no..-} status_fv threadStatusParser
+  status_fv  <- expectRight =<< Remote.evalIO
+    (Remote.threadStatus (Remote.ref threadIdRef))
+  status_parsed <-
+    obtainParsedTerm "ThreadStatus" 2 True anyTy{-..no..-} (castForeignRef status_fv) threadStatusParser
 
   case status_parsed of
     Left errs -> do
@@ -102,15 +101,7 @@ isRemoteThreadLive r = getRemoteThreadStatus r <&> \case
 -- This may include the debugger threads if using the internal interpreter.
 listAllLiveRemoteThreads :: Debugger [(RemoteThreadId, ForeignRef ThreadId)]
 listAllLiveRemoteThreads = do
-  hsc_env <- getSession
-
-  list_threads_fv <- compileExprRemote "GHC.Conc.Sync.listThreads"
-
-  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-      interp    = hscInterp hsc_env
-
-  threads_fvs <- expectRight =<< handleMultiStatus <$>
-                 liftIO (evalStmt interp eval_opts (EvalThis list_threads_fv))
+  threads_fvs <- expectRight =<< Remote.evalIOList Remote.listThreads
   catMaybes <$> do
     forM threads_fvs $ \(castForeignRef -> thread_fv) -> do
       isLive <- isRemoteThreadLive thread_fv
@@ -124,25 +115,17 @@ listAllLiveRemoteThreads = do
 -- given Thread with @Just string@ if a label was found.
 getRemoteThreadsLabels :: [ForeignRef ThreadId] -> Debugger [Maybe String]
 getRemoteThreadsLabels threadIdRefs = do
-  hsc_env <- getSession
 
-  -- evalStmt takes an IO [a] and evals it into a [ForeignHValue]. Represent the Maybe as an empty list
-  thread_label_fv <- compileExprRemote "(fmap (\\ms -> case ms of Nothing -> []; Just s -> [pure s]) \
-                                           . GHC.Conc.Sync.threadLabel \
-                                            ) :: GHC.Conc.Sync.ThreadId -> IO [IO String]"
+  forM threadIdRefs $ \threadIdRef -> do
+    
+    r <- Remote.evalIOList $ Remote.do
+      mb_str <- Remote.threadLabel (Remote.ref threadIdRef)
+      Remote.return (Remote.maybeToList mb_str)
 
-  -- TODO: Refactor to use Debugger.Runtime.Eval
-  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-      interp    = hscInterp hsc_env
-
-  forM threadIdRefs $ \threadIdRef ->
-    handleMultiStatus <$>
-    liftIO (evalStmt interp eval_opts (EvalApp (EvalThis thread_label_fv) (EvalThis (castForeignRef threadIdRef))))
-      >>= expectRight
-      >>= \case
-        []          -> pure Nothing
-        [io_lbl_fv] -> Just <$> liftIO (evalString interp io_lbl_fv)
-        _ -> liftIO $ fail "Unexpected result from evaluating \"threadLabel\""
+    expectRight r >>= \case
+      []          -> pure Nothing
+      [io_lbl_fv] -> Just <$> (expectRight =<< Remote.evalString (Remote.ref io_lbl_fv))
+      _ -> liftIO $ fail "Unexpected result from evaluating \"threadLabel\""
 
 --------------------------------------------------------------------------------
 -- * TermParsers
