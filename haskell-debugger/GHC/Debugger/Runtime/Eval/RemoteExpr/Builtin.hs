@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | A module providing various remote external variables which are available
 -- by default in any session.
 --
@@ -13,21 +15,41 @@
 -- @
 module GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin where
 
+import GHC.Exts
+import Foreign.C.String
 import GHC.Conc.Sync
 import GHC.Unit.Module
 import GHC.Stack.CloneStack
+import GHC.Exts.Heap
 import GHC.Exts.Heap.Closures
 import GHC.Debugger.Runtime.Eval.RemoteExpr (RemoteExpr)
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 
 -- | Remote 'GHC.Stack.CloneStack.cloneThreadStack'
-cloneThreadStack :: RemoteExpr (ThreadId -> IO StackSnapshot)
-cloneThreadStack = Remote.var (mkModuleName "GHC.Stack.CloneStack") "cloneThreadStack"
+cloneThreadStack :: RemoteExpr ThreadId -> RemoteExpr (IO StackSnapshot)
+cloneThreadStack = Remote.app $ Remote.var (mkModuleName "GHC.Stack.CloneStack") "cloneThreadStack" []
+
+-- | Remote 'GHC.Stack.CloneStack.decode'
+decode :: RemoteExpr StackSnapshot -> RemoteExpr (IO [StackEntry])
+decode = Remote.app $ Remote.var (mkModuleName "GHC.Stack.CloneStack") "decode" []
 
 -- | Remote 'GHC.Exts.Stack.decodeStack'
-decodeStack :: RemoteExpr (StackSnapshot -> IO StgStackClosure)
-decodeStack = Remote.var (mkModuleName "GHC.Exts.Stack") "decodeStack"
+decodeStack :: RemoteExpr StackSnapshot -> RemoteExpr (IO StgStackClosure)
+decodeStack = Remote.app $ Remote.var (mkModuleName "GHC.Exts.Stack") "decodeStack" []
 
 -- | Remote 'GHC.Exts.Heap.Closures.ssc_stack'
-ssc_stack :: RemoteExpr (StgStackClosure -> [StackFrame])
-ssc_stack = Remote.var (mkModuleName "GHC.Exts.Heap.Closures") "ssc_stack'"
+ssc_stack :: RemoteExpr StgStackClosure -> RemoteExpr [StackFrame]
+ssc_stack = Remote.app $ Remote.var (mkModuleName "GHC.Exts.Heap.Closures") "ssc_stack" []
+
+-- | Remote 'GHC.Exts.Heap.getClosureData'
+getClosureData :: RemoteExpr StgStackClosure -> RemoteExpr (IO Closure)
+getClosureData = Remote.app $ Remote.var (mkModuleName "GHC.Exts.Heap") "getClosureData" ["GHC.Exts.LiftedRep", "_"]
+
+-- | Remote 'Foreign.C.String.peekCString'
+peekCString :: RemoteExpr CString -> RemoteExpr (IO String)
+peekCString = Remote.app $ Remote.var (mkModuleName "Foreign.C.String") "peekCString" []
+
+-- | Remote 'GHC.Base.indexAddrArray#'
+indexAddrArray :: RemoteExpr ByteArray# -> RemoteExpr (Int# -> Ptr a)
+indexAddrArray = Remote.app $
+  Remote.raw "\\b i -> GHC.Ptr.Ptr (GHC.Base.indexAddrArray# b i)"

@@ -180,6 +180,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
           , GHC.canUseErrorLinks = conf.supportsANSIHyperlinks
           }
           -- Default debugger settings
+          `GHC.xopt_set` LangExt.TypeApplications
           `GHC.xopt_set` LangExt.PackageImports
           `GHC.xopt_set` LangExt.MagicHash -- needed for some of the expressions we compile
           `GHC.gopt_set` GHC.Opt_ImplicitImportQualified

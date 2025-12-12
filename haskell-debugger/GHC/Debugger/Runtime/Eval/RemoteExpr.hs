@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase, GADTs #-}
+{-# LANGUAGE LambdaCase, GADTs, DataKinds, MagicHash, StandaloneKindSignatures #-}
 -- | A DSL for evaluating remote expressions on the (possibly) remote debuggee process
 --
 -- Meant to be imported qualified @as Remote@ for use with @QualifiedDo@.
@@ -8,91 +8,173 @@
 -- import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 -- @
 module GHC.Debugger.Runtime.Eval.RemoteExpr
-  -- (
-  -- ) where
-  where
+  (
+  -- * Building remote expressions
+    RemoteExpr
+  , var, ref, untypedRef
+  , lit, raw
+  , app, appRef
+  , withUnboxed
+  , compose
+  , fmap, (<$>)
+  , pure, return
+  , (>>=), (>>)
+
+  -- * Evaluating remote expressions
+  , eval, evalIO, evalString, evalIOList, evalIOString
+  ) where
 
 import Prelude hiding (pure, return, (>>=), (>>), fmap, (<$>))
 import qualified Prelude
-import Data.Typeable
-import Data.Bifunctor
+import qualified Data.Kind as Kind
+import Control.Monad.Except
+import GHC.Exts
 import GHC
 import GHC.Driver.Env
-import GHC.Runtime.Interpreter as Interp
+import GHC.Runtime.Interpreter as Interp hiding (evalIO, evalString)
+import qualified GHC.Runtime.Interpreter as Interp
 import Control.Monad.Reader
 import GHC.Driver.Config
 import GHCi.RemoteTypes
 
+import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Monad
 import GHC.Debugger.Utils
 import GHC.Debugger.Runtime.Eval
-
 
 --------------------------------------------------------------------------------
 -- * Higher-level: eDSL for (possibly) remote evaluation on the debuggee
 --------------------------------------------------------------------------------
 
+-- | A remote expression to be evaluated on the debuggee process.
+-- Note: the remote expression must have a boxed representation type.
+type RemoteExpr :: forall l. TYPE (BoxedRep l) -> Kind.Type
 data RemoteExpr t where
+
+  -- | Parse, compile, and load a raw expression string onto the remote process.
+  -- This is a low-level escape hatch; prefer using the other constructors.
+  -- The loaded expression is cached by its string.
+  RemRaw  :: String -> RemoteExpr a
+
   -- | A top-level or in-another-module name (aka external name) in the debuggee process.
-  RemVar    :: Typeable a => ModuleName -> String -> RemoteExpr a
+  -- The list of strings is the list of (fully-qualified) types the expression
+  -- should be applied to.
+  RemVar    :: -- forall {l} (a :: TYPE (BoxedRep l))
+             ModuleName -> String -> [String] -> RemoteExpr a
 
   -- | A reference to a value in the debuggee heap
-  RemRef    :: ForeignRef a -> RemoteExpr a
+  RemRef    :: forall {l} (a :: TYPE (BoxedRep l))
+             . ForeignHValue -> RemoteExpr a
+
+  -- | An Int literal (@Int@)
+  RemInt    :: Int -> RemoteExpr Int
 
   -- | Apply a remote function to a remote argument to get a remote result
-  RemApp    :: RemoteExpr (a -> b) -> RemoteExpr a -> RemoteExpr b
+  --
+  -- Note: the result type @b@ must have a BoxedRep!
+  RemApp    :: forall {l} (a :: TYPE (BoxedRep l)) b
+             . RemoteExpr (a -> b) -> RemoteExpr a -> RemoteExpr b
 
   -- | IO monadic bind on the remote process
-  RemBindIO :: RemoteExpr ((a -> IO b) -> IO b) -> (RemoteExpr a -> RemoteExpr (IO b)) -> RemoteExpr (IO b)
+  RemBindIO      :: RemoteExpr (IO a) -> (RemoteExpr a -> RemoteExpr (IO b)) -> RemoteExpr (IO b)
 
 -- | Apply a remote function to a remote argument to get a remote result
-var :: (Typeable a) => ModuleName -> String -> RemoteExpr a
+var :: -- forall {l} (a :: TYPE (BoxedRep l))
+     ModuleName -> String -> [String] -> RemoteExpr a
 var = RemVar
 
 -- | A reference to a value in the debuggee heap
 ref :: ForeignRef a -> RemoteExpr a
-ref = RemRef
+ref = RemRef . castForeignRef
+
+-- | A reference to a value in the debuggee heap
+untypedRef :: forall {l} (a :: TYPE (BoxedRep l))
+            . ForeignHValue -> RemoteExpr a
+untypedRef = RemRef
+
+-- | A literal unboxed int
+lit :: Int -> RemoteExpr Int
+lit = RemInt
+
+-- | A raw expression string to be parsed, compiled, and loaded onto the remote process
+raw :: String -> RemoteExpr a
+raw = RemRaw
 
 -- | Apply a remote function to a remote argument to get a remote result
-app :: RemoteExpr (a -> b) -> RemoteExpr a -> RemoteExpr b
+app :: forall {l} (a :: TYPE (BoxedRep l)) b
+     . RemoteExpr (a -> b) -> RemoteExpr a -> RemoteExpr b
 app = RemApp
 
 -- | Apply a remote function to a remote 'ForeignRef' to get a remote result
 appRef :: RemoteExpr (a -> b) -> ForeignRef a -> RemoteExpr b
-appRef rf = RemApp rf . RemRef
+appRef rf = RemApp rf . ref
+
+-- | Apply a remote function after unboxing a remote int argument
+-- (We need to unbox the Int on the debuggee side)
+withUnboxed :: RemoteExpr Int -> (RemoteExpr (Int# -> b)) -> RemoteExpr b
+withUnboxed i f = (RemRaw "\\f i -> case i of GHC.Exts.I# i# -> f i#")
+                    `RemApp` f `RemApp` i
+
+-- | Function composition on the remote process
+compose :: RemoteExpr (b -> c) -> RemoteExpr (a -> b) -> RemoteExpr (a -> c)
+f `compose` g = app (app composeVar f) g where
+  composeVar :: RemoteExpr ((b -> c) -> (a -> b) -> (a -> c))
+  composeVar = var (mkModuleName "GHC.Base") "." []
 
 -- | IO fmap on the remote process
-fmap :: (Typeable a, Typeable b) => (RemoteExpr a -> RemoteExpr b) -> (RemoteExpr (IO a) -> RemoteExpr (IO b))
+fmap :: (RemoteExpr a -> RemoteExpr b) -> (RemoteExpr (IO a) -> RemoteExpr (IO b))
 fmap f io_x = io_x >>= \x -> pure (f x)
 
-(<$>) :: (Typeable a, Typeable b) => (RemoteExpr a -> RemoteExpr b) -> (RemoteExpr (IO a) -> RemoteExpr (IO b))
+-- | IO fmap on the remote process
+(<$>) :: (RemoteExpr a -> RemoteExpr b) -> (RemoteExpr (IO a) -> RemoteExpr (IO b))
 (<$>) = fmap
 
 -- | IO pure on the remote process
-pure :: Typeable a => RemoteExpr a -> RemoteExpr (IO a)
-pure = RemApp (var (mkModuleName "GHC.Base") "pure")
+pure :: RemoteExpr a -> RemoteExpr (IO a)
+pure = RemApp (var (mkModuleName "GHC.Base") "pure" ["IO"])
 
 -- | IO return on the remote process
-return :: Typeable a => RemoteExpr a -> RemoteExpr (IO a)
+return :: RemoteExpr a -> RemoteExpr (IO a)
 return = pure
 
 -- | IO monadic bind on the remote process
-(>>=) :: forall a b. (Typeable a, Typeable b) => RemoteExpr (IO a) -> (RemoteExpr a -> RemoteExpr (IO b)) -> RemoteExpr (IO b)
-(>>=) mx k = RemBindIO (app bind mx) k
-  where
-    bind :: RemoteExpr (IO a -> (a -> IO b) -> IO b)
-    bind = var (mkModuleName "GHC.Base") ">>="
+(>>=) :: RemoteExpr (IO a) -> (RemoteExpr a -> RemoteExpr (IO b)) -> RemoteExpr (IO b)
+(>>=) = RemBindIO
 
 -- | IO monadic bind on the remote process
-(>>) :: forall a b. (Typeable a, Typeable b) => RemoteExpr (IO a) -> RemoteExpr (IO b) -> RemoteExpr (IO b)
+(>>) :: RemoteExpr (IO a) -> RemoteExpr (IO b) -> RemoteExpr (IO b)
 (>>) ma mb = app (app andThen ma) mb
   where
     andThen :: RemoteExpr (IO a -> IO b -> IO b)
-    andThen = var (mkModuleName "GHC.Base") ">>"
+    andThen = var (mkModuleName "GHC.Base") ">>" ["IO"]
 
 --------------------------------------------------------------------------------
 -- * Evaluation of 'RemoteExprs' (higher level)
 --------------------------------------------------------------------------------
+
+-- | Evaluate a @a@ expression on the remote process and return the foreign
+-- reference to the result.
+eval :: RemoteExpr a -> Debugger (Either BadEvalStatus (ForeignRef a))
+eval expr = evalIO (pure expr)
+
+-- | Run an @IO a@ computation in the remote process and return the foreign
+-- reference to the returned @a@
+evalIO :: RemoteExpr (IO a) -> Debugger (Either BadEvalStatus (ForeignRef a))
+evalIO expr = do
+  r <- evalIOList (fmap (app singletonList) expr)
+  case r of
+    Left e    -> Prelude.return (Left e)
+    Right [x] -> Prelude.return (Right x)
+    Right []  -> Prelude.return (Left EvalReturnedNoResults)
+    Right _   -> Prelude.return (Left EvalReturnedTooManyResults)
+  where
+    singletonList :: RemoteExpr (a -> [a])
+    singletonList = var (mkModuleName "Data.List") "singleton" []
+
+-- | Evaluate a string expression on the remote process and return the string
+-- to the debugger
+evalString :: RemoteExpr String -> Debugger (Either BadEvalStatus String)
+evalString expr = evalIOString (pure expr)
 
 {- |
 Evaluate a 'RemoteExpr' for a remote @IO [a]@ and return a list of
@@ -102,58 +184,110 @@ Evaluate a 'RemoteExpr' for a remote @IO [a]@ and return a list of
 
 @
 Remote.evalIOList $ Remote.do
-  clonedStack <- remote_cloneThreadStack `Remote.appRef` threadIdRef
-  frames      <- remote_decodeStack      `Remote.app`    clonedStack
-  return (remote_ssc_stack `Remote.app` frames)
+  clonedStack <- Remote.cloneThreadStack `Remote.appRef` threadIdRef
+  frames      <- Remote.decodeStack      `Remote.app`    clonedStack
+  return (Remote.ssc_stack `Remote.app` frames)
 @
 -}
 evalIOList :: RemoteExpr (IO [a]) -> Debugger (Either BadEvalStatus [ForeignRef a])
-evalIOList expr = bimap id (map castForeignRef) Prelude.<$> do
+evalIOList expr = runExceptT $ do
+  lift $ logSDoc Logger.Debug (text "evalIOList" <+> text (show expr))
+
   res_fv <- debuggeeEval expr
 
-  hsc_env <- getSession
+  hsc_env <- lift getSession
   let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
       interp = hscInterp hsc_env
 
-  handleMultiStatus Prelude.<$> liftIO (
-    evalStmt interp eval_opts (EvalThis (castForeignRef res_fv))
+  r <- handleMultiStatus Prelude.<$> liftIO (
+    evalStmt interp eval_opts (EvalThis res_fv)
     )
+  liftEither (map castForeignRef Prelude.<$> r)
 
--- | Run an @IO a@ computation in the remote process and return the foreign
--- reference to the returned @a@
-evalIO :: forall a. Typeable a => RemoteExpr (IO a) -> Debugger (Either BadEvalStatus (ForeignRef a))
-evalIO expr = do
-  r <- evalIOList (fmap (app singletonList) expr)
-  case r of
-    Left e    -> Prelude.return (Left e)
-    Right [x] -> Prelude.return (Right x)
-    _ -> error "impossible: evalIO should only have 1 result"
-  where
-    singletonList :: RemoteExpr (a -> [a])
-    singletonList = var (mkModuleName "Data.List") "singleton"
+-- | Execute an @IO String@ on the remote process and serialize the string back to the debugger.
+evalIOString :: RemoteExpr (IO String) -> Debugger (Either BadEvalStatus String)
+evalIOString expr = runExceptT $ do
+  lift $ logSDoc Logger.Debug (text "evalIOString" <+> text (show expr))
+  pprTraceM "RESULT OF PPR" (text "evalIOString" <+> text (show expr))
+
+  res_fv <- debuggeeEval expr
+
+  hsc_env <- lift getSession
+
+  r <- liftIO (Interp.evalString (hscInterp hsc_env) res_fv)
+  pprTraceM "RESULT OF PPR" (text r)
+  Prelude.return r
 
 --------------------------------------------------------------------------------
 -- ** Recursive evaluation of 'RemoteExpr' (lower-level)
 --------------------------------------------------------------------------------
 
--- | Get the foreign reference to a heap value of type @a@ in the debuggee process from the given remote expr.
--- This function does not serve to get a remote lambda (@RemoteExpr (a -> b)@).
-debuggeeEval :: forall a. RemoteExpr a -> Debugger (ForeignRef a)
-debuggeeEval expr = case expr of
-  RemVar mod_name var_name -> do
-    -- TODO: Lookup mod_var var_name and type in a cache first rather than compile.
-    -- Since the @a@ is never parametric in the @Typeable@, we may have many duplicates still (e.g. pure @IO @<varies>).
-    -- Measure how many! TODO
-    fhv <- compileExprRemote ("(" ++ moduleNameString mod_name ++ "." ++ var_name ++ ") :: " ++ show (typeOf (undefined :: a)))
-    Prelude.return (castForeignRef fhv)
-  RemRef r -> Prelude.return r
-  RemApp f arg -> do
-    arg_fv <- debuggeeEval arg
-    f_fv   <- debuggeeEval f
-    r <- expectRight =<< evalApplication (castForeignRef f_fv) (castForeignRef arg_fv)
-    Prelude.return (castForeignRef r)
-  RemBindIO iox k -> do
-    arg_io_fv <- debuggeeEval iox
-    arg_fv    <- expectRight =<< evalThisIO (castForeignRef arg_io_fv)
-    debuggeeEval (k (RemRef (castForeignRef arg_fv)))
+-- | Get the foreign reference to a heap value of type @a@ in the debuggee
+-- process from the given remote expr.
+--
+-- The result can't be (@ForeignRef a@) because of levity polymorphism, so we
+-- return the untyped foreign ref.
+debuggeeEval :: forall {l} (a :: TYPE (BoxedRep l))
+              . RemoteExpr a -> ExceptT BadEvalStatus Debugger ForeignHValue
+debuggeeEval expr = do
+    eval_expr <- go expr
+    pprTraceM "debuggeeEval" (text "eval_expr:" <+> text (show (mkUnit eval_expr)))
+    -- TODO
+    hsc_env <- lift $ getSession
+    mk_list_fv <- lift $ compileExprRemote "(pure @IO . (:[])) :: a -> IO [a]"
 
+    let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
+        interp = hscInterp hsc_env
+
+    r <- lift $ handleSingStatus Prelude.<$> liftIO (
+      evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` eval_expr
+      )
+    liftEither r
+  where
+    -- Construct the largest possible EvalExpr and then evaluate it all at once.
+    -- When we find an IO action we execute it.
+    go :: forall {l'} (a' :: TYPE (BoxedRep l'))
+        . RemoteExpr a' -> ExceptT BadEvalStatus Debugger (EvalExpr ForeignHValue)
+    go = \case
+      RemRaw s -> do
+        fhv <- lift $ compileExprRemote s
+        Prelude.return (EvalThis fhv)
+      RemVar mod_name var_name ty_args -> do
+        -- TODO: Lookup mod_var var_name and type in a cache first rather than compile.
+        fhv <- lift $ compileExprRemote
+          ("(" ++ moduleNameString mod_name
+               ++ "." ++ var_name ++ ") "
+               ++ unwords (map ('@':) ty_args))
+        Prelude.return (EvalThis fhv)
+      RemRef r -> Prelude.return (EvalThis r)
+      RemInt i ->
+        -- todo: interpreter message for unboxed literals
+        -- TODO: lookup in the cache if we loaded this int already.
+        EvalThis Prelude.<$> lift (compileExprRemote (show i))
+      RemApp f arg -> do
+        arg_e <- go arg
+        f_e   <- go f
+        Prelude.return (f_e `EvalApp` arg_e)
+      RemBindIO iox k -> do
+        arg_io_fv <- debuggeeEval iox
+        e_arg_fv  <- lift $ evalThisIO arg_io_fv
+        arg_fv    <- liftEither e_arg_fv
+        go (k (RemRef arg_fv))
+
+instance Show (RemoteExpr (a :: TYPE (BoxedRep l))) where
+  show (RemRaw s) = "(" ++ s ++ ")"
+  show (RemVar mod_name var_name ty_args) =
+    "(" ++ moduleNameString mod_name ++ "." ++ var_name ++ ")"
+        ++ (if null ty_args then "" else " ")
+        ++ unwords (map ('@':) ty_args)
+  show (RemRef _) = "<foreign ref>"
+  show (RemInt i) = show i
+  show (RemApp f arg) =
+    "(" ++ show f ++ " " ++ show arg ++ ")"
+  show (RemBindIO iox k) =
+    let k_str = k (var (mkModuleName "Dummy") "dummy" [])
+     in show iox ++ ">>= (\\dummy -> " ++ show k_str ++ ")"
+
+mkUnit :: EvalExpr a -> EvalExpr ()
+mkUnit EvalThis{} = EvalThis ()
+mkUnit (EvalApp a b) = mkUnit a `EvalApp` mkUnit b
