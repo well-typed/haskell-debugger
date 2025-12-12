@@ -1,4 +1,5 @@
 {-# LANGUAGE OrPatterns #-}
+{-# LANGUAGE QualifiedDo #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -35,23 +36,17 @@ import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Monad
 import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Runtime.Eval
-import GHC.Debugger.Runtime.Eval.RemoteExpr (RemoteExpr)
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
-
-remote_cloneThreadStack :: RemoteExpr (ThreadId -> IO StackSnapshot)
-remote_cloneThreadStack = Remote.var (mkModuleName "GHC.Stack.CloneStack") "cloneThreadStack"
+import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
 
 -- | Clone the stack of the given remote thread and get the breakpoint ids of available frames
 getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [InternalBreakpointId]
 getRemoteThreadStackCopy threadIdRef = do
-  thread_stack_fv <- compileExprRemote "fmap GHC.Exts.Heap.Closures.ssc_stack . \
-                                          GHC.Exts.Stack.decodeStack Control.Monad.<=< GHC.Stack.CloneStack.cloneThreadStack"
-  evalApplicationIOList thread_stack_fv (castForeignRef threadIdRef)
 
-  l <- evalIOList $ do
-    clonedStack <- remCloneThreadStack (RemoteRef threadIdRef)
-    frames      <- decodeStack clonedStack
-    return (ssc_stack `RemApp` frames)
+  l <- Remote.evalIOList $ Remote.do
+    clonedStack <- Remote.cloneThreadStack `Remote.app` (Remote.ref threadIdRef)
+    frames      <- Remote.decodeStack      `Remote.app` clonedStack
+    Remote.return (Remote.ssc_stack `Remote.app` frames)
 
   case l of
     Left (EvalRaisedException e) -> do
@@ -62,7 +57,7 @@ getRemoteThreadStackCopy threadIdRef = do
       return []
     Right stack_frames_fvs -> fmap (catMaybes . catMaybes) $
       forM stack_frames_fvs $ \stack_frame_fv ->
-        obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} stack_frame_fv
+        obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} (castForeignRef stack_frame_fv)
           ((Just <$> retBCOParser) <|> pure Nothing) >>= \case
             Left errs -> do
               logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
