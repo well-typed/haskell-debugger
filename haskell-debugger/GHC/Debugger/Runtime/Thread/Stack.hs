@@ -144,13 +144,6 @@ bcoLiteralString :: Word -> TermParser String
 bcoLiteralString ix = do
   Term{val=literals_fv} <- subtermWith 2 (subtermTerm 0{-Box's field-})
   liftDebugger $ do
-    -- index_arr_fv <- compileExprRemote $
-    --     "\\arr -> Foreign.C.String.peekCString (GHC.Ptr.Ptr (GHC.Base.indexAddrArray# arr " ++ show ix ++ "#))"
-    --
-    -- evalApplicationIO index_arr_fv literals_fv
-    --   >>= expectRight
-    --   >>= evalStringValue
-    --   >>= expectRight
 
     r <- Remote.evalIOString $
         Remote.peekCString $
@@ -187,12 +180,13 @@ bcoBreakPointInfoParser = do
           | gopt Opt_AddBcoName (hsc_dflags hsc_env) = 2 -- BCO_NAME + ptrs ix.
           | otherwise = 0 :: Int
 
-    find_ixs_fv <- compileExprRemote $
-      "\\x -> let index_at n = GHC.Word.W16# (GHC.Base.indexWord16Array# x (n GHC.Exts.+# " ++ show bRK_FUN_offset ++ "#)) " ++
-               "in if (index_at 0# Data.Bits..&. 0xFF) == 66{-bci_BRK_FUN-} then \
-                    Just (index_at 1#, index_at 2#, index_at 3#, index_at 4#, index_at 5#) \
-                  else Nothing"
-    rs_fv <- expectRight =<< evalApplication find_ixs_fv instrs_array_fv
+    let find_ixs_fv = Remote.raw $
+          "\\x -> let index_at n = GHC.Word.W16# (GHC.Base.indexWord16Array# x (n GHC.Exts.+# " ++ show bRK_FUN_offset ++ "#)) " ++
+                   "in if (index_at 0# Data.Bits..&. 0xFF) == 66{-bci_BRK_FUN-} then \
+                        Just (index_at 1#, index_at 2#, index_at 3#, index_at 4#, index_at 5#) \
+                      else Nothing"
+    rs_fv <- expectRight =<< Remote.eval
+      (find_ixs_fv `Remote.app` Remote.untypedRef instrs_array_fv)
 
     mparsed_bco_brk <- obtainParsedTerm "Ixs" maxBound True anyTy rs_fv $
       maybeParser $ BCOBreakPointInfo <$>

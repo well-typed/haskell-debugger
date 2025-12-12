@@ -15,7 +15,6 @@ module GHC.Debugger.Runtime.Eval.RemoteExpr
   , lit, raw
   , app, appRef
   , withUnboxed
-  , compose
   , fmap, (<$>)
   , pure, return
   , (>>=), (>>)
@@ -115,12 +114,6 @@ withUnboxed :: RemoteExpr Int -> (RemoteExpr (Int# -> b)) -> RemoteExpr b
 withUnboxed i f = (RemRaw "\\f i -> case i of GHC.Exts.I# i# -> f i#")
                     `RemApp` f `RemApp` i
 
--- | Function composition on the remote process
-compose :: RemoteExpr (b -> c) -> RemoteExpr (a -> b) -> RemoteExpr (a -> c)
-f `compose` g = app (app composeVar f) g where
-  composeVar :: RemoteExpr ((b -> c) -> (a -> b) -> (a -> c))
-  composeVar = var (mkModuleName "GHC.Base") "." []
-
 -- | IO fmap on the remote process
 fmap :: (RemoteExpr a -> RemoteExpr b) -> (RemoteExpr (IO a) -> RemoteExpr (IO b))
 fmap f io_x = io_x >>= \x -> pure (f x)
@@ -161,15 +154,12 @@ eval expr = evalIO (pure expr)
 -- reference to the returned @a@
 evalIO :: RemoteExpr (IO a) -> Debugger (Either BadEvalStatus (ForeignRef a))
 evalIO expr = do
-  r <- evalIOList (fmap (app singletonList) expr)
+  r <- evalIOList (fmap singletonList expr)
   case r of
     Left e    -> Prelude.return (Left e)
     Right [x] -> Prelude.return (Right x)
     Right []  -> Prelude.return (Left EvalReturnedNoResults)
     Right _   -> Prelude.return (Left EvalReturnedTooManyResults)
-  where
-    singletonList :: RemoteExpr (a -> [a])
-    singletonList = var (mkModuleName "Data.List") "singleton" []
 
 -- | Evaluate a string expression on the remote process and return the string
 -- to the debugger
@@ -200,7 +190,7 @@ evalIOList expr = runExceptT $ do
       interp = hscInterp hsc_env
 
   r <- handleMultiStatus Prelude.<$> liftIO (
-    evalStmt interp eval_opts (EvalThis res_fv)
+    evalStmt interp eval_opts (EvalThis (castForeignRef res_fv))
     )
   liftEither (map castForeignRef Prelude.<$> r)
 
@@ -208,15 +198,9 @@ evalIOList expr = runExceptT $ do
 evalIOString :: RemoteExpr (IO String) -> Debugger (Either BadEvalStatus String)
 evalIOString expr = runExceptT $ do
   lift $ logSDoc Logger.Debug (text "evalIOString" <+> text (show expr))
-  pprTraceM "RESULT OF PPR" (text "evalIOString" <+> text (show expr))
-
   res_fv <- debuggeeEval expr
-
   hsc_env <- lift getSession
-
-  r <- liftIO (Interp.evalString (hscInterp hsc_env) res_fv)
-  pprTraceM "RESULT OF PPR" (text r)
-  Prelude.return r
+  liftIO (Interp.evalString (hscInterp hsc_env) (castForeignRef res_fv))
 
 --------------------------------------------------------------------------------
 -- ** Recursive evaluation of 'RemoteExpr' (lower-level)
@@ -227,23 +211,18 @@ evalIOString expr = runExceptT $ do
 --
 -- The result can't be (@ForeignRef a@) because of levity polymorphism, so we
 -- return the untyped foreign ref.
-debuggeeEval :: forall {l} (a :: TYPE (BoxedRep l))
-              . RemoteExpr a -> ExceptT BadEvalStatus Debugger ForeignHValue
+debuggeeEval :: RemoteExpr a -> ExceptT BadEvalStatus Debugger (ForeignRef a)
 debuggeeEval expr = do
-    eval_expr <- go expr
+    eval_expr <- go (pure (singletonList expr))
     pprTraceM "debuggeeEval" (text "eval_expr:" <+> text (show (mkUnit eval_expr)))
-    -- TODO
+
     hsc_env <- lift $ getSession
-    mk_list_fv <- lift $ compileExprRemote "(pure @IO . (:[])) :: a -> IO [a]"
-
     let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-        interp = hscInterp hsc_env
-
-    r <- lift $ handleSingStatus Prelude.<$> liftIO (
-      evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` eval_expr
-      )
-    liftEither r
+    r <- lift $ handleSingStatus Prelude.<$>
+      liftIO (evalStmt (hscInterp hsc_env) eval_opts eval_expr)
+    liftEither (castForeignRef Prelude.<$> r)
   where
+
     -- Construct the largest possible EvalExpr and then evaluate it all at once.
     -- When we find an IO action we execute it.
     go :: forall {l'} (a' :: TYPE (BoxedRep l'))
@@ -269,10 +248,14 @@ debuggeeEval expr = do
         f_e   <- go f
         Prelude.return (f_e `EvalApp` arg_e)
       RemBindIO iox k -> do
-        arg_io_fv <- debuggeeEval iox
-        e_arg_fv  <- lift $ evalThisIO arg_io_fv
-        arg_fv    <- liftEither e_arg_fv
-        go (k (RemRef arg_fv))
+        expr_arg_io_fv <- go (fmap singletonList iox)
+
+        hsc_env <- lift $ getSession
+        let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
+        e_arg_fv <- lift $ handleSingStatus Prelude.<$>
+          liftIO (evalStmt (hscInterp hsc_env) eval_opts expr_arg_io_fv)
+        arg_fv <- liftEither (castForeignRef Prelude.<$> e_arg_fv)
+        go (k (ref arg_fv))
 
 instance Show (RemoteExpr (a :: TYPE (BoxedRep l))) where
   show (RemRaw s) = "(" ++ s ++ ")"
@@ -291,3 +274,10 @@ instance Show (RemoteExpr (a :: TYPE (BoxedRep l))) where
 mkUnit :: EvalExpr a -> EvalExpr ()
 mkUnit EvalThis{} = EvalThis ()
 mkUnit (EvalApp a b) = mkUnit a `EvalApp` mkUnit b
+
+--------------------------------------------------------------------------------
+-- ** Builtins that are needed here too.
+
+-- | Remote 'Data.List.singleton'
+singletonList :: RemoteExpr a -> RemoteExpr [a]
+singletonList = app $ var (mkModuleName "Data.List") "singleton" []

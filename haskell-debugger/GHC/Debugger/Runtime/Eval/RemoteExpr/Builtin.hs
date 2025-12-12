@@ -16,6 +16,7 @@
 module GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin where
 
 import GHC.Exts
+import Data.Word
 import Foreign.C.String
 import GHC.Conc.Sync
 import GHC.Unit.Module
@@ -45,6 +46,22 @@ ssc_stack = Remote.app $ Remote.var (mkModuleName "GHC.Exts.Heap.Closures") "ssc
 getClosureData :: RemoteExpr StgStackClosure -> RemoteExpr (IO Closure)
 getClosureData = Remote.app $ Remote.var (mkModuleName "GHC.Exts.Heap") "getClosureData" ["GHC.Exts.LiftedRep", "_"]
 
+-- | Remote 'GHC.Conc.Sync.fromThreadId'
+fromThreadId :: RemoteExpr ThreadId -> RemoteExpr Word64
+fromThreadId = Remote.app $ Remote.var (mkModuleName "GHC.Conc.Sync") "fromThreadId" []
+
+-- | Remote 'GHC.Conc.Sync.threadStatus'
+threadStatus :: RemoteExpr ThreadId -> RemoteExpr (IO ThreadStatus)
+threadStatus = Remote.app $ Remote.var (mkModuleName "GHC.Conc.Sync") "threadStatus" []
+
+-- | Remote 'GHC.Conc.Sync.listThreads'
+listThreads :: RemoteExpr (IO [ThreadId])
+listThreads = Remote.var (mkModuleName "GHC.Conc.Sync") "listThreads" []
+
+-- | Remote 'GHC.Conc.Sync.threadLabel'
+threadLabel :: RemoteExpr ThreadId -> RemoteExpr (IO (Maybe String))
+threadLabel = Remote.app $ Remote.var (mkModuleName "GHC.Conc.Sync") "threadLabel" []
+
 -- | Remote 'Foreign.C.String.peekCString'
 peekCString :: RemoteExpr CString -> RemoteExpr (IO String)
 peekCString = Remote.app $ Remote.var (mkModuleName "Foreign.C.String") "peekCString" []
@@ -53,3 +70,13 @@ peekCString = Remote.app $ Remote.var (mkModuleName "Foreign.C.String") "peekCSt
 indexAddrArray :: RemoteExpr ByteArray# -> RemoteExpr (Int# -> Ptr a)
 indexAddrArray = Remote.app $
   Remote.raw "\\b i -> GHC.Ptr.Ptr (GHC.Base.indexAddrArray# b i)"
+
+-- | Remote 'Data.Maybe.maybeToList'
+maybeToList :: RemoteExpr (Maybe a) -> RemoteExpr [a]
+maybeToList = Remote.app $ Remote.var (mkModuleName "Data.Maybe") "maybeToList" []
+
+-- | Function composition on the remote process
+compose :: RemoteExpr (b -> c) -> RemoteExpr (a -> b) -> RemoteExpr (a -> c)
+f `compose` g = Remote.app (Remote.app composeVar f) g where
+  composeVar :: RemoteExpr ((b -> c) -> (a -> b) -> (a -> c))
+  composeVar = Remote.var (mkModuleName "GHC.Base") "." []
