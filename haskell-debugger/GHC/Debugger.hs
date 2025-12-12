@@ -7,7 +7,7 @@ import System.Exit
 import Control.Monad.IO.Class
 
 import GHC.Debugger.Breakpoint
-import GHC.Debugger.Evaluation
+import GHC.Debugger.Run
 import GHC.Debugger.Stopped
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
@@ -26,7 +26,8 @@ execute recorder = \case
     DidSetBreakpoint <$> setBreakpoint brk (condBreakEnableStatus hitCount condition)
   DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
   GetBreakpointsAt bp -> DidGetBreakpoints <$> getBreakpointsAt bp
-  GetStacktrace -> GotStacktrace <$> getStacktrace
+  GetThreads -> GotThreads <$> getThreads
+  GetStacktrace i -> GotStacktrace <$> getStacktrace i
   GetScopes -> GotScopes <$> getScopes
   GetVariables kind -> GotVariables <$> getVariables kind
   DoEval exp_s -> DidEval <$> doEval exp_s

@@ -7,6 +7,9 @@ module GHC.Debugger.Runtime.Instances.Discover
   , RuntimeInstancesCache
   , getDebugViewInstance
   , emptyRuntimeInstancesCache
+
+  -- * Finding runtime instances utils
+  , compileAndLoadMthd
   ) where
 
 import Data.IORef
@@ -105,7 +108,7 @@ findDebugViewInstance needle_ty = do
   case mhdv_uid of
     Just hdv_uid -> do
       let modl = mkModule (RealUnit (Definite hdv_uid)) debuggerViewClassModName
-      let mthdRdrName mthStr = mkOrig modl (mkVarOcc mthStr)
+      let mthdRdrName mthStr = mkOrig modl (mkVarOcc mthStr) :: RdrName
 
       (err_msgs, res) <- liftIO $ runTcInteractive hsc_env $ do
 
@@ -119,16 +122,16 @@ findDebugViewInstance needle_ty = do
 
         -- Try to compile and load an expression for all methods of `DebugView`
         -- applied to the dictionary for the given Type (`needle_ty`)
-        let debugValueMN  = mthdRdrName "debugValueIOWrapper"
-            debugFieldsMN = mthdRdrName "debugFieldsIOWrapper"
+        let debugValueME  = nlHsVar $ mthdRdrName "debugValueIOWrapper"
+            debugFieldsME = nlHsVar $ mthdRdrName "debugFieldsIOWrapper"
             debugValueWrapperMT =
               mkVisFunTyMany needle_ty $
                 mkTyConApp ioTyCon [mkListTy varValueIOTy]
             debugFieldsWrapperMT =
               mkVisFunTyMany needle_ty $
                 mkTyConApp ioTyCon [mkListTy varFieldsIOTy]
-        !debugValue_fval  <- compileAndLoadMthd debugValueMN  debugValueWrapperMT
-        !debugFields_fval <- compileAndLoadMthd debugFieldsMN debugFieldsWrapperMT
+        !debugValue_fval  <- compileAndLoadMthd debugValueME  debugValueWrapperMT
+        !debugFields_fval <- compileAndLoadMthd debugFieldsME debugFieldsWrapperMT
 
         let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
             interp    = hscInterp hsc_env
@@ -170,18 +173,16 @@ findDebugViewInstance needle_ty = do
 
 -- | Try to compile and load a class method for the given type.
 --
--- E.g. @compileAndLoadMthd "debugValue" (<ty> -> VarValue)@ returns the
--- foreign value for an expression @debugValue@ applied to the dictionary for
--- the requested type.
-compileAndLoadMthd :: RdrName -- ^ Name of method/name of function that takes dictionary
-                   -> Type    -- ^ The final type of expr when funct is alredy applied to dict
+-- E.g. @compileAndLoadMthd (nlHsVar "foo") <ty>@ returns the
+-- foreign value for an expression @foo@ applied to the dictionary required to
+-- produce the final requested type
+compileAndLoadMthd :: LHsExpr GhcPs -- ^ Expr of method/expr that takes dictionary
+                   -> Type         -- ^ The final type of expr when funct is alredy applied to dict
                    -> TcM ForeignHValue
-compileAndLoadMthd mthName mthTy = do
+compileAndLoadMthd expr mthTy = do
   hsc_env <- getTopEnv
 
-  let expr = nlHsVar mthName
-
-  -- Rn, Tc, desugar applied to DebugView dictionary
+  -- Rn, Tc, desugar applied to dictionary
   (expr', _)    <- rnExpr (unLoc expr)
   (expr'', wcs) <- captureConstraints $ tcExpr expr' (Check mthTy)
   ev            <- simplifyTop wcs

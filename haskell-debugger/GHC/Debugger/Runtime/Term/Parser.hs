@@ -3,6 +3,7 @@
 -- interpreting and parsing 'Term's
 module GHC.Debugger.Runtime.Term.Parser where
 
+import Data.Functor
 import Control.Applicative
 import Control.Monad
 
@@ -19,13 +20,12 @@ import qualified GHC.Debugger.Logger as Logger
 import GHC.Utils.Outputable (text, (<+>), ppr)
 import Control.Monad.Reader
 import GHC.Core.TyCo.Compare
-import GHC.Driver.Config
 import GHC.Stack
-import GHCi.RemoteTypes
-
-
 
 import GHC.Debugger.Monad
+import GHC.Debugger.Utils (expectRight)
+
+import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 
 -- | The main entry point for running the 'TermParser'.
 obtainParsedTerm
@@ -162,7 +162,7 @@ subtermTerm idx = do
     Term{subTerms}
       | idx < length subTerms -> do
           liftDebugger $ logSDoc Logger.Debug (ppr subTerms)
-          pure (subTerms !! idx)
+          focus (pure (subTerms !! idx)) refreshTerm
       | otherwise -> parseError (TermParseError $ "missing subterm index " <> show idx)
     other -> parseError (TermParseError $ "expected Term with subterms, got " <> termTag other)
 
@@ -210,6 +210,15 @@ newtypeWrapParser = do
     NewtypeWrap{wrapped_term} -> pure wrapped_term
     other -> parseError (TermParseError $ "expected NewtypeWrap, got " <> termTag other)
 
+-- | Parse a primitive value as a single word (Prim term)
+primParser :: TermParser Word
+primParser = do
+  t <- anyTerm
+  case t of
+    Prim{valRaw=[w64_tid]} -> pure w64_tid
+    other -> do
+      parseError (TermParseError $ "expected a Prim term, got " <> termTag other)
+
 -- | Is the current focus a suspension?
 isSuspension :: TermParser Bool
 isSuspension = focus refreshTerm $ do
@@ -227,34 +236,6 @@ foreignValueToTerm ty fhv =
   liftDebugger $ do
     hsc_env <- getSession
     liftIO $ cvObtainTerm hsc_env 2 False ty fhv
-
---------------------------------------------------------------------------------
--- * Evaluation
---------------------------------------------------------------------------------
-
--- | Evaluate `f x`.
-evalApplication :: ForeignHValue -> ForeignHValue -> Debugger (EvalStatus_ [ForeignHValue] [HValueRef])
-evalApplication fref aref = do
-  hsc_env <- getSession
-  mk_list_fv <- compileExprRemote "(pure @IO . (:[])) :: a -> IO [a]"
-
-  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-      interp = hscInterp hsc_env
-
-  liftIO $ (evalStmt interp eval_opts $ (EvalThis mk_list_fv) `EvalApp` ((EvalThis fref) `EvalApp` (EvalThis aref)))
-
-handleStatusParser :: EvalStatus_ [ForeignHValue] [HValueRef] -> TermParser ForeignHValue
-handleStatusParser status =
-  case status of
-    EvalComplete _ (EvalSuccess [res]) -> pure res
-    EvalComplete _ (EvalSuccess []) ->
-      parseError (TermParseError "evaluation did not bind any values")
-    EvalComplete _ (EvalSuccess (_:_:_)) ->
-      parseError (TermParseError "evaluation produced more than one value")
-    EvalComplete _ (EvalException e) ->
-      parseError (TermParseError ("evaluation raised an exception: " ++ show e))
-    EvalBreak {} ->
-      parseError (TermParseError "evaluation unexpectedly hit a breakpoint")
 
 --------------------------------------------------------------------------------
 -- * Logging parsers
@@ -302,6 +283,27 @@ parseList item_parser =
         (matchConstructorTerm "[]" *> pure [])
     <|> (matchConstructorTerm ":" *> ((:) <$> subtermWith 0 item_parser <*> subtermWith 1 (parseList item_parser)))
 
+-- | Parse an 'Int'
+intParser :: TermParser Int
+intParser = fromIntegral <$> wordParser
+
+-- | Parse a 'Word'
+wordParser :: TermParser Word
+wordParser = subtermWith 0 primParser
+
+-- | Parse a 'String' term
+stringParser :: TermParser String
+stringParser = do
+  Term{val=string_fv} <- anyTerm
+  liftDebugger $
+    expectRight =<< Remote.evalString (Remote.untypedRef string_fv)
+
+-- | Parse a 'Maybe' something
+maybeParser :: TermParser a -> TermParser (Maybe a)
+maybeParser just_p = do
+  (matchConstructorTerm "Nothing" $> Nothing)
+  <|> (matchConstructorTerm "Just" *> (Just <$> subtermWith 0 just_p))
+
 --------------------------------------------------------------------------------
 -- * VarValue
 --------------------------------------------------------------------------------
@@ -328,7 +330,6 @@ varFieldsParser =
     -- Parses an item of type (IO String, VarFieldValue)
     parseFieldItem :: TermParser (String, Term)
     parseFieldItem = (,) <$> subtermWith 0 parseFieldLabel <*> subtermWith 1 varFieldValueParser
-
 
     parseFieldLabel :: TermParser String
     parseFieldLabel = do
@@ -366,8 +367,9 @@ programTermParser =
       let fref1 = val p1
       let fref2 = val p2
       let (_, _arg_ty, res_ty) = splitFunTy (termType p1)
-      eval_status <- liftDebugger $ evalApplication fref1 fref2
-      res <- handleStatusParser eval_status
+      res <- liftDebugger $
+        expectRight =<< Remote.eval
+          (Remote.untypedRef fref1 `Remote.app` Remote.untypedRef fref2)
       foreignValueToTerm res_ty res
 
     programBranchParser = do

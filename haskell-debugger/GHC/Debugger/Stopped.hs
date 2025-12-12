@@ -3,7 +3,10 @@
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
 module GHC.Debugger.Stopped where
 
+import Control.Monad
 import Control.Monad.Reader
+import Data.IORef
+import GHC.Stack.CloneStack as Stack
 
 import GHC
 import GHC.Types.Unique.FM
@@ -13,18 +16,23 @@ import GHC.Types.Name.Reader
 import GHC.Unit.Home.ModInfo
 import GHC.Unit.Module.ModDetails
 import GHC.Types.TypeEnv
-import GHC.Data.Maybe (expectJust)
+import GHC.Data.Maybe
 import GHC.Driver.Env as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Runtime.Eval
 import GHC.Types.SrcLoc
+import GHC.Utils.Outputable as Ppr
 import qualified GHC.Unit.Home.Graph as HUG
 
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Runtime
+import GHC.Debugger.Runtime.Thread
+import GHC.Debugger.Runtime.Thread.Stack
+import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Utils
+import qualified GHC.Debugger.Logger as Logger
 
 {-
 Note [Don't crash if not stopped]
@@ -47,27 +55,120 @@ because of the termination event we sent.
 -}
 
 --------------------------------------------------------------------------------
+-- * Threads
+--------------------------------------------------------------------------------
+
+getThreads :: Debugger [DebuggeeThread]
+getThreads = do
+  -- TODO: we want something more like 'listThreads', but ensure that we only
+  -- report the threads of the debuggee (and not the debugger, if they
+  -- are the same process). Perhaps the solution is to not allow them to be in
+  -- the same process, in which case 'listThreads' would be correct as is by
+  -- construction.
+  --
+  -- For now, we approximate by just listing out the ThreadsMap, under the
+  -- assumption the debugger client will only care about threads we've already
+  -- stopped at (which are the only ones we've inserted in the threads map),
+  -- but for full multi threaded debugging we need the listThreads.
+  --
+  -- tmap <- liftIO . readIORef =<< asks threadMap
+  -- let (t_ids, remote_refs) = unzip (threadMapToList tmap)
+  --
+  -- Oh, try the listThreads just for fun.
+  (t_ids, remote_refs) <- unzip <$> listAllLiveRemoteThreads
+  t_labels <- getRemoteThreadsLabels remote_refs
+  return $ zipWith
+    (\tid tlbl ->
+      DebuggeeThread
+        { tId = tid
+        , tName = tlbl
+        }
+    ) t_ids t_labels
+
+--------------------------------------------------------------------------------
 -- * Stack trace
 --------------------------------------------------------------------------------
 
 -- | Get the stack frames at the point we're stopped at
-getStacktrace :: Debugger [StackFrame]
-getStacktrace = GHC.getResumeContext >>= \case
-  [] ->
-    -- See Note [Don't crash if not stopped]
-    return []
-  r:_
-    | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
-    -> return
-        [ StackFrame
-          { name = GHC.resumeDecl r
-          , sourceSpan = realSrcSpanToSourceSpan ss
-          }
-        ]
-    | otherwise ->
-        -- No resume span; which should mean we're stopped on an exception.
-        -- No info for now.
-        return []
+getStacktrace :: RemoteThreadId -> Debugger [DbgStackFrame]
+getStacktrace req_tid = do
+
+  tm <- liftIO . readIORef =<< asks threadMap
+  let m_f_tid = lookupThreadMap (remoteThreadIntRef req_tid) tm
+  ipe_stack <- case m_f_tid of
+    Nothing -> pure []
+    Just f_tid -> do
+      -- For now, assume that if we can get an IPE backtrace then this thread
+      -- is compiled and doesn't have any interpreter frames.
+      -- Of course, this isn't true since we should also be able to get an IPE
+      -- backtrace for interpreter threads. Just not yet.
+      --
+      -- If IPE is empty => it's not an interpreter thread => the IPE backtrace
+      --  is the best we can do, so just return that.
+      getRemoteThreadIPEStack f_tid
+
+  case ipe_stack of
+    [] -> do
+      decoded_frames <- case m_f_tid of
+        Nothing -> pure []
+        Just f_tid -> do
+          hsc_env <- getSession
+          ibis <- getRemoteThreadStackCopy f_tid
+          let hug = hsc_HUG hsc_env
+          forM ibis $ \ibi -> do
+            info_brks <- liftIO $ readIModBreaks hug ibi
+            let modl  = getBreakSourceMod ibi info_brks
+            srcSpan   <- liftIO $ getBreakLoc (readIModModBreaks hug) ibi info_brks
+
+            -- Find function name
+            -- TODO: Cache moduleLineMap?
+            ticks <- fromMaybe (error "getStacktrace:getTicks") <$> makeModuleLineMap modl
+            let current_toplevel_decl = enclosingTickSpan ticks srcSpan
+
+            modl_str  <- display modl
+            return DbgStackFrame
+              { name = modl_str ++ "." -- ++ Stack.functionName stack_entry
+              , sourceSpan = realSrcSpanToSourceSpan $ current_toplevel_decl -- realSrcSpan srcSpan
+              }
+
+      -- Try decoding a stack with interpreter continuation frames (RetBCOs) and use the BRK_FUN src locations.
+      -- Add the latest resume context at the head.
+      head_frame <- GHC.getResumeContext >>= \case
+        [] ->
+          -- See Note [Don't crash if not stopped]
+          return Nothing
+        r:_
+          | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
+          -> do
+            r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
+            if r_tid == req_tid then
+              -- We're getting the stacktrace for the thread we're stopped at.
+              return $
+                Just DbgStackFrame
+                  { name = GHC.resumeDecl r
+                  , sourceSpan = realSrcSpanToSourceSpan ss
+                  }
+            else
+             return Nothing
+          | otherwise ->
+              -- No resume span; which should mean we're stopped on an exception.
+              -- No info for now.
+              return Nothing
+      return (maybe id (:) head_frame $ decoded_frames)
+    ipe_frames -> catMaybes <$> do
+      forM ipe_frames $ \stack_entry -> do
+        case srcSpanStringToSourceSpan (Stack.srcLoc stack_entry) of
+          Left err -> do
+            -- Couldn't parse. The srcLoc may be invalid so just keep this as info, not warning.
+            logSDoc Logger.Info $
+              text "Couldn't parse StackEntry srcLoc \"" Ppr.<> text (Stack.srcLoc stack_entry)
+                                                         Ppr.<> text "\":" <+> text err
+            return Nothing
+          Right sourceSpan ->
+            return $ Just DbgStackFrame
+              { name = Stack.moduleName stack_entry ++ "." ++ Stack.functionName stack_entry
+              , sourceSpan = sourceSpan
+              }
 
 --------------------------------------------------------------------------------
 -- * Scopes
@@ -185,7 +286,7 @@ getVariables vk = do
 
       -- (VARR)(a) from here onwards
 
-      LocalVariables -> fmap Right $
+      LocalVariables -> fmap Right $ do
         -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
         mapM tyThingToVarInfo =<< GHC.getBindings
 

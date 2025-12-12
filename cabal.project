@@ -2,6 +2,9 @@ packages: . haskell-debugger-view
 
 allow-newer: ghc-bignum,containers,time,ghc,base,template-haskell
 
+package *
+    ghc-options: -finfo-table-map
+
 if !os(windows)
     package *
         -- Speeds up a bit
