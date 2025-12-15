@@ -64,11 +64,16 @@ library
                       GHC.Debugger.Stopped.Variables,
 
                       GHC.Debugger.Runtime,
+
                       GHC.Debugger.Runtime.Eval,
                       GHC.Debugger.Runtime.Eval.RemoteExpr,
                       GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin,
+
                       GHC.Debugger.Runtime.Instances,
                       GHC.Debugger.Runtime.Instances.Discover,
+
+                      GHC.Debugger.Runtime.Compile,
+                      GHC.Debugger.Runtime.Compile.Cache,
 
                       GHC.Debugger.Runtime.Term.Parser,
                       GHC.Debugger.Runtime.Term.Key,

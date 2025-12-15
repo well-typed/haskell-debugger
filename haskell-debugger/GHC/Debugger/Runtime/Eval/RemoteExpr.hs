@@ -33,13 +33,13 @@ import GHC.Driver.Env
 import GHC.Runtime.Interpreter as Interp hiding (evalIO, evalString)
 import qualified GHC.Runtime.Interpreter as Interp
 import Control.Monad.Reader
-import GHC.Driver.Config
 import GHCi.RemoteTypes
 
 import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Monad
 import GHC.Debugger.Utils
-import GHC.Debugger.Runtime.Eval
+import GHC.Debugger.Runtime.Eval as Raw
+import GHC.Debugger.Runtime.Compile
 
 --------------------------------------------------------------------------------
 -- * Higher-level: eDSL for (possibly) remote evaluation on the debuggee
@@ -185,13 +185,7 @@ evalIOList expr = runExceptT $ do
 
   res_fv <- debuggeeEval expr
 
-  hsc_env <- lift getSession
-  let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-      interp = hscInterp hsc_env
-
-  r <- handleMultiStatus Prelude.<$> liftIO (
-    evalStmt interp eval_opts (EvalThis (castForeignRef res_fv))
-    )
+  r <- lift $ Raw.evalExpr (EvalThis (castForeignRef res_fv))
   liftEither (map castForeignRef Prelude.<$> r)
 
 -- | Execute an @IO String@ on the remote process and serialize the string back to the debugger.
@@ -214,11 +208,7 @@ evalIOString expr = runExceptT $ do
 debuggeeEval :: RemoteExpr a -> ExceptT BadEvalStatus Debugger (ForeignRef a)
 debuggeeEval expr = do
     eval_expr <- go (pure (singletonList expr))
-
-    hsc_env <- lift $ getSession
-    let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-    r <- lift $ handleSingStatus Prelude.<$>
-      liftIO (evalStmt (hscInterp hsc_env) eval_opts eval_expr)
+    r <- lift $ handleSingStatus Prelude.<$> Raw.evalExpr eval_expr
     liftEither (castForeignRef Prelude.<$> r)
   where
 
@@ -228,20 +218,16 @@ debuggeeEval expr = do
         . RemoteExpr a' -> ExceptT BadEvalStatus Debugger (EvalExpr ForeignHValue)
     go = \case
       RemRaw s -> do
-        fhv <- lift $ compileExprRemote s
+        fhv <- lift $ compileRaw s
         Prelude.return (EvalThis fhv)
       RemVar mod_name var_name ty_args -> do
-        -- TODO: Lookup mod_var var_name and type in a cache first rather than compile.
-        fhv <- lift $ compileExprRemote
-          ("(" ++ moduleNameString mod_name
-               ++ "." ++ var_name ++ ") "
-               ++ unwords (map ('@':) ty_args))
+        fhv <- lift $ compileVar mod_name var_name ty_args
         Prelude.return (EvalThis fhv)
       RemRef r -> Prelude.return (EvalThis r)
       RemInt i ->
         -- todo: interpreter message for unboxed literals
         -- TODO: lookup in the cache if we loaded this int already.
-        EvalThis Prelude.<$> lift (compileExprRemote (show i))
+        EvalThis Prelude.<$> lift (compileRaw (show i ++ ":: Int"))
       RemApp f arg -> do
         arg_e <- go arg
         f_e   <- go f
@@ -250,12 +236,8 @@ debuggeeEval expr = do
 
         expr_arg_io_fv <- go (fmapIO singletonListVar iox)
 
-        hsc_env <- lift $ getSession
-        let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
-        e_arg_fv <- lift $ handleSingStatus Prelude.<$>
-          -- EvalStmt takes a type @IO [a]@
-          liftIO (evalStmt (hscInterp hsc_env) eval_opts expr_arg_io_fv)
-        arg_fv <- liftEither (castForeignRef Prelude.<$> e_arg_fv)
+        e_arg_fv <- lift $ handleSingStatus Prelude.<$> Raw.evalExpr expr_arg_io_fv
+        arg_fv   <- liftEither (castForeignRef Prelude.<$> e_arg_fv)
         go (k (ref arg_fv))
 
 instance Show (RemoteExpr (a :: TYPE (BoxedRep l))) where
@@ -271,10 +253,6 @@ instance Show (RemoteExpr (a :: TYPE (BoxedRep l))) where
   show (RemBindIO iox k) =
     let k_str = k (var (mkModuleName "Dummy") "dummy" [])
      in show iox ++ ">>= (\\dummy -> " ++ show k_str ++ ")"
-
-mkUnit :: EvalExpr a -> EvalExpr ()
-mkUnit EvalThis{} = EvalThis ()
-mkUnit (EvalApp a b) = mkUnit a `EvalApp` mkUnit b
 
 --------------------------------------------------------------------------------
 -- ** Builtins that are needed here too.
