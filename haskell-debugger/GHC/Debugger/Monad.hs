@@ -60,6 +60,7 @@ import GHC.Debugger.Runtime.Term.Cache
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Session
 import GHC.Debugger.Session.Builtin
+import GHC.Debugger.Runtime.Compile.Cache
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import qualified GHC.Debugger.Runtime.Thread.Map as TM
 
@@ -95,6 +96,9 @@ data DebuggerState = DebuggerState
 
       , threadMap         :: IORef TM.ThreadMap
       -- ^ 'ThreadMap' for threads spawned by the debuggee
+
+      , compCache         :: IORef CompCache
+      -- ^ Cache loaded and compiled expressions.
 
       , genUniq           :: IORef Int
       -- ^ Generates unique ints
@@ -489,6 +493,7 @@ initialDebuggerState l hsDbgViewUid =
                 <*> liftIO (newIORef mempty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
                 <*> liftIO (newIORef TM.emptyThreadMap)
+                <*> liftIO (newIORef emptyCompCache)
                 <*> liftIO (newIORef 0)
                 <*> pure hsDbgViewUid
                 <*> pure l

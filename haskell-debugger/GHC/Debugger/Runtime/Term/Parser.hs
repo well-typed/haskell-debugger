@@ -26,6 +26,7 @@ import GHC.Debugger.Monad
 import GHC.Debugger.Utils (expectRight)
 
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
+import qualified GHC.Debugger.Runtime.Compile as Comp
 
 -- | The main entry point for running the 'TermParser'.
 obtainParsedTerm
@@ -388,5 +389,5 @@ programTermParser =
       foreignValueToTerm boolTy bool_fv
 
 reifyBool :: Bool -> Debugger ForeignHValue
-reifyBool b = compileExprRemote (show b ++ ":: Bool")
+reifyBool b = Comp.compileRaw (show b ++ ":: Bool")
 
