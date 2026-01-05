@@ -53,7 +53,7 @@ if ! git diff --staged --quiet; then
   exit 1
 fi
 
-# Tag latest commit
+echo "Tagging latest commit..."
 git tag "v$PKG_VERSION" -m "Release: $PKG_VERSION"
 
 echo "Please don't forget to push with --tags"
