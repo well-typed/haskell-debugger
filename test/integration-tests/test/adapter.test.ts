@@ -203,7 +203,9 @@ describe("Debug Adapter Tests", function () {
     }
 
     const fetchScopeVars = async (scopeName) => {
-        const stResp = await dc.stackTraceRequest({ threadId: 0 });
+        const threadsResp = await dc.threadsRequest();
+        const threadId = threadsResp.body.threads[0].id;
+        const stResp = await dc.stackTraceRequest({ threadId: threadId });
         const sf0 = stResp.body.stackFrames[0];
         const scResp = await dc.scopesRequest({ frameId: sf0.id });
         const someScope = scResp.body.scopes.find(scope => scope.name == scopeName)!!;
