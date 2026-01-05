@@ -18,6 +18,7 @@ import Control.Monad.Reader
 import Data.Function
 import Data.IORef
 import Data.Maybe
+import Data.Version (makeVersion, showVersion)
 import Prelude hiding (mod)
 import System.IO
 #ifdef MIN_VERSION_unix
@@ -48,6 +49,7 @@ import GHC.Types.SourceError
 import GHC.Types.SourceText
 import GHC.Types.Unique.Supply as GHC
 import GHC.Unit.Module.Graph
+import GHC.Unit.State
 import GHC.Unit.Module.ModSummary as GHC
 import GHC.Unit.Types
 import GHC.Utils.Logger as GHC
@@ -414,6 +416,8 @@ getHsDebuggerViewUid = asks hsDbgViewUnitId
 -- See also comment on the @'hsDbgViewUnitId'@ field of @'DebuggerState'@
 findHsDebuggerViewUnitId :: ModuleGraph -> GHC.Ghc (Maybe UnitId)
 findHsDebuggerViewUnitId mod_graph = do
+  hsc_env <- getSession
+  let unitState = hsc_units hsc_env
 
   -- Only looks at unit-nodes, this is not robust!
   -- TODO: Better lookup of unit-id
@@ -423,10 +427,23 @@ findHsDebuggerViewUnitId mod_graph = do
         , "haskell-debugger-view" `L.isPrefixOf` unitIdString uid
         ]
 
+      -- If the haskell-debugger-view is in the dependency graph, it must have
+      -- one of the versions the debugger is known to support:
+      supported_versions
+        = [ makeVersion [0, 2, 0, 0] ]
+
   case hskl_dbgr_vws of
-    [hdv_uid] ->
+    [hdv_uid] -> do
       -- In transitive closure, use that one.
-      return (Just hdv_uid)
+      -- Check that the version is exactly 0.2.0.0
+      case lookupUnit unitState (RealUnit (Definite hdv_uid)) of
+        Just unitInfo -> do
+          let version = unitPackageVersion unitInfo
+          if version `elem` supported_versions
+            then return (Just hdv_uid)
+            else throwM UnsupportedHsDbgViewVersion{supportedVersions=supported_versions, actualVersion=version}
+        Nothing ->
+          error "Could not find unit info for haskell-debugger-view"
     [] -> do
       return Nothing
     _  ->
@@ -502,12 +519,22 @@ initialDebuggerState l hsDbgViewUid =
 liftGhc :: GHC.Ghc a -> Debugger a
 liftGhc = Debugger . ReaderT . const
 
+--------------------------------------------------------------------------------
+
 data DebuggerFailedToLoad = DebuggerFailedToLoad
 instance Exception DebuggerFailedToLoad
 instance Show DebuggerFailedToLoad where
   show DebuggerFailedToLoad = "Failed to compile and load user project."
 
---------------------------------------------------------------------------------
+data UnsupportedHsDbgViewVersion = UnsupportedHsDbgViewVersion
+  { supportedVersions :: [ Version ]
+  , actualVersion :: Version
+  }
+instance Exception UnsupportedHsDbgViewVersion
+instance Show UnsupportedHsDbgViewVersion where
+  show (UnsupportedHsDbgViewVersion supported actual) =
+    "Cannot use unsupported haskell-debugger-view version found in the transitive closure: " ++ showVersion actual ++
+    " (supported: " ++ L.intercalate ", " (map showVersion supported) ++ ")"
 
 --------------------------------------------------------------------------------
 -- * Modules
