@@ -1,0 +1,4 @@
+[1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>]
+(hdb) MyType
+EvalCompleted {resultVal = "()", resultType = "()", resultStructureRef = NoVariables}
+(hdb) Exiting...

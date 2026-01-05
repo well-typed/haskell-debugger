@@ -1,0 +1,6 @@
+#!/bin/sh
+
+# the pkgdb is filled in by hie-bios
+# this test should succeed because we are using a supported
+#   haskell-debugger-view (== 0.2.0.0), unlike for `T130`
+hdb -v0 app/Main.hs 2>&1 < T130b.hdb-stdin || true
