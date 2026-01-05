@@ -81,7 +81,7 @@ jobs:
         with:
           pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
           registryUrl: https://marketplace.visualstudio.com
-          extensionFile: ${{ runner.temp }}/extension/haskell-debugger-extension-0.10.1.vsix
+          extensionFile: ${{ runner.temp }}/extension/haskell-debugger-extension-0.11.0.vsix
 
       # Publish a new hackage release of the haskell-debugger
       - name: Hackage Release

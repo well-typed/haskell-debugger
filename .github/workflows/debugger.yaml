@@ -14,7 +14,7 @@ on:
 
 env:
   haskellDebuggerViewVersion: 0.2.0.0
-  haskellDebuggerVersion: 0.10.1.0
+  haskellDebuggerVersion: 0.11.0.0
   USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE: ${{ 
       github.event_name == 'workflow_call'
         && inputs.use-haskell-debugger-view-from-hackage
