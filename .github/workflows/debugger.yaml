@@ -126,8 +126,8 @@ jobs:
       - name: Build and Run integration tests
         run: |
           echo "Using haskell-debugger-view from hackage: ${{env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE}}"
-          (cd ${{ runner.temp }}/dist && cd haskell-debugger-${{env.haskellDebuggerVersion}} && cabal build exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
-          export DEBUGGER=$(cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}} && cabal list-bin exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell)
+          (cd ${{ runner.temp }}/dist && cd haskell-debugger-${{env.haskellDebuggerVersion}} && cabal build exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell --ghc-options=-Werror)
+          export DEBUGGER=$(cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}} && cabal list-bin exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell --ghc-options=-Werror)
           echo "DEBUGGER: $DEBUGGER"
           cd test/integration-tests/
           make clean

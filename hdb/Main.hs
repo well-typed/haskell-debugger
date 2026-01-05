@@ -176,7 +176,7 @@ talk :: Recorder (WithSeverity MainLog)
      -- connection is expected. See #95.
      -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l support_rit_var pid_var client_proxy_signal = \ case
+talk l support_rit_var _pid_var client_proxy_signal = \ case
   CommandInitialize -> do
     InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
     let runInTerminal = fromMaybe False supportsRunInTerminalRequest
@@ -271,7 +271,7 @@ ack :: Recorder (WithSeverity MainLog)
     -> IORef (Maybe Int)
     -- ^ Reference to PID of runInTerminal proxy process running
     -> ReverseRequestResponse -> DebugAdaptorCont ()
-ack l ref rrr = case rrr.reverseRequestCommand of
+ack l _ref rrr = case rrr.reverseRequestCommand of
   ReverseCommandRunInTerminal -> do
     when rrr.success $ do
       logWith l Info $ LaunchLog $ T.pack "RunInTerminal was successful"

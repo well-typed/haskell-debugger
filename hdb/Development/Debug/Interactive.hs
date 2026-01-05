@@ -5,14 +5,14 @@ import System.IO
 import System.Exit
 import System.Directory
 import System.Console.Haskeline
-import System.Console.Haskeline.Completion
+-- import System.Console.Haskeline.Completion
 import System.FilePath
 import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.RWS
 import Options.Applicative
-import Options.Applicative.BashCompletion
+-- import Options.Applicative.BashCompletion
 
 import Development.Debug.Session.Setup
 
@@ -126,11 +126,11 @@ printResponse recd = \case
   GotStacktrace stackframes -> outputStrLn $ show stackframes
   GotScopes scopeinfos -> outputStrLn $ show scopeinfos
   GotVariables vis -> outputStrLn $ show vis -- (Either VarInfo [VarInfo])
-  Aborted str -> outputStrLn ("Aborted: " ++ str)
+  Aborted err_str -> outputStrLn ("Aborted: " ++ err_str)
   Initialised -> pure ()
 
 printEvalResult :: Recorder (WithSeverity DebuggerLog) -> EvalResult -> InteractiveDM ()
-printEvalResult recd EvalStopped{breakId} = do
+printEvalResult recd EvalStopped{breakId=_} = do
   out <- lift . lift $ execute recd GetScopes
   printResponse recd out
 printEvalResult _ er = outputStrLn $ show er
@@ -192,7 +192,7 @@ runParser entryFile entryPoint entryArgs =
   -- just "run"
   <|> (pure $ DebugExecution (mkEntry entryPoint) entryFile entryArgs)
   where
-    parseEntry =
+    _parseEntry =
       fmap mkEntry $
       option str
         ( long "entry"
@@ -270,4 +270,5 @@ parseCmd input = do
        in outputStrLn msg >> pure Nothing
     _ -> outputStrLn "Unsupported command parsing mode" >> pure Nothing
 
+parserPrefs :: ParserPrefs
 parserPrefs = prefs (disambiguate <> showHelpOnError <> showHelpOnEmpty)

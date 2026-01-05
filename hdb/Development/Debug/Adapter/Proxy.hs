@@ -130,7 +130,7 @@ runInTerminalHdbProxy l port = do
         catch (forever $ do
           str <- BS8.hGetLine stdin
           NBS.sendAll sock (str <> BS8.pack "\n")
-          ) $ \(e::IOException) -> return () -- connection dropped, just exit.
+          ) $ \(_e::IOException) -> return () -- connection dropped, just exit.
 
       -- Forward stdout from sock
       catch (forever $ do
@@ -141,9 +141,9 @@ runInTerminalHdbProxy l port = do
             close sock
             exitSuccess
           else BS8.hPut stdout msg >> hFlush stdout
-        ) $ \(e::IOException) -> return () -- connection dropped, just exit.
+        ) $ \(_e::IOException) -> return () -- connection dropped, just exit.
 
-    ) $ \(e::IOException) -> do
+    ) $ \(_e::IOException) -> do
       hPutStrLn stderr "Failed to connect to debugger server proxy -- did the debuggee compile and start running successfully?"
 
 -- | Send a 'runInTerminal' reverse request to the DAP client
