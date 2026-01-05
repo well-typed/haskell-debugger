@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase, BlockArguments #-}
+{-# LANGUAGE LambdaCase, BlockArguments, OrPatterns #-}
 -- | This module contains the 'TermParser' abstraction, which provides utilities for
 -- interpreting and parsing 'Term's
 module GHC.Debugger.Runtime.Term.Parser where
@@ -335,9 +335,11 @@ varFieldsParser =
     parseFieldLabel :: TermParser String
     parseFieldLabel = do
       ioStrTerm <- anyTerm
-      liftDebugger $ do
-        interp <- hscInterp <$> getSession
-        liftIO $ evalString interp (val ioStrTerm)
+      interp <- liftDebugger $ hscInterp <$> getSession
+      case ioStrTerm of
+        (Suspension{} ; Term{})
+          -> liftIO $ evalString interp (val ioStrTerm)
+        _ -> parseError (TermParseError "parseFieldLabel expected a val")
 
 varFieldTupleParser :: TermParser (Term, Term)
 varFieldTupleParser = tuple2Of anyTerm anyTerm
@@ -365,13 +367,14 @@ programTermParser =
       matchConstructorTerm "ProgramAp"
       p1 <- subtermWith 0 programTermParser
       p2 <- subtermWith 1 programTermParser
-      let fref1 = val p1
-      let fref2 = val p2
-      let (_, _arg_ty, res_ty) = splitFunTy (termType p1)
-      res <- liftDebugger $
-        expectRight =<< Remote.eval
-          (Remote.untypedRef fref1 `Remote.app` Remote.untypedRef fref2)
-      foreignValueToTerm res_ty res
+      case (p1, p2) of
+        ( (Suspension{} ; Term{}), (Suspension{} ; Term{}) ) -> do
+          let (_, _arg_ty, res_ty) = splitFunTy (termType p1)
+          res <- liftDebugger $
+            expectRight =<< Remote.eval
+              (Remote.untypedRef (val p1) `Remote.app` Remote.untypedRef (val p2))
+          foreignValueToTerm res_ty res
+        _ -> parseError (TermParseError "programApParser: expected two vals")
 
     programBranchParser = do
       matchConstructorTerm "ProgramBranch"

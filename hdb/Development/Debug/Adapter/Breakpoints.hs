@@ -21,11 +21,11 @@ import Development.Debug.Adapter.Interface
 commandBreakpointLocations :: DebugAdaptor ()
 commandBreakpointLocations = do
   BreakpointLocationsArguments{..} <- getArguments
-  file <- fileFromSourcePath breakpointLocationsArgumentsSource
+  filePath <- fileFromSourcePath breakpointLocationsArgumentsSource
 
   DidGetBreakpoints mspan <-
     sendSync $ GetBreakpointsAt
-      ModuleBreak { path      = file
+      ModuleBreak { path      = filePath
                   , lineNum   = breakpointLocationsArgumentsLine
                   , columnNum = breakpointLocationsArgumentsColumn
                   }
@@ -47,17 +47,17 @@ commandBreakpointLocations = do
 commandSetBreakpoints :: DebugAdaptor ()
 commandSetBreakpoints = do
   SetBreakpointsArguments {..} <- getArguments
-  file <- fileFromSourcePath setBreakpointsArgumentsSource
+  filePath <- fileFromSourcePath setBreakpointsArgumentsSource
   let breaks_wanted = fromMaybe [] setBreakpointsArgumentsBreakpoints
 
   -- Clear existing module breakpoints
-  DidClearBreakpoints <- sendSync (ClearModBreakpoints file)
+  DidClearBreakpoints <- sendSync (ClearModBreakpoints filePath)
 
   -- Set requested ones
   breaks <- forM breaks_wanted $ \bp -> do
     DidSetBreakpoint bf <-
       sendSync $ SetBreakpoint
-        ModuleBreak { path      = file
+        ModuleBreak { path      = filePath
                     , lineNum   = DAP.sourceBreakpointLine bp
                     , columnNum = DAP.sourceBreakpointColumn bp
                     }

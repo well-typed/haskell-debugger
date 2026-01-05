@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, LambdaCase, BlockArguments #-}
+{-# LANGUAGE TemplateHaskell, LambdaCase, BlockArguments, OrPatterns #-}
 module GHC.Debugger.Runtime.Instances where
 
 import GHC
@@ -6,9 +6,11 @@ import GHC.Driver.Env
 import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as Interp
+import GHC.Utils.Outputable
 import Control.Monad.Reader
 
 import GHC.Debugger.Monad
+import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Runtime.Instances.Discover
 import GHC.Debugger.Runtime.Term.Parser
 
@@ -21,7 +23,7 @@ data VarValueResult = VarValueResult { varValueResult :: String, varValueResultE
 -- | Get the custom representation of this 'Term' by applying a 'DebugView'
 -- instance 'debugValue' method if there is one.
 debugValueTerm :: Term -> Debugger (Maybe VarValueResult)
-debugValueTerm term = do
+debugValueTerm term@(Suspension{} ; Term{}) = do
   hsc_env <- getSession
   let interp = hscInterp hsc_env
   let ty = termType term
@@ -40,13 +42,21 @@ debugValueTerm term = do
               Left _ ->
                 return Nothing
               Right (strTerm, valBool) -> do
-                valStr <- liftIO $
-                  evalString interp (val strTerm {- whose type is IO String, from varValueIO -})
+                case strTerm of
+                  (Suspension{} ; Term{}) -> do
+                    valStr <- liftIO $
+                      evalString interp (val strTerm {- whose type is IO String, from varValueIO -})
 
-                return $ Just VarValueResult
-                  { varValueResult = valStr
-                  , varValueResultExpandable = valBool
-                  }
+                    return $ Just VarValueResult
+                      { varValueResult = valStr
+                      , varValueResultExpandable = valBool
+                      }
+                  _ -> do
+                    logSDoc Logger.Warning (text "debugValueTerm(2): Expecting" <+> ppr strTerm <+> text "to be a Term or Suspension.")
+                    return Nothing
+debugValueTerm term = do
+  logSDoc Logger.Warning (text "debugValueTerm: Expecting" <+> ppr term <+> text "to be a Term or Suspension.")
+  return Nothing
 
 
 
@@ -58,7 +68,7 @@ debugValueTerm term = do
 --
 -- Returns @Nothing@ if no instance was found for the type of the given term
 debugFieldsTerm :: Term -> Debugger (Maybe [(String, Term)])
-debugFieldsTerm term = do
+debugFieldsTerm term@(Suspension{} ; Term{}) = do
   let ty = termType term
   mbInst <- getDebugViewInstance ty
   case mbInst of
@@ -74,3 +84,6 @@ debugFieldsTerm term = do
             obtainParsedTerm "VarFields" 2 True varFieldsIOTy transformed_v varFieldsParser >>= \case
               Left _ -> pure Nothing
               Right res -> pure (Just res)
+debugFieldsTerm term = do
+  logSDoc Logger.Warning (text "debugValueTerm: Expecting" <+> ppr term <+> text "to be a Term or Suspension.")
+  return Nothing

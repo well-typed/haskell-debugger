@@ -163,8 +163,7 @@ initHomeUnitEnv unitDflags env = do
   initial_home_graph <- createUnitEnvFromFlags dflags0 unitDflags
   let home_units = unitEnv_keys initial_home_graph
   init_home_unit_graph <- forM initial_home_graph $ \homeUnitEnv -> do
-    let cached_unit_dbs = homeUnitEnv_unit_dbs homeUnitEnv
-        dflags = homeUnitEnv_dflags homeUnitEnv
+    let dflags = homeUnitEnv_dflags homeUnitEnv
         old_hpt = homeUnitEnv_hpt homeUnitEnv
     (dbs,unit_state,home_unit,mconstants) <- State.initUnits (hsc_logger env) dflags Nothing home_units
     updated_dflags <- GHC.updatePlatformConstants dflags mconstants
