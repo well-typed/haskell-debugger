@@ -13,7 +13,7 @@ on:
         type: boolean
 
 env:
-  haskellDebuggerViewVersion: 0.1.0.0
+  haskellDebuggerViewVersion: 0.2.0.0
   haskellDebuggerVersion: 0.10.1.0
   USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE: ${{ 
       github.event_name == 'workflow_call'
