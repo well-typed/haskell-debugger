@@ -76,14 +76,29 @@ getThreads = do
   --
   -- Oh, try the listThreads just for fun.
   (t_ids, remote_refs) <- unzip <$> listAllLiveRemoteThreads
-  t_labels <- getRemoteThreadsLabels remote_refs
-  return $ zipWith
-    (\tid tlbl ->
-      DebuggeeThread
+  t_labels             <- getRemoteThreadsLabels remote_refs
+  let
+    _mkDebuggeeThread tid tlbl
+      = DebuggeeThread
         { tId = tid
         , tName = tlbl
         }
-    ) t_ids t_labels
+    _all_threads
+      = zipWith _mkDebuggeeThread t_ids t_labels
+
+  -- TODO: We ignore _all_threads and report only the main execution thread for now.
+  GHC.getResumeContext >>= \case
+    [] ->
+      -- See Note [Don't crash if not stopped]
+      return []
+    r:_ -> do
+      r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
+      return
+        [ DebuggeeThread
+          { tId = r_tid
+          , tName = Just "Main Thread"
+          }
+        ]
 
 --------------------------------------------------------------------------------
 -- * Stack trace
@@ -109,7 +124,7 @@ getStacktrace req_tid = do
 
   case ipe_stack of
     [] -> do
-      decoded_frames <- case m_f_tid of
+      _decoded_frames <- case m_f_tid of
         Nothing -> pure []
         Just f_tid -> do
           hsc_env <- getSession
@@ -154,7 +169,9 @@ getStacktrace req_tid = do
               -- No resume span; which should mean we're stopped on an exception.
               -- No info for now.
               return Nothing
-      return (maybe id (:) head_frame $ decoded_frames)
+      -- TODO: Currently, only display head_frame
+      -- return (maybe id (:) head_frame $ decoded_frames)
+      return (maybe [] (:[]) head_frame)
     ipe_frames -> catMaybes <$> do
       forM ipe_frames $ \stack_entry -> do
         case srcSpanStringToSourceSpan (Stack.srcLoc stack_entry) of
