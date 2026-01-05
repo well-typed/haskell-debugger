@@ -1,6 +1,6 @@
 cabal-version:   3.12
 name:            haskell-debugger-view
-version:         0.1.0.0
+version:         0.2.0.0
 license:         BSD-3-Clause
 author:          Matthew Pickering, Rodrigo Mesquita
 maintainer:      matthewtpickering@gmail.com, rodrigo@well-typed.com

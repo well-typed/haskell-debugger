@@ -117,7 +117,7 @@ library
                       text >= 2.1 && < 2.3,
                       co-log-core >= 0.3.2.5 && < 0.4,
 
-                      haskell-debugger-view >= 0.1 && < 1.0
+                      haskell-debugger-view >= 0.2 && < 1.0
 
     if !os(windows)
         build-depends: unix >= 2.8.6 && < 2.9,
