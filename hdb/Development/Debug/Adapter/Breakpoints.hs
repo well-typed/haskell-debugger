@@ -81,7 +81,7 @@ commandSetFunctionBreakpoints = do
   breaks <- forM breaks_wanted $ \bp -> do
     DidSetBreakpoint bf <-
       sendSync $ SetBreakpoint
-        FunctionBreak { function  = T.unpack $ fromJust {- not optional! -} $ DAP.functionBreakpointName bp }
+        FunctionBreak { function  = T.unpack $ DAP.functionBreakpointName bp }
         (readMaybe @Int =<< (T.unpack <$> DAP.functionBreakpointHitCondition bp))
         (T.unpack <$> DAP.functionBreakpointCondition bp)
     registerBreakFound bf
