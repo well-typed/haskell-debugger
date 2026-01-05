@@ -1,5 +1,25 @@
 # Revision history for haskell-debugger
 
+## 0.11.0.0 -- 2026-01-05
+
+* Introduce but don't yet expose infrastructure for debugging multi-threaded
+  programs and constructing better callstacks.
+* Introduce `RemoteExpr`: A DSL for evaluation on the remote process.
+    * This allows us to cache remote expressions at a much greater granularity
+      which improves performance and memory usage significantly in the long term.
+* Improves logging to Debug Console
+* Augment `haskell-debugger-version`, version `0.2.0.0` with
+    * This release brings the `Program` DSL which allows the debuggee to be
+      queried from a custom instance, making it possible to implement
+      visualisations which rely on e.g. evaluatedness of a term.
+        * See the `DebugView` instance for `[a]` for an example of a more
+          complex instance.
+    * `haskell-debugger-0.11.0.0` is only compatible with
+      `haskell-debugger-view-0.2.0.0` and will abort if unsupported
+      `haskell-debugger-view` versions are found in the dependencies closure
+* Bump `dap` minimum version to `0.3.1`
+* Various fixes and code improvements
+
 ## 0.10.1.0 -- 2025-11-21
 
 * Fixes critical bug which prevented debugger from being used with non-boot
