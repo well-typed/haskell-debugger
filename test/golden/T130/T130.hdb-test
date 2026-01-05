@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# the pkgdb is filled in by hie-bios
+# this test should fail because we are using haskell-debugger-view == 0.1.0.0
+# which is not supported by this debugger version.
+# (Note: drop the output because the callstack is hard to normalize)
+
+if (hdb app/Main.hs 2>&1 | grep "Cannot use unsupported") < T130.hdb-stdin; then
+    exit 0
+fi
+
+echo "Expecting UnsupportedHsDbgViewVersion but didn't find that error in the debugger output:"
