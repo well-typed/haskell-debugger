@@ -34,6 +34,7 @@ main = do
       , testGroup "Unit tests" unitTests
       ]
 
+unitTests :: [TestTree]
 unitTests =
   [ runInTerminalTests
   ]
@@ -81,10 +82,14 @@ goldenVsStringComparing name ref act = do
   -- Normalise the action producing the output
   normalisingAct = do
     tmpDir <- getCanonicalTemporaryDirectory
-    replaceRE <- compileSearchReplace (tmpDir ++ ".*" ++ takeBaseName (takeDirectory ref) {- the folder in which the test is run, inside the canonical temp dir-})
-                                      "<TEMPORARY-DIRECTORY>"
+    replaceREs <- traverse (uncurry compileSearchReplace)
+      [ ( tmpDir ++ ".*" ++ takeBaseName (takeDirectory ref) {- the folder in which the test is run, inside the canonical temp dir-}
+        , "<TEMPORARY-DIRECTORY>" )
+      , ( "Using cabal specification: .*"
+        , "Using cabal specification: <VERSION>" )
+      ]
 
-    let normalising (LT.decodeUtf8 -> txt) = txt *=~/ replaceRE
+    let normalising (LT.decodeUtf8 -> txt) = foldl' (*=~/) txt replaceREs
 
     normalising <$> act
 
