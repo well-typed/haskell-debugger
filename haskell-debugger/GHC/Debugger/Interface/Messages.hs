@@ -196,7 +196,7 @@ data SourceSpan = SourceSpan
       , endCol :: {-# UNPACK #-} !Int
       -- ^ RealSrcSpan end col
       }
-      deriving (Show)
+      deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
 -- Responses
