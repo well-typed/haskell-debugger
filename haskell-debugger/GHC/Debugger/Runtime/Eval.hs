@@ -2,19 +2,26 @@
 
 -- | Higher-level interface to evaluating things in the (possibly remote) debuggee process
 module GHC.Debugger.Runtime.Eval
-  ( evalExpr
+  (
+    -- * Raw evaluation
+    evalExpr, evalString
+
+    -- ** Error handling
   , handleSingStatus
   , BadEvalStatus(..)
+
+    -- ** Re-exports
+  , EvalExpr(..)
   ) where
 
 import GHC
-import GHC.Runtime.Interpreter as Interp
 import GHCi.RemoteTypes
 import GHCi.Message
 import Control.Exception
 import GHC.Driver.Env
 import GHC.Driver.Config
 import Control.Monad.IO.Class
+import qualified GHC.Runtime.Interpreter as Interp
 
 import GHC.Debugger.Utils
 import GHC.Debugger.Monad
@@ -29,11 +36,18 @@ evalExpr eval_expr = do
   hsc_env <- getSession
   let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
   handleMultiStatus <$>
-    liftIO (evalStmt (hscInterp hsc_env) eval_opts eval_expr)
+    liftIO (Interp.evalStmt (hscInterp hsc_env) eval_opts eval_expr)
   where
     mkUnit :: EvalExpr a -> EvalExpr ()
     mkUnit EvalThis{} = EvalThis ()
     mkUnit (EvalApp a b) = mkUnit a `EvalApp` mkUnit b
+
+-- | Evaluate a foreign value of type @IO String@ to a @String@
+evalString :: ForeignRef (IO String) -> Debugger String
+evalString string_fhv = do
+  hsc_env <- getSession
+  liftIO $
+    Interp.evalString (hscInterp hsc_env) (castForeignRef string_fhv)
 
 -- ** Handling evaluation results ----------------------------------------------
 
