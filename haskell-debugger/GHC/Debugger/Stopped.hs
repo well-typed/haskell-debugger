@@ -7,6 +7,7 @@ import Control.Monad
 import Control.Monad.Reader
 import Data.IORef
 import GHC.Stack.CloneStack as Stack
+import qualified Data.List as L
 
 import GHC
 import GHC.Types.Unique.FM
@@ -31,6 +32,7 @@ import GHC.Debugger.Runtime.Thread.Stack
 import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
+import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
 import GHC.Debugger.Utils
 import qualified GHC.Debugger.Logger as Logger
 
@@ -78,27 +80,15 @@ getThreads = do
   (t_ids, remote_refs) <- unzip <$> listAllLiveRemoteThreads
   t_labels             <- getRemoteThreadsLabels remote_refs
   let
-    _mkDebuggeeThread tid tlbl
+    mkDebuggeeThread tid tlbl
       = DebuggeeThread
         { tId = tid
         , tName = tlbl
         }
-    _all_threads
-      = zipWith _mkDebuggeeThread t_ids t_labels
+    all_threads
+      = zipWith mkDebuggeeThread t_ids t_labels
 
-  -- TODO: We ignore _all_threads and report only the main execution thread for now.
-  GHC.getResumeContext >>= \case
-    [] ->
-      -- See Note [Don't crash if not stopped]
-      return []
-    r:_ -> do
-      r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
-      return
-        [ DebuggeeThread
-          { tId = r_tid
-          , tName = Just "Main Thread"
-          }
-        ]
+  return all_threads
 
 --------------------------------------------------------------------------------
 -- * Stack trace
@@ -122,46 +112,50 @@ getStacktrace req_tid = do
       --  is the best we can do, so just return that.
       getRemoteThreadIPEStack f_tid
 
+  hsc_env <- getSession
+  let hug = hsc_HUG hsc_env
   case ipe_stack of
     [] -> do
-      _decoded_frames <- case m_f_tid of
+      decoded_frames <- case m_f_tid of
         Nothing -> pure []
         Just f_tid -> do
-          hsc_env <- getSession
+          -- Try decoding a stack with interpreter continuation frames (RetBCOs)
+          -- and use the BRK_FUN src locations.
           ibis <- getRemoteThreadStackCopy f_tid
-          let hug = hsc_HUG hsc_env
           forM ibis $ \ibi -> do
             info_brks <- liftIO $ readIModBreaks hug ibi
             let modl  = getBreakSourceMod ibi info_brks
             srcSpan   <- liftIO $ getBreakLoc (readIModModBreaks hug) ibi info_brks
-
-            -- Find function name
-            -- TODO: Cache moduleLineMap?
-            ticks <- fromMaybe (error "getStacktrace:getTicks") <$> makeModuleLineMap modl
-            let current_toplevel_decl = enclosingTickSpan ticks srcSpan
+            decl <- liftIO $ L.intercalate "." <$> getBreakDecls (readIModModBreaks hug) ibi info_brks
 
             modl_str  <- display modl
             return DbgStackFrame
-              { name = modl_str ++ "." -- ++ Stack.functionName stack_entry
-              , sourceSpan = realSrcSpanToSourceSpan $ current_toplevel_decl -- realSrcSpan srcSpan
+              { name = modl_str ++ "." ++ decl
+              , sourceSpan = realSrcSpanToSourceSpan $ realSrcSpan srcSpan
               }
 
-      -- Try decoding a stack with interpreter continuation frames (RetBCOs) and use the BRK_FUN src locations.
       -- Add the latest resume context at the head.
       head_frame <- GHC.getResumeContext >>= \case
         [] ->
           -- See Note [Don't crash if not stopped]
           return Nothing
         r:_
-          | Just ss <- srcSpanToRealSrcSpan (GHC.resumeSpan r)
+          | Just ss <- realSrcSpanToSourceSpan <$> srcSpanToRealSrcSpan (GHC.resumeSpan r)
+          , Just ss /= (fmap DbgStackFrame.sourceSpan (listToMaybe decoded_frames))
+              -- don't include the resume context entry if it is already at the
+              -- start of the decoded frames
+          , Just ibi <- GHC.resumeBreakpointId r
           -> do
             r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
-            if r_tid == req_tid then
+            if r_tid == req_tid then do
               -- We're getting the stacktrace for the thread we're stopped at.
+              info_brks <- liftIO $ readIModBreaks hug ibi
+              let modl  = getBreakSourceMod ibi info_brks
+              modl_str  <- display modl
               return $
                 Just DbgStackFrame
-                  { name = GHC.resumeDecl r
-                  , sourceSpan = realSrcSpanToSourceSpan ss
+                  { name = modl_str ++ "." ++ GHC.resumeDecl r
+                  , sourceSpan = ss
                   }
             else
              return Nothing
@@ -169,9 +163,8 @@ getStacktrace req_tid = do
               -- No resume span; which should mean we're stopped on an exception.
               -- No info for now.
               return Nothing
-      -- TODO: Currently, only display head_frame
-      -- return (maybe id (:) head_frame $ decoded_frames)
-      return (maybe [] (:[]) head_frame)
+      return (maybe id (:) head_frame $ decoded_frames)
+
     ipe_frames -> catMaybes <$> do
       forM ipe_frames $ \stack_entry -> do
         case srcSpanStringToSourceSpan (Stack.srcLoc stack_entry) of
