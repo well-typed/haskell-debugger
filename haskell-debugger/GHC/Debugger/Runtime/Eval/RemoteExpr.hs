@@ -29,16 +29,14 @@ import qualified Data.Kind as Kind
 import Control.Monad.Except
 import GHC.Exts
 import GHC
-import GHC.Driver.Env
-import GHC.Runtime.Interpreter as Interp hiding (evalIO, evalString)
-import qualified GHC.Runtime.Interpreter as Interp
 import Control.Monad.Reader
 import GHCi.RemoteTypes
 
 import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Monad
 import GHC.Debugger.Utils
-import GHC.Debugger.Runtime.Eval as Raw
+import GHC.Debugger.Runtime.Eval (handleSingStatus, BadEvalStatus(..), EvalExpr(..))
+import qualified GHC.Debugger.Runtime.Eval as Raw
 import GHC.Debugger.Runtime.Compile
 
 --------------------------------------------------------------------------------
@@ -193,8 +191,7 @@ evalIOString :: RemoteExpr (IO String) -> Debugger (Either BadEvalStatus String)
 evalIOString expr = runExceptT $ do
   lift $ logSDoc Logger.Debug (text "evalIOString" <+> text (show expr))
   res_fv <- debuggeeEval expr
-  hsc_env <- lift getSession
-  liftIO (Interp.evalString (hscInterp hsc_env) (castForeignRef res_fv))
+  lift $ Raw.evalString res_fv
 
 --------------------------------------------------------------------------------
 -- ** Recursive evaluation of 'RemoteExpr' (lower-level)
