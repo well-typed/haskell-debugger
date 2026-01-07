@@ -16,7 +16,7 @@ Please find up to date installation instructions on the
 [project homepage](https://well-typed.github.io/haskell-debugger/)!
 
 > [!WARNING]
-> `hdb` can currently be compiled with the 9.14 alpha pre-releases or with a nightly version
+> `hdb` can currently be compiled with GHC 9.14
 > The first release it will be compatible with is GHC 9.14.
 
 To install and use the debugger, you need the executable `hdb`
@@ -68,7 +68,7 @@ custom `ghci` process.
 
 We have been doing custom work on GHC to support debugging in a predictable,
 robust, and more performant way. That is why `hdb` is only
-compatible with the latest and greatest GHC. If you want to debug using an older
+compatible with GHC 9.14. If you want to debug using an older
 GHC version (9.12 and older), please check out `haskell-debug-adapter`.
 
 To implement the Debug Adapter Protocol (DAP) server part, we are using the
