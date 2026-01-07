@@ -1,5 +1,6 @@
 {-# LANGUAGE OrPatterns #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE MultilineStrings #-}
 {-# LANGUAGE QualifiedDo #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
@@ -181,10 +182,10 @@ bcoBreakPointInfoParser = do
           | otherwise = 0 :: Int
 
     let find_ixs_fv = Remote.raw $
-          "\\x -> let index_at n = GHC.Word.W16# (GHC.Base.indexWord16Array# x (n GHC.Exts.+# " ++ show bRK_FUN_offset ++ "#)) " ++
-                   "in if (index_at 0# Data.Bits..&. 0xFF) == 66{-bci_BRK_FUN-} then \
-                        Just (index_at 1#, index_at 2#, index_at 3#, index_at 4#, index_at 5#) \
-                      else Nothing"
+          "\\x -> let index_at n = GHC.Word.W16# (GHC.Base.indexWord16Array# x (n GHC.Exts.+# " ++ show bRK_FUN_offset ++ """#))
+                    in if (index_at 0# Data.Bits..&. 0xFF) == 66{-bci_BRK_FUN-} then
+                        Just (index_at 1#, index_at 2#, index_at 3#, index_at 4#, index_at 5#)
+                      else Nothing"""
     rs_fv <- expectRight =<< Remote.eval
       (find_ixs_fv `Remote.app` Remote.untypedRef instrs_array_fv)
 
