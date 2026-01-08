@@ -130,8 +130,8 @@ printResponse recd = \case
   Initialised -> pure ()
 
 printEvalResult :: Recorder (WithSeverity DebuggerLog) -> EvalResult -> InteractiveDM ()
-printEvalResult recd EvalStopped{breakId=_} = do
-  out <- lift . lift $ execute recd GetScopes
+printEvalResult recd EvalStopped{..} = do
+  out <- lift . lift $ execute recd (GetScopes breakThread 0)
   printResponse recd out
 printEvalResult _ er = outputStrLn $ show er
 
