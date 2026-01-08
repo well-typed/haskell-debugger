@@ -24,7 +24,6 @@ import System.IO
 #ifdef MIN_VERSION_unix
 import System.Posix.Signals
 #endif
-import qualified Data.IntMap as IM
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
 
@@ -58,8 +57,6 @@ import qualified GHC.LanguageExtensions as LangExt
 
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Logger as Logger
-import GHC.Debugger.Runtime.Term.Cache
-import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Session
 import GHC.Debugger.Session.Builtin
 import GHC.Debugger.Runtime.Compile.Cache
@@ -82,17 +79,6 @@ data DebuggerState = DebuggerState
         -- ^ Maps a 'InternalBreakpointId' in Trie representation (map of Module to map of Int) to the
         -- 'BreakpointStatus' it was activated with.
 
-      , varReferences     :: IORef (IM.IntMap TermKey, TermKeyMap Int)
-      -- ^ When we're stopped at a breakpoint, this maps variable reference to
-      -- Terms to allow further inspection and forcing by reference.
-      --
-      -- This map is only valid while stopped in this context. After stepping
-      -- or resuming evaluation in any available way, this map becomes invalid
-      -- and should therefore be cleaned.
-      --
-      -- The TermKeyMap map is a reverse lookup map to find which references
-      -- already exist for given names
-
       , rtinstancesCache :: IORef RuntimeInstancesCache
       -- ^ RuntimeInstancesCache
 
@@ -101,9 +87,6 @@ data DebuggerState = DebuggerState
 
       , compCache         :: IORef CompCache
       -- ^ Cache loaded and compiled expressions.
-
-      , genUniq           :: IORef Int
-      -- ^ Generates unique ints
 
       , hsDbgViewUnitId   :: Maybe UnitId
       -- ^ The unit-id of the companion @haskell-debugger-view@ unit, used for
@@ -451,68 +434,16 @@ findHsDebuggerViewUnitId mod_graph = do
       error "Multiple unit-ids found for haskell-debugger-view in the transitive closure?!"
 
 --------------------------------------------------------------------------------
--- Variable references
---------------------------------------------------------------------------------
-
--- | Find a variable's associated Term and Name by reference ('Int')
-lookupVarByReference :: Int -> Debugger (Maybe TermKey)
-lookupVarByReference i = do
-  ioref <- asks varReferences
-  (rm, _) <- readIORef ioref & liftIO
-  return $ IM.lookup i rm
-
--- | Finds or creates an integer var reference for the given 'TermKey'.
--- TODO: Arguably, this mapping should be part of the debug-adapter, and
--- haskell-debugger should deal in 'TermKey' terms only.
-getVarReference :: TermKey -> Debugger Int
-getVarReference key = do
-  ioref     <- asks varReferences
-  (rm, tkm) <- readIORef ioref & liftIO
-  (i, tkm') <- case lookupTermKeyMap key tkm of
-    Nothing -> do
-      new_i <- freshInt
-      return (new_i, insertTermKeyMap key new_i tkm)
-    Just existing_i ->
-      return (existing_i, tkm)
-  let rm' = IM.insert i key rm
-  writeIORef ioref (rm', tkm') & liftIO
-  return i
-
--- | Whenever we run a request that continues execution from the current
--- suspended state, such as Next,Step,Continue, this function should be called
--- to delete the variable references that become invalid as we leave the
--- suspended state.
---
--- In particular, @'varReferences'@ is reset.
---
--- See also section "Lifetime of Objects References" in the DAP specification.
-leaveSuspendedState :: Debugger ()
-leaveSuspendedState = do
-  ioref <- asks varReferences
-  liftIO $ writeIORef ioref mempty
-
---------------------------------------------------------------------------------
 -- Utilities
 --------------------------------------------------------------------------------
-
--- | Generate a new unique 'Int'
-freshInt :: Debugger Int
-freshInt = do
-  ioref <- asks genUniq
-  i <- readIORef ioref & liftIO
-  let !i' = i+1
-  writeIORef ioref i'  & liftIO
-  return i
 
 -- | Initialize a 'DebuggerState'
 initialDebuggerState :: Recorder (WithSeverity DebuggerMonadLog) -> Maybe UnitId -> GHC.Ghc DebuggerState
 initialDebuggerState l hsDbgViewUid =
   DebuggerState <$> liftIO (newIORef BM.empty)
-                <*> liftIO (newIORef mempty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
                 <*> liftIO (newIORef TM.emptyThreadMap)
                 <*> liftIO (newIORef emptyCompCache)
-                <*> liftIO (newIORef 0)
                 <*> pure hsDbgViewUid
                 <*> pure l
 

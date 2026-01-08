@@ -114,18 +114,18 @@ debugInteractive recorder = withInterrupt loop
 
 printResponse :: Recorder (WithSeverity DebuggerLog) -> Response -> InteractiveDM ()
 printResponse recd = \case
-  DidEval er -> outputStrLn $ show er
+  DidEval er -> outputStrLn $ showEvalResult er
   DidSetBreakpoint bf       -> outputStrLn $ show bf
   DidRemoveBreakpoint bf    -> outputStrLn $ show bf
   DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
   DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
-  DidContinue er -> outputStrLn $ show er
+  DidContinue er -> outputStrLn $ showEvalResult er
   DidStep er -> printEvalResult recd er
-  DidExec er -> outputStrLn $ show er
+  DidExec er -> outputStrLn $ showEvalResult er
   GotThreads threads -> outputStrLn $ show threads
   GotStacktrace stackframes -> outputStrLn $ show stackframes
   GotScopes scopeinfos -> outputStrLn $ show scopeinfos
-  GotVariables vis -> outputStrLn $ show vis -- (Either VarInfo [VarInfo])
+  GotVariables vis -> outputStrLn $ showVarInfoEither vis
   Aborted err_str -> outputStrLn ("Aborted: " ++ err_str)
   Initialised -> pure ()
 
@@ -133,7 +133,20 @@ printEvalResult :: Recorder (WithSeverity DebuggerLog) -> EvalResult -> Interact
 printEvalResult recd EvalStopped{..} = do
   out <- lift . lift $ execute recd (GetScopes breakThread 0)
   printResponse recd out
-printEvalResult _ er = outputStrLn $ show er
+printEvalResult _ er = outputStrLn $ showEvalResult er
+
+showEvalResult :: EvalResult -> String
+showEvalResult (EvalCompleted{..}) = resultVal
+showEvalResult (EvalException{..}) = resultVal
+showEvalResult (EvalStopped{}) = "Stopped at breakpoint"
+showEvalResult (EvalAbortedWith err) = "Aborted: " ++ err
+
+showVarInfoEither :: Either VarInfo [VarInfo] -> String
+showVarInfoEither (Left vi) = showVarInfo vi
+showVarInfoEither (Right vis) = unlines $ map showVarInfo vis
+
+showVarInfo :: VarInfo -> String
+showVarInfo VarInfo{..} = unwords [varName, ":", varType, "=", varValue]
 
 --------------------------------------------------------------------------------
 -- Command parser

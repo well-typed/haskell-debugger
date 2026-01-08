@@ -247,8 +247,8 @@ getScopes threadId frameIx = do
 -- request forced the variable and return @Left varInfo@. Otherwise, @Right vis@.
 --
 -- See Note [Variables Requests]
-getVariables :: VariableReference -> Debugger (Either VarInfo [VarInfo])
-getVariables vk = do
+getVariables :: RemoteThreadId -> Int{-stack frame index-} -> VariableReference -> Debugger (Either VarInfo [VarInfo])
+getVariables threadId frameIx vk = do
   hsc_env <- getSession
   GHC.getResumeContext >>= \case
     [] ->
@@ -258,41 +258,33 @@ getVariables vk = do
 
       -- Only `seq` the variable when inspecting a specific one (`SpecificVariable`)
       -- (VARR)(b,c)
-      SpecificVariable i -> do
-        lookupVarByReference i >>= \case
-          Nothing -> do
-            -- lookupVarByReference failed.
-            -- This may happen if, in a race, we change scope while asking for
-            -- variables of the previous scope.
-            -- Somewhat similar to the race in Note [Don't crash if not stopped]
-            return (Right [])
-          Just key -> do
-            term <- obtainTerm key
+      SpecificVariable key -> do
+        term <- obtainTerm key
 
-            case term of
+        case term of
 
-              -- (VARR)(b)
-              Suspension{} -> do
+          -- (VARR)(b)
+          Suspension{} -> do
 
-                -- Original Term was a suspension:
-                -- It is a "lazy" DAP variable: our reply can ONLY include
-                -- this single variable.
+            -- Original Term was a suspension:
+            -- It is a "lazy" DAP variable: our reply can ONLY include
+            -- this single variable.
 
-                term' <- forceTerm term
+            term' <- forceTerm term
 
-                vi <- termToVarInfo key term'
+            vi <- termToVarInfo key term'
 
-                return (Left vi)
+            return (Left vi)
 
-              -- (VARR)(c)
-              _ -> Right <$> do
+          -- (VARR)(c)
+          _ -> Right <$> do
 
-                -- Original Term was already something other than a Suspension;
-                -- Meaning the @SpecificVariable@ request means to inspect the structure.
-                -- Return ONLY the fields
+            -- Original Term was already something other than a Suspension;
+            -- Meaning the @SpecificVariable@ request means to inspect the structure.
+            -- Return ONLY the fields
 
-                termVarFields key term >>= \case
-                  VarFields vfs -> return vfs
+            termVarFields key term >>= \case
+              VarFields vfs -> return vfs
 
       -- (VARR)(a) from here onwards
 

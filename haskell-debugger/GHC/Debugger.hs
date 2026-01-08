@@ -29,7 +29,7 @@ execute recorder = \case
   GetThreads -> GotThreads <$> getThreads
   GetStacktrace i -> GotStacktrace <$> getStacktrace i
   GetScopes threadId frameIx -> GotScopes <$> getScopes threadId frameIx
-  GetVariables kind -> GotVariables <$> getVariables kind
+  GetVariables threadId frameIx varRef -> GotVariables <$> getVariables threadId frameIx varRef
   DoEval exp_s -> DidEval <$> doEval exp_s
   DoContinue -> DidContinue <$> doContinue
   DoSingleStep -> DidStep <$> doSingleStep

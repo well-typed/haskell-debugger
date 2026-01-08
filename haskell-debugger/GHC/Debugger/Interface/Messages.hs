@@ -1,6 +1,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-} -- TODO: drop this and Show GHC.InternalBreakpointId...
 {-# LANGUAGE LambdaCase,
              StandaloneDeriving,
+             DataKinds,
              OverloadedStrings,
              DuplicateRecordFields,
              TypeApplications
@@ -11,6 +12,8 @@ module GHC.Debugger.Interface.Messages where
 
 import qualified GHC
 import qualified GHC.Utils.Outputable as GHC
+
+import GHC.Debugger.Runtime.Term.Key
 
 --------------------------------------------------------------------------------
 -- Commands
@@ -53,7 +56,7 @@ data Command
   --
   -- Note: for GHCs <9.16 this only reports the variables free in the expression
   -- we're stopped at rather than all variables in scope.
-  | GetVariables VariableReference
+  | GetVariables RemoteThreadId Int{-stack frame positional ix-} VariableReference
 
   -- | Evaluate an expression at the current breakpoint.
   | DoEval String
@@ -104,7 +107,6 @@ data ScopeInfo = ScopeInfo
   deriving (Show)
 
 newtype VarFields = VarFields [VarInfo]
-  deriving (Show, Eq)
 
 -- | Information about a variable
 data VarInfo = VarInfo
@@ -118,7 +120,6 @@ data VarInfo = VarInfo
       -- TODO:
       --  memory reference using ghc-debug.
       }
-      deriving (Show, Eq)
 
 -- | What kind of breakpoint are we referring to, module or function breakpoints?
 -- Used e.g. in the 'ClearBreakpoints' request
@@ -154,34 +155,13 @@ data VariableReference
 
   -- | A reference to a specific variable.
   -- Used to force its result or get its structured children
-  | SpecificVariable Int
+  | SpecificVariable TermKey
 
-  deriving (Show, Eq, Ord)
-
--- | From 'ScopeVariablesReference' to a 'VariableReference' that can be used in @"variable"@ requests
 scopeToVarRef :: ScopeVariablesReference -> VariableReference
 scopeToVarRef = \case
   LocalVariablesScope -> LocalVariables
   ModuleVariablesScope -> ModuleVariables
   GlobalVariablesScope -> GlobalVariables
-
-
-instance Bounded VariableReference where
-  minBound = NoVariables
-  maxBound = SpecificVariable maxBound
-
-instance Enum VariableReference where
-  toEnum 0 = NoVariables
-  toEnum 1 = LocalVariables
-  toEnum 2 = ModuleVariables
-  toEnum 3 = GlobalVariables
-  toEnum n = SpecificVariable (n - 4)
-
-  fromEnum NoVariables          = 0
-  fromEnum LocalVariables       = 1
-  fromEnum ModuleVariables      = 2
-  fromEnum GlobalVariables      = 3
-  fromEnum (SpecificVariable n) = 4 + n
 
 -- | A source span type for the interface. Like 'RealSrcSpan'.
 data SourceSpan = SourceSpan
@@ -255,7 +235,8 @@ data EvalResult
                   , resultStructureRef :: VariableReference
                   -- ^ A structured representation of the result of evaluating
                   -- the expression given as a "virtual" 'VariableReference'
-                  -- that the user can expand as a normal variable.
+                  -- that the user can use to refer to the result and inspect
+                  -- interactively and expand it.
                   }
   | EvalException { resultVal :: String, resultType :: String }
   | EvalStopped   { breakId :: Maybe GHC.InternalBreakpointId
@@ -265,7 +246,6 @@ data EvalResult
                   }
   -- | Evaluation failed for some reason other than completed/completed-with-exception/stopped.
   | EvalAbortedWith String
-  deriving (Show)
 
 data DebuggeeThread
   = DebuggeeThread
@@ -291,9 +271,6 @@ data DbgStackFrame
 --------------------------------------------------------------------------------
 -- Instances
 --------------------------------------------------------------------------------
-
-deriving instance Show Command
-deriving instance Show Response
 
 instance Show GHC.InternalBreakpointId where
   show (GHC.InternalBreakpointId m ix) = "InternalBreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix
