@@ -6,7 +6,6 @@ module GHC.Debugger.Stopped where
 import Control.Monad
 import Control.Monad.Reader
 import Data.IORef
-import GHC.Stack.CloneStack as Stack
 import qualified Data.List as L
 
 import GHC
@@ -22,6 +21,7 @@ import GHC.Driver.Env as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Runtime.Eval
 import GHC.Types.SrcLoc
+import GHC.InfoProv
 import GHC.Utils.Outputable as Ppr
 import qualified GHC.Unit.Home.Graph as HUG
 
@@ -100,85 +100,71 @@ getStacktrace req_tid = do
 
   tm <- liftIO . readIORef =<< asks threadMap
   let m_f_tid = lookupThreadMap (remoteThreadIntRef req_tid) tm
-  ipe_stack <- case m_f_tid of
-    Nothing -> pure []
-    Just f_tid -> do
-      -- For now, assume that if we can get an IPE backtrace then this thread
-      -- is compiled and doesn't have any interpreter frames.
-      -- Of course, this isn't true since we should also be able to get an IPE
-      -- backtrace for interpreter threads. Just not yet.
-      --
-      -- If IPE is empty => it's not an interpreter thread => the IPE backtrace
-      --  is the best we can do, so just return that.
-      getRemoteThreadIPEStack f_tid
 
   hsc_env <- getSession
   let hug = hsc_HUG hsc_env
-  case ipe_stack of
-    [] -> do
-      decoded_frames <- case m_f_tid of
-        Nothing -> pure []
-        Just f_tid -> do
-          -- Try decoding a stack with interpreter continuation frames (RetBCOs)
-          -- and use the BRK_FUN src locations.
-          ibis <- getRemoteThreadStackCopy f_tid
-          forM ibis $ \ibi -> do
-            info_brks <- liftIO $ readIModBreaks hug ibi
-            let modl  = getBreakSourceMod ibi info_brks
-            srcSpan   <- liftIO $ getBreakLoc (readIModModBreaks hug) ibi info_brks
-            decl <- liftIO $ L.intercalate "." <$> getBreakDecls (readIModModBreaks hug) ibi info_brks
+  decoded_frames <- catMaybes <$> case m_f_tid of
+    Nothing -> pure []
+    Just f_tid -> do
+      -- Try decoding a stack with interpreter continuation frames (RetBCOs)
+      -- and use the BRK_FUN src locations.
+      ibis <- getRemoteThreadStackCopy f_tid
+      forM ibis $ \case
+        StackFrameBreakpointInfo ibi -> do
+          info_brks <- liftIO $ readIModBreaks hug ibi
+          let modl  = getBreakSourceMod ibi info_brks
+          srcSpan   <- liftIO $ getBreakLoc (readIModModBreaks hug) ibi info_brks
+          decl <- liftIO $ L.intercalate "." <$> getBreakDecls (readIModModBreaks hug) ibi info_brks
 
-            modl_str  <- display modl
-            return DbgStackFrame
-              { name = modl_str ++ "." ++ decl
-              , sourceSpan = realSrcSpanToSourceSpan $ realSrcSpan srcSpan
-              }
-
-      -- Add the latest resume context at the head.
-      head_frame <- GHC.getResumeContext >>= \case
-        [] ->
-          -- See Note [Don't crash if not stopped]
-          return Nothing
-        r:_
-          | Just ss <- realSrcSpanToSourceSpan <$> srcSpanToRealSrcSpan (GHC.resumeSpan r)
-          , Just ss /= (fmap DbgStackFrame.sourceSpan (listToMaybe decoded_frames))
-              -- don't include the resume context entry if it is already at the
-              -- start of the decoded frames
-          , Just ibi <- GHC.resumeBreakpointId r
-          -> do
-            r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
-            if r_tid == req_tid then do
-              -- We're getting the stacktrace for the thread we're stopped at.
-              info_brks <- liftIO $ readIModBreaks hug ibi
-              let modl  = getBreakSourceMod ibi info_brks
-              modl_str  <- display modl
-              return $
-                Just DbgStackFrame
-                  { name = modl_str ++ "." ++ GHC.resumeDecl r
-                  , sourceSpan = ss
-                  }
-            else
-             return Nothing
-          | otherwise ->
-              -- No resume span; which should mean we're stopped on an exception.
-              -- No info for now.
+          modl_str  <- display modl
+          return $ Just DbgStackFrame
+            { name = modl_str ++ "." ++ decl
+            , sourceSpan = realSrcSpanToSourceSpan $ realSrcSpan srcSpan
+            }
+        StackFrameIPEInfo ipe -> do
+          case srcSpanStringToSourceSpan (ipLoc ipe) of
+            Left err -> do
+              -- Couldn't parse. The srcLoc may be invalid so just keep this as info, not warning.
+              logSDoc Logger.Info $
+                text "Couldn't parse StackEntry srcLoc \"" Ppr.<> text (ipLoc ipe)
+                                                           Ppr.<> text "\":" <+> text err
               return Nothing
-      return (maybe id (:) head_frame $ decoded_frames)
+            Right sourceSpan ->
+              return $ Just DbgStackFrame
+                { name = ipMod ipe ++ "." ++ ipLabel ipe
+                , sourceSpan = sourceSpan
+                }
 
-    ipe_frames -> catMaybes <$> do
-      forM ipe_frames $ \stack_entry -> do
-        case srcSpanStringToSourceSpan (Stack.srcLoc stack_entry) of
-          Left err -> do
-            -- Couldn't parse. The srcLoc may be invalid so just keep this as info, not warning.
-            logSDoc Logger.Info $
-              text "Couldn't parse StackEntry srcLoc \"" Ppr.<> text (Stack.srcLoc stack_entry)
-                                                         Ppr.<> text "\":" <+> text err
-            return Nothing
-          Right sourceSpan ->
-            return $ Just DbgStackFrame
-              { name = Stack.moduleName stack_entry ++ "." ++ Stack.functionName stack_entry
-              , sourceSpan = sourceSpan
+  -- Add the latest resume context at the head.
+  head_frame <- GHC.getResumeContext >>= \case
+    [] ->
+      -- See Note [Don't crash if not stopped]
+      return Nothing
+    r:_
+      | Just ss <- realSrcSpanToSourceSpan <$> srcSpanToRealSrcSpan (GHC.resumeSpan r)
+      , Just ss /= (fmap DbgStackFrame.sourceSpan (listToMaybe decoded_frames))
+          -- don't include the resume context entry if it is already at the
+          -- start of the decoded frames
+      , Just ibi <- GHC.resumeBreakpointId r
+      -> do
+        r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
+        if r_tid == req_tid then do
+          -- We're getting the stacktrace for the thread we're stopped at.
+          info_brks <- liftIO $ readIModBreaks hug ibi
+          let modl  = getBreakSourceMod ibi info_brks
+          modl_str  <- display modl
+          return $
+            Just DbgStackFrame
+              { name = modl_str ++ "." ++ GHC.resumeDecl r
+              , sourceSpan = ss
               }
+        else
+         return Nothing
+      | otherwise ->
+          -- No resume span; which should mean we're stopped on an exception.
+          -- No info for now.
+          return Nothing
+  return (maybe id (:) head_frame $ decoded_frames)
 
 --------------------------------------------------------------------------------
 -- * Scopes
