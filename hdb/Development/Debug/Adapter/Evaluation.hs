@@ -4,6 +4,7 @@ module Development.Debug.Adapter.Evaluation where
 import qualified Data.Text as T
 import qualified Data.Map as M
 import qualified Data.IntSet as IS
+import qualified Data.IntMap as IM
 
 import DAP
 
@@ -36,7 +37,7 @@ startExecution = do
 -- | Command for evaluation (includes evaluation-on-hover)
 commandEvaluate :: DebugAdaptor ()
 commandEvaluate = do
-  EvaluateArguments {evaluateArgumentsFrameId=_todo, ..} <- getArguments
+  EvaluateArguments {evaluateArgumentsFrameId=_todo{-evaluate expression in specific frame-}, ..} <- getArguments
 
   let simpleEvalResp res ty = EvaluateResponse
         { evaluateResponseResult             = res
@@ -57,11 +58,26 @@ commandEvaluate = do
     EvalException {resultVal, resultType} ->
       sendEvaluateResponse (simpleEvalResp (T.pack resultVal) (T.pack resultType))
     EvalCompleted{resultVal, resultType, resultStructureRef} -> do
+      varIx <- case resultStructureRef of
+        NoVariables     -> pure 0
+        LocalVariables  -> error "Impossible! Eval result ref should always be NoVariables or SpecificVariable"
+        ModuleVariables -> error "Impossible! Eval result ref should always be NoVariables or SpecificVariable"
+        GlobalVariables -> error "Impossible! Eval result ref should always be NoVariables or SpecificVariable"
+        SpecificVariable _ -> do
+          varId <- getFreshId
+          updateDebugSession $ \s ->
+            s { variablesMap =
+                  IM.insert varId
+                    (VariablesIx (StackFrameIx (RemoteThreadId (-1)) (-1) {- shouldn't be a problem bc it's not Local/Module/Global vars -}) resultStructureRef)
+                    s.variablesMap
+              }
+          pure varId
+
       sendEvaluateResponse EvaluateResponse
         { evaluateResponseResult             = T.pack resultVal
         , evaluateResponseType               = T.pack resultType
         , evaluateResponsePresentationHint   = Nothing
-        , evaluateResponseVariablesReference = fromEnum resultStructureRef
+        , evaluateResponseVariablesReference = varIx
         , evaluateResponseNamedVariables     = Nothing
         , evaluateResponseIndexedVariables   = Nothing
         , evaluateResponseMemoryReference    = Nothing

@@ -40,4 +40,6 @@ resetObjectReferences :: DebugAdaptor ()
 resetObjectReferences = do
   updateDebugSession $ \s ->
     s { stackFrameMap = mempty
-      , breakpointMap = mempty }
+      , breakpointMap = mempty
+      , variablesMap  = mempty
+      }

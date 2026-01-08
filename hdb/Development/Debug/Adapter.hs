@@ -5,12 +5,13 @@ import Control.Concurrent.Chan
 import qualified Data.IntSet as IS
 import qualified Data.ByteString as BS
 import qualified Data.Map as Map
+import qualified Data.IntMap as IM
 import qualified Data.Text as T
 import System.FilePath
 
 import DAP
 import qualified GHC
-import qualified GHC.Debugger.Interface.Messages as D (Command, Response, RemoteThreadId)
+import qualified GHC.Debugger.Interface.Messages as D (Command, Response, RemoteThreadId, VariableReference)
 
 type DebugAdaptor = Adaptor DebugAdaptorState Request
 type DebugAdaptorCont = Adaptor DebugAdaptorState ()
@@ -27,7 +28,8 @@ data DebugAdaptorState = DAS
       , syncResponses :: MVar D.Response
       , nextFreshId :: !Int
       , breakpointMap :: Map.Map GHC.InternalBreakpointId BreakpointSet
-      , stackFrameMap :: Map.Map Int (D.RemoteThreadId, Int{-position-})
+      , stackFrameMap :: IM.IntMap StackFrameIx
+      , variablesMap  :: IM.IntMap VariablesIx
       , entryFile :: FilePath
       , entryPoint :: String
       , entryArgs :: [String]
@@ -42,6 +44,10 @@ data DebugAdaptorState = DAS
 
 type BreakpointId = Int
 type BreakpointSet = IS.IntSet
+
+data StackFrameIx = StackFrameIx D.RemoteThreadId Int{-stack frame ix-}
+  deriving (Eq, Ord)
+data VariablesIx = VariablesIx StackFrameIx D.VariableReference
 
 instance MonadFail DebugAdaptor where
   fail a = error a

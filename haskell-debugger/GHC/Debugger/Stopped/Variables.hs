@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
-   TypeApplications, ScopedTypeVariables, BangPatterns, DerivingVia, TypeAbstractions #-}
+   TypeApplications, ScopedTypeVariables, BangPatterns, DerivingVia,
+   TypeAbstractions, DataKinds #-}
 module GHC.Debugger.Stopped.Variables where
 
 import Control.Monad.Reader
@@ -109,7 +110,6 @@ termToVarInfo key term0 = do
   case term0 of
     -- The simple case: The term is a a thunk...
     Suspension{} -> do
-      ir <- getVarReference key
       return VarInfo
         { varName
         , varType
@@ -118,7 +118,7 @@ termToVarInfo key term0 = do
             else "_"
         , varRef = if isFn
             then NoVariables
-            else SpecificVariable ir -- allows forcing the thunk
+            else SpecificVariable key -- allows forcing the thunk
         , isThunk = not isFn
         }
 
@@ -150,8 +150,7 @@ termToVarInfo key term0 = do
           varRef <- do
             if hasDirectSubTerms term0
              then do
-                ir <- getVarReference key
-                return (SpecificVariable ir)
+                return (SpecificVariable key)
              else do
                 return NoVariables
 
@@ -165,8 +164,7 @@ termToVarInfo key term0 = do
           varRef <-
             if varExpandable
             then do
-                ir <- getVarReference key
-                return (SpecificVariable ir)
+                return (SpecificVariable key)
              else do
                 return NoVariables
           return VarInfo

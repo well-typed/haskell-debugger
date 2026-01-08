@@ -130,20 +130,17 @@ debugExecution recorder entryFile entry args = do
 -- | Resume execution of the stopped debuggee program
 doContinue :: Debugger EvalResult
 doContinue = do
-  leaveSuspendedState
   GHC.resumeExec RunToCompletion Nothing
     >>= handleExecResult
 
 -- | Resume execution but only take a single step.
 doSingleStep :: Debugger EvalResult
 doSingleStep = do
-  leaveSuspendedState
   GHC.resumeExec SingleStep Nothing
     >>= handleExecResult
 
 doStepOut :: Debugger EvalResult
 doStepOut = do
-  leaveSuspendedState
   mb_span <- getCurrentBreakSpan
   case mb_span of
     Nothing ->
@@ -164,7 +161,6 @@ doStepOut = do
 -- this enclosing span.
 doLocalStep :: Debugger EvalResult
 doLocalStep = do
-  leaveSuspendedState
   mb_span <- getCurrentBreakSpan
   case mb_span of
     Nothing -> error "not stopped at a breakpoint?!"
