@@ -7,19 +7,18 @@
 
 -- | Decoding the stack of a thread at runtime
 module GHC.Debugger.Runtime.Thread.Stack
-  ( getRemoteThreadStackCopy
-  , getRemoteThreadIPEStack
+  ( StackFrameInfo(..)
+  , getRemoteThreadStackCopy
   ) where
 
 import Data.Bits
 import Data.Maybe
-import Control.Applicative
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
-import GHC.Stack.CloneStack
 import GHC.Exts.Heap.ClosureTypes
 import GHC.Utils.Encoding.UTF8
+import GHC.InfoProv
 
 import GHC
 import GHC.Builtin.Types
@@ -39,15 +38,25 @@ import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Runtime.Eval
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
+--------------------------------------------------------------------------------
+-- * Thread stack frames
+--------------------------------------------------------------------------------
+
+-- | Information about a stack frame
+data StackFrameInfo
+  -- | Information derived from an IPE entry
+  = StackFrameIPEInfo !InfoProv
+  -- | Information derived from a continuation BCO breakpoint info.
+  | StackFrameBreakpointInfo !InternalBreakpointId
 
 -- | Clone the stack of the given remote thread and get the breakpoint ids of available frames
-getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [InternalBreakpointId]
+getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [StackFrameInfo]
 getRemoteThreadStackCopy threadIdRef = do
 
   l <- Remote.evalIOList $ Remote.do
     clonedStack <- Remote.cloneThreadStack (Remote.ref threadIdRef)
-    frames      <- Remote.decodeStack      clonedStack
-    Remote.return (Remote.ssc_stack frames)
+    frames      <- Remote.decodeStackWithIpe clonedStack
+    Remote.return frames
 
   case l of
     Left (EvalRaisedException e) -> do
@@ -56,56 +65,46 @@ getRemoteThreadStackCopy threadIdRef = do
     Left e -> do
       logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
       return []
-    Right stack_frames_fvs -> fmap (catMaybes . catMaybes) $
+    Right stack_frames_fvs -> fmap catMaybes $
       forM stack_frames_fvs $ \stack_frame_fv ->
         obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} (castForeignRef stack_frame_fv)
-          ((Just <$> retBCOParser) <|> pure Nothing) >>= \case
+          stackFrameInfoParser >>= \case
             Left errs -> do
               logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
               return Nothing
             Right tm ->
               return tm
 
--- | Try to get an IPE stacktrace.
---
--- At the moment, we assume IPE stacktraces are always empty @[]@ for threads
--- with interpreter frames.
---
--- Really, as long as there is IPE information, this function should return
--- StackEntries for all frames, including the interpreter ones, since these are
--- typically be interleaved with "normal" frames.
---
-getRemoteThreadIPEStack :: ForeignRef ThreadId -> Debugger [StackEntry]
-getRemoteThreadIPEStack threadIdRef = do
-  l <- Remote.evalIOList $ Remote.do
-    clonedStack <- Remote.cloneThreadStack (Remote.ref threadIdRef)
-    Remote.decode clonedStack
-  case l of
-    Left (EvalRaisedException e) -> do
-      logSDoc Logger.Info (text "Failed to decode the stack with" <+> text (show e) $$ text "This is likely bug #26640 in the decoder, which has been fixed for 9.14.2 and forward. No StackTrace could be produced...")
-      return []
-    Left e -> do
-      logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
-      return []
-    Right entries_fvs -> do
-      mapM (\entry_fv -> do
-          stack_entry <- obtainParsedTerm "StackEntry" 2 True anyTy{-stackentry, but we won't look at the ty...-} entry_fv stackEntryParser
-          case stack_entry of
-            Left errs -> do
-              logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
-              liftIO $ fail "Failed to parse @StackEntry@ from decoding thread stack!"
-            Right se ->
-              pure se
-        ) (map castForeignRef entries_fvs)
-
 --------------------------------------------------------------------------------
 -- ** Decoding Stack Frames ----------------------------------------------------
 --------------------------------------------------------------------------------
 
-stackEntryParser :: TermParser StackEntry
-stackEntryParser = do
-    StackEntry <$> subtermWith 0 stringParser <*> subtermWith 1 stringParser <*> subtermWith 2 stringParser <*> pure INVALID_OBJECT{-this is a stub-}
+-- | Try to decode a 'StackFrameInfo' from a @(StackFrame, Maybe InfoProv)@ term
+stackFrameInfoParser :: TermParser (Maybe StackFrameInfo)
+stackFrameInfoParser = do
+  -- Try IPE first
+  mipe <- subtermWith 1 (maybeParser infoProvParser)
+  case mipe of
+    Nothing ->
+      -- Try decoding a continuation BCO with a breakpoint next
+      fmap StackFrameBreakpointInfo
+        <$> subtermWith 0 retBCOParser
+    Just ipe -> pure $
+      Just (StackFrameIPEInfo ipe)
 
+-- | Decode an 'InfoProv' from an @InfoProv@ term
+infoProvParser :: TermParser InfoProv
+infoProvParser = InfoProv
+  <$> subtermWith 0 stringParser -- ipName
+  <*> pure INVALID_OBJECT -- ipDesc (this is a stub)
+  <*> subtermWith 2 stringParser -- ipTyDesc
+  <*> subtermWith 3 stringParser -- ipLabel
+  <*> subtermWith 4 stringParser -- ipUnitId
+  <*> subtermWith 5 stringParser -- ipMod
+  <*> subtermWith 6 stringParser -- ipSrcFile
+  <*> subtermWith 7 stringParser -- ipSrcSpan
+
+-- | Try to decode an 'InternalBreakpointId' from a @StackFrame@ term
 retBCOParser :: TermParser (Maybe InternalBreakpointId)
 retBCOParser = do
   -- Match against "RetBCO" frames and extract the BCOClosure information

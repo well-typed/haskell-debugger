@@ -19,6 +19,7 @@ import GHC.Exts
 import Data.Word
 import Foreign.C.String
 import GHC.Conc.Sync
+import GHC.InfoProv
 import GHC.Unit.Module
 import GHC.Stack.CloneStack
 import GHC.Exts.Heap
@@ -41,6 +42,10 @@ decodeStack = Remote.app $ Remote.var (mkModuleName "GHC.Exts.Stack") "decodeSta
 -- | Remote 'GHC.Exts.Heap.Closures.ssc_stack'
 ssc_stack :: RemoteExpr StgStackClosure -> RemoteExpr [StackFrame]
 ssc_stack = Remote.app $ Remote.var (mkModuleName "GHC.Exts.Heap.Closures") "ssc_stack" []
+
+-- | Remote 'GHC.Internal.Stack.Decode.decodeStackWithIpe"
+decodeStackWithIpe :: RemoteExpr StackSnapshot -> RemoteExpr (IO [(StackFrame, Maybe InfoProv)])
+decodeStackWithIpe = Remote.app $ Remote.var (mkModuleName "GHC.Internal.Stack.Decode") "decodeStackWithIpe" []
 
 -- | Remote 'GHC.Exts.Heap.getClosureData'
 getClosureData :: RemoteExpr StgStackClosure -> RemoteExpr (IO Closure)
