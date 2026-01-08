@@ -1050,5 +1050,31 @@ describe("Debug Adapter Tests", function () {
         assert.strictEqual(_1Var.value, '\'b\'');
       })
     })
+    describe("Stack trace tests", function () {
+      it("should contain mixed IPE and breakpoint frames (issue #107)", async () => {
+        let config = mkConfig({
+              projectRoot: "/data/T107a",
+              entryFile: "app/Main.hs",
+              entryPoint: "main",
+              entryArgs: [],
+              extraGhcArgs: []
+            })
+
+        const expected = { path: config.projectRoot + "/" + config.entryFile, line: 9 }
+
+        await dc.hitBreakpoint(config, { path: config.entryFile, line: 9 }, expected, expected);
+
+        const threadsResp = await dc.threadsRequest();
+        const threadId = threadsResp.body.threads[0].id;
+        const stResp = await dc.stackTraceRequest({ threadId: threadId });
+        const frames = stResp.body.stackFrames;
+        const frameNames = frames.map(f => f.name);
+
+        // Contains the interpreter frame
+        assert.ok(frameNames.includes("Main.main.a"), "Stack trace should contain main");
+        // Contains the IPE frame
+        assert.ok(frameNames.includes("MyLib.thenDo"), "Stack trace should contain thenDo");
+      })
+    })
 })
 
