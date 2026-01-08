@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
-   TypeApplications, ScopedTypeVariables, BangPatterns #-}
+   TypeApplications, ScopedTypeVariables, BangPatterns, MultiWayIf #-}
 module GHC.Debugger.Stopped where
 
 import Control.Monad
@@ -18,7 +18,6 @@ import GHC.Unit.Module.ModDetails
 import GHC.Types.TypeEnv
 import GHC.Data.Maybe
 import GHC.Driver.Env as GHC
-import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Runtime.Eval
 import GHC.Types.SrcLoc
 import GHC.InfoProv
@@ -133,6 +132,7 @@ getStacktrace req_tid = do
           return $ Just DbgStackFrame
             { name = modl_str ++ "." ++ decl
             , sourceSpan = realSrcSpanToSourceSpan $ realSrcSpan srcSpan
+            , breakId = Just ibi
             }
         StackFrameIPEInfo ipe -> do
           case srcSpanStringToSourceSpan (ipLoc ipe) of
@@ -146,6 +146,7 @@ getStacktrace req_tid = do
               return $ Just DbgStackFrame
                 { name = ipMod ipe ++ "." ++ ipLabel ipe
                 , sourceSpan = sourceSpan
+                , breakId = Nothing
                 }
 
   -- Add the latest resume context at the head.
@@ -170,6 +171,7 @@ getStacktrace req_tid = do
             Just DbgStackFrame
               { name = modl_str ++ "." ++ GHC.resumeDecl r
               , sourceSpan = ss
+              , breakId = Just ibi
               }
         else
          return Nothing
@@ -184,21 +186,23 @@ getStacktrace req_tid = do
 --------------------------------------------------------------------------------
 
 -- | Get the stack frames at the point we're stopped at
-getScopes :: Debugger [ScopeInfo]
-getScopes = GHC.getCurrentBreakSpan >>= \case
-  Nothing ->
-    -- See Note [Don't crash if not stopped]
-    return []
-  Just span'
-    | Just rss <- srcSpanToRealSrcSpan span'
-    , let sourceSpan = realSrcSpanToSourceSpan rss
+getScopes :: RemoteThreadId -> Int -> Debugger [ScopeInfo]
+getScopes threadId frameIx = do
+  frames <- getStacktrace threadId
+  let frame = frames !! frameIx
+  let sourceSpan = DbgStackFrame.sourceSpan frame
+  if
+    | frameIx < length frames
+    , Just ibi <- DbgStackFrame.breakId frame
     -> do
+      hsc_env   <- getSession
+      info_brks <- liftIO $ readIModBreaks (hsc_HUG hsc_env) ibi
+      let brk_modl = getBreakSourceMod ibi info_brks
       -- It is /very important/ to report a number of variables (numVars) for
       -- larger scopes. If we just say "Nothing", then all variables of all
       -- scopes will be fetched at every stopped event.
-      curr_modl <- expectJust <$> getCurrentBreakModule
-      in_mod <- getTopEnv curr_modl
-      imported <- getTopImported curr_modl
+      in_mod   <- getTopEnv brk_modl
+      imported <- getTopImported brk_modl
       return
         [ ScopeInfo { kind = LocalVariablesScope
                     , expensive = False
@@ -217,9 +221,6 @@ getScopes = GHC.getCurrentBreakSpan >>= \case
                     }
         ]
     | otherwise ->
-      -- No resume span; which should mean we're stopped on an exception
-      -- TODO: Use exception context to create source span, or at least
-      -- return the source span null to have Scopes at least.
       return []
 
 --------------------------------------------------------------------------------

@@ -10,7 +10,7 @@ import System.FilePath
 
 import DAP
 import qualified GHC
-import qualified GHC.Debugger.Interface.Messages as D (Command, Response)
+import qualified GHC.Debugger.Interface.Messages as D (Command, Response, RemoteThreadId)
 
 type DebugAdaptor = Adaptor DebugAdaptorState Request
 type DebugAdaptorCont = Adaptor DebugAdaptorState ()
@@ -25,8 +25,9 @@ type DebugAdaptorX r = Adaptor DebugAdaptorState r ()
 data DebugAdaptorState = DAS
       { syncRequests :: MVar D.Command
       , syncResponses :: MVar D.Response
-      , nextFreshBreakpointId :: !BreakpointId
+      , nextFreshId :: !Int
       , breakpointMap :: Map.Map GHC.InternalBreakpointId BreakpointSet
+      , stackFrameMap :: Map.Map Int (D.RemoteThreadId, Int{-position-})
       , entryFile :: FilePath
       , entryPoint :: String
       , entryArgs :: [String]
@@ -63,3 +64,9 @@ fileToSource file = do
      else return (root </> file)
   return defaultSource{sourcePath = Just (T.pack fullPath)}
 
+-- | Generate fresh Int identifier.
+getFreshId :: DebugAdaptor Int
+getFreshId = do
+  nid <- nextFreshId <$> getDebugSession
+  updateDebugSession $ \s -> s { nextFreshId = nextFreshId s + 1 }
+  pure nid

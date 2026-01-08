@@ -28,7 +28,7 @@ execute recorder = \case
   GetBreakpointsAt bp -> DidGetBreakpoints <$> getBreakpointsAt bp
   GetThreads -> GotThreads <$> getThreads
   GetStacktrace i -> GotStacktrace <$> getStacktrace i
-  GetScopes -> GotScopes <$> getScopes
+  GetScopes threadId frameIx -> GotScopes <$> getScopes threadId frameIx
   GetVariables kind -> GotVariables <$> getVariables kind
   DoEval exp_s -> DidEval <$> doEval exp_s
   DoContinue -> DidContinue <$> doContinue

@@ -47,7 +47,7 @@ data Command
   | GetStacktrace RemoteThreadId
 
   -- | Get the list of available scopes at the current breakpoint
-  | GetScopes
+  | GetScopes RemoteThreadId Int
 
   -- | Get the variables in scope for the current breakpoint.
   --
@@ -282,6 +282,9 @@ data DbgStackFrame
     -- ^ Title of stack frame
     , sourceSpan :: SourceSpan
     -- ^ Source span for this stack frame
+    , breakId :: Maybe GHC.InternalBreakpointId
+    -- ^ Is this a BCO continuation frame with a breakpoint?
+    -- If yes, we can leverage the breakpoint info to report scopes.
     }
   deriving (Show)
 

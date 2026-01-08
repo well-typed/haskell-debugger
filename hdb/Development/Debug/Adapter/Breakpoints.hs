@@ -141,18 +141,11 @@ registerBreakFound b =
         , DAP.breakpointId = Just bid
         }) bids
 
--- | Adds new BreakpointId for a givent StgPoint
+-- | Adds new BreakpointId to the debug adapter mapping
 registerNewBreakpoint :: GHC.InternalBreakpointId -> DebugAdaptor BreakpointId
 registerNewBreakpoint breakpoint = do
-  bkpId <- getFreshBreakpointId
+  bkpId <- getFreshId
   updateDebugSession $ \das@DAS{..} -> das {breakpointMap = Map.insertWith mappend breakpoint (IS.singleton bkpId) breakpointMap}
-  pure bkpId
-
--- | Generate fresh breakpoint Id.
-getFreshBreakpointId :: DebugAdaptor BreakpointId
-getFreshBreakpointId = do
-  bkpId <- nextFreshBreakpointId <$> getDebugSession
-  updateDebugSession $ \s -> s { nextFreshBreakpointId = nextFreshBreakpointId s + 1 }
   pure bkpId
 
 -- | Get the file from a DAP Source

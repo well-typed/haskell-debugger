@@ -15,6 +15,7 @@
 module Development.Debug.Adapter.Stopped where
 
 import Control.Monad
+import qualified Data.Map as Map
 import qualified Data.Text as T
 
 import DAP
@@ -47,28 +48,30 @@ commandThreads = do
 commandStackTrace :: DebugAdaptor ()
 commandStackTrace = do
   StackTraceArguments{..} <- getArguments
-  GotStacktrace stackFrames <- sendSync (GetStacktrace (RemoteThreadId stackTraceArgumentsThreadId))
-  responseFrames <- forM (zip stackFrames [1..]) $ \(stackFrame, stackFrameIx) -> do
-    source <- fileToSource stackFrame.sourceSpan.file
-    return defaultStackFrame
-      { stackFrameId = stackTraceArgumentsThreadId*1000000 + stackFrameIx
-      , stackFrameName = T.pack stackFrame.name
-      , stackFrameLine = stackFrame.sourceSpan.startLine
-      , stackFrameColumn = stackFrame.sourceSpan.startCol
-      , stackFrameEndLine = Just stackFrame.sourceSpan.endLine
-      , stackFrameEndColumn = Just stackFrame.sourceSpan.endCol
-      , stackFrameSource = Just source
-      }
+  let threadId = RemoteThreadId stackTraceArgumentsThreadId
+  GotStacktrace stackFrames <- sendSync (GetStacktrace threadId)
+  (responseFrames, newStackFrameMap) <- fmap (unzip . concat) $
+    forM (zip stackFrames [0..]) $ \(stackFrame, stackFrameIx) -> do
+      freshId <- getFreshId
+      source <- fileToSource stackFrame.sourceSpan.file
+      let responseFrame = defaultStackFrame
+            { stackFrameId = freshId
+            , stackFrameName = T.pack stackFrame.name
+            , stackFrameLine = stackFrame.sourceSpan.startLine
+            , stackFrameColumn = stackFrame.sourceSpan.startCol
+            , stackFrameEndLine = Just stackFrame.sourceSpan.endLine
+            , stackFrameEndColumn = Just stackFrame.sourceSpan.endCol
+            , stackFrameSource = Just source
+            }
+      let newMapEntry = (freshId, (threadId, stackFrameIx))
+      return [(responseFrame, newMapEntry)]
+
+  updateDebugSession (\s -> s { stackFrameMap = s.stackFrameMap <> Map.fromList newStackFrameMap })
+
   sendStackTraceResponse StackTraceResponse
     { stackFrames = responseFrames
-    , totalFrames = if null responseFrames then Nothing else Just (length responseFrames) }
-
--- | Come up with a unique identifier for a stack frame (only valid while in
--- this stopped environment, see "Lifetime of Objects References" in DAP
--- overview).
---
--- The unique identifier is based on the threadId and index of the stack frame for this thread's stack.
--- mkUniqueStackId ::
+    , totalFrames = if null responseFrames then Nothing else Just (length responseFrames)
+    }
 
 --------------------------------------------------------------------------------
 -- * Scopes
@@ -77,10 +80,16 @@ commandStackTrace = do
 -- | Command to get scopes for current stopped point
 commandScopes :: DebugAdaptor ()
 commandScopes = do
-  ScopesArguments{scopesArgumentsFrameId=_IGNORED_BUT_NOW_WE_HAVE_TO_CARE} <- getArguments
-  GotScopes scopes <- sendSync GetScopes
-  sendScopesResponse . ScopesResponse =<<
-    mapM scopeInfoToScope scopes
+  ScopesArguments{..} <- getArguments
+  let frameId = scopesArgumentsFrameId
+  sfMap <- stackFrameMap <$> getDebugSession
+  case Map.lookup frameId sfMap of
+    Nothing -> do
+      sendErrorResponse (ErrorMessage (T.pack $ "Could not find stack frame for id " ++ show frameId)) Nothing
+    Just (threadId, frameIx) -> do
+      GotScopes scopes <- sendSync (GetScopes threadId frameIx)
+      sendScopesResponse . ScopesResponse =<<
+        mapM scopeInfoToScope scopes
 
 -- | 'ScopeInfo' to 'Scope'
 scopeInfoToScope :: ScopeInfo -> DebugAdaptor Scope
@@ -154,4 +163,5 @@ varInfoToVariables VarInfo{..} =
         { variablePresentationHintLazy = Just isThunk
         }
     }
+
 

@@ -121,8 +121,9 @@ initDebugger l supportsRunInTerminal
     Left e              -> throwError $ InitFailed e
     Right (Left e)      -> lift       $ exitWithMsg e
     Right (Right flags) -> do
-      let nextFreshBreakpointId = 0
+      let nextFreshId = 0
           breakpointMap = mempty
+          stackFrameMap = mempty
           defaultRunConf = Debugger.RunDebuggerSettings
             { supportsANSIStyling = True     -- TODO: Initialize Request sends supportsANSIStyling; this is False for nvim-dap
             , supportsANSIHyperlinks = False -- VSCode does not support this
