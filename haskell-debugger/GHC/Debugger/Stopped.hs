@@ -80,15 +80,28 @@ getThreads = do
   (t_ids, remote_refs) <- unzip <$> listAllLiveRemoteThreads
   t_labels             <- getRemoteThreadsLabels remote_refs
   let
-    mkDebuggeeThread tid tlbl
+    _mkDebuggeeThread tid tlbl
       = DebuggeeThread
         { tId = tid
         , tName = tlbl
         }
-    all_threads
-      = zipWith mkDebuggeeThread t_ids t_labels
+    _all_threads
+      = zipWith _mkDebuggeeThread t_ids t_labels
 
-  return all_threads
+  -- TODO: We ignore _all_threads and report only the main execution thread for now.
+  -- See #138 for progress on Multi-threaded debugging.
+  GHC.getResumeContext >>= \case
+    [] ->
+      -- See Note [Don't crash if not stopped]
+      return []
+    r:_ -> do
+      r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
+      return
+        [ DebuggeeThread
+          { tId = r_tid
+          , tName = Just "Main Thread"
+          }
+        ]
 
 --------------------------------------------------------------------------------
 -- * Stack trace
