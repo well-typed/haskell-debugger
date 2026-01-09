@@ -23,6 +23,11 @@ description:
 common warnings
     ghc-options: -Wall
 
+source-repository head
+    type: git
+    location: https://github.com/well-typed/haskell-debugger
+    subdir: haskell-debugger-view
+
 library
     import:           warnings
     -- If you add a module here make sure to also add this module to the list
