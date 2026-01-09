@@ -20,9 +20,7 @@ import Data.IORef
 import GHC
 
 import GHC.Debugger.Monad
-import GHC.Debugger.Utils
 import GHC.Debugger.Runtime.Compile.Cache
-import GHC.Debugger.Logger as Logger
 
 -- | Compile and load a fully qualified external variable, potentially applied
 -- to a few type arguments (i.e. by specializing it). E.g. @"GHC.Base" "pure" ["IO"]
@@ -57,7 +55,7 @@ compileRaw raw_expr = do
 
   case lookupCompRaw raw_expr compCacheVal of
     Just fhv -> do
-      logSDoc Logger.Debug (text "Cache hit! on" <+> text raw_expr)
+      -- logSDoc Logger.Debug (text "Cache hit! on" <+> text raw_expr)
       return fhv
     Nothing  -> do
       fhv <- compileExprRemote raw_expr

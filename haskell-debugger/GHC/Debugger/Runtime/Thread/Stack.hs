@@ -15,6 +15,7 @@ module GHC.Debugger.Runtime.Thread.Stack
 import Data.Bits
 import Data.Maybe
 import Control.Concurrent
+import Control.Applicative
 import Control.Monad
 import Control.Monad.IO.Class
 import GHC.Exts.Heap.ClosureTypes
@@ -109,19 +110,22 @@ infoProvParser = InfoProv
 retBCOParser :: TermParser (Maybe InternalBreakpointId)
 retBCOParser = do
   -- Match against "RetBCO" frames and extract the BCOClosure information
-  Suspension{val, ctype=BCO}
-    {-"the otherwise case: Unknown closure", hence Suspension-}
-      <- matchConstructorTerm "RetBCO" *> subtermWith 1 (subtermWith 0{-take from Box-} anyTerm)
-  liftDebugger $ do
+  (matchConstructorTerm "RetBCO" *> subtermWith 1 (subtermWith 0{-take from Box-} (Just <$> anyTerm)) <|> pure Nothing)
+    >>= \case
+      Just Suspension{val, ctype=BCO} -> do
+        {-"the otherwise case: Unknown closure", hence Suspension-}
 
-    -- Decode the BCO closure using 'getClosureData' on the foreign heap
-    bco_closure_fv <- expectRight =<< Remote.evalIO
-      (Remote.getClosureData (Remote.ref (castForeignRef val)))
+        -- Decode the BCO closure using 'getClosureData' on the foreign heap
+        bco_closure_fv <- liftDebugger $
+          expectRight =<< Remote.evalIO
+            (Remote.getClosureData (Remote.ref (castForeignRef val)))
 
-    r <- obtainParsedTerm "BCO BRK_FUN info" 2 True anyTy (castForeignRef bco_closure_fv) bcoInternalBreakpointId
-    case r of
-      Left err -> liftIO $ fail (show err)
-      Right t  -> return t
+        r <- liftDebugger $
+          obtainParsedTerm "BCO BRK_FUN info" 2 True anyTy (castForeignRef bco_closure_fv) bcoInternalBreakpointId
+        case r of
+          Left err -> fail (show err)
+          Right t  -> return t
+      _ -> pure Nothing
 
 -- | Parse an 'InternalBreakpointId' out of a 'BCOClosure' term.
 bcoInternalBreakpointId :: TermParser (Maybe InternalBreakpointId)
