@@ -162,7 +162,7 @@ subtermTerm idx = do
   case t of
     Term{subTerms}
       | idx < length subTerms -> do
-          liftDebugger $ logSDoc Logger.Debug (ppr subTerms)
+          -- liftDebugger $ logSDoc Logger.Debug (ppr subTerms)
           focus (pure (subTerms !! idx)) refreshTerm
       | otherwise -> parseError (TermParseError $ "missing subterm index " <> show idx)
     other -> parseError (TermParseError $ "expected Term with subterms, got " <> termTag other)
@@ -224,11 +224,11 @@ primParser = do
 isSuspension :: TermParser Bool
 isSuspension = focus refreshTerm $ do
   t <- anyTerm
-  traceTerm
+  -- traceTerm
   case t of
     Suspension{} -> pure True
-    other -> do
-      liftDebugger $ logSDoc Logger.Debug (text $ termTag other)
+    _other -> do
+      -- liftDebugger $ logSDoc Logger.Debug (text $ termTag other)
       return False
 
 -- | Obtain a Term from a ForeignHValue

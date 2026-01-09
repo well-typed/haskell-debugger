@@ -32,9 +32,7 @@ import GHC
 import Control.Monad.Reader
 import GHCi.RemoteTypes
 
-import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Monad
-import GHC.Debugger.Utils
 import GHC.Debugger.Runtime.Eval (handleSingStatus, BadEvalStatus(..), EvalExpr(..))
 import qualified GHC.Debugger.Runtime.Eval as Raw
 import GHC.Debugger.Runtime.Compile
@@ -179,8 +177,6 @@ Remote.evalIOList $ Remote.do
 -}
 evalIOList :: RemoteExpr (IO [a]) -> Debugger (Either BadEvalStatus [ForeignRef a])
 evalIOList expr = runExceptT $ do
-  lift $ logSDoc Logger.Debug (text "evalIOList" <+> text (show expr))
-
   res_fv <- debuggeeEval expr
 
   r <- lift $ Raw.evalExpr (EvalThis (castForeignRef res_fv))
@@ -189,7 +185,6 @@ evalIOList expr = runExceptT $ do
 -- | Execute an @IO String@ on the remote process and serialize the string back to the debugger.
 evalIOString :: RemoteExpr (IO String) -> Debugger (Either BadEvalStatus String)
 evalIOString expr = runExceptT $ do
-  lift $ logSDoc Logger.Debug (text "evalIOString" <+> text (show expr))
   res_fv <- debuggeeEval expr
   lift $ Raw.evalString res_fv
 

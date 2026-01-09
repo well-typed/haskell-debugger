@@ -23,24 +23,17 @@ import GHC.Driver.Config
 import Control.Monad.IO.Class
 import qualified GHC.Runtime.Interpreter as Interp
 
-import GHC.Debugger.Utils
 import GHC.Debugger.Monad
-import GHC.Debugger.Logger as Logger
 
 -- * Evaluating things on debuggee ---------------------------------------------
 
 -- | Evaluate a raw 'EvalExpr' which represents a debuggee expression of type @IO [a]@
 evalExpr :: EvalExpr ForeignHValue -> Debugger (Either BadEvalStatus [ForeignHValue])
 evalExpr eval_expr = do
-  logSDoc Logger.Debug (text "evalExpr:" <+> (text (show (mkUnit eval_expr))))
   hsc_env <- getSession
   let eval_opts = initEvalOpts (hsc_dflags hsc_env) EvalStepNone
   handleMultiStatus <$>
     liftIO (Interp.evalStmt (hscInterp hsc_env) eval_opts eval_expr)
-  where
-    mkUnit :: EvalExpr a -> EvalExpr ()
-    mkUnit EvalThis{} = EvalThis ()
-    mkUnit (EvalApp a b) = mkUnit a `EvalApp` mkUnit b
 
 -- | Evaluate a foreign value of type @IO String@ to a @String@
 evalString :: ForeignRef (IO String) -> Debugger String
