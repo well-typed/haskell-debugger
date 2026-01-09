@@ -75,7 +75,7 @@ class DebugView a where
   debugFields :: a -> Program VarFields
 
 -- | The 'Program' abstraction allows more complicated 'DebugView' instances
--- to be constructed. The debugger will interpreter a 'Program' lazily when
+-- to be constructed. The debugger will interpret a 'Program' lazily when
 -- determining how to display a variable.
 --
 -- At the moment the only interesting query when constructing a program is determining
