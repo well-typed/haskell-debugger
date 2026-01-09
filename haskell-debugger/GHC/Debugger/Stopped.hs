@@ -249,86 +249,87 @@ getScopes threadId frameIx = do
 -- See Note [Variables Requests]
 getVariables :: RemoteThreadId -> Int{-stack frame index-} -> VariableReference -> Debugger (Either VarInfo [VarInfo])
 getVariables threadId frameIx vk = do
+  frames <- getStacktrace threadId
+  let frame = frames !! frameIx
   hsc_env <- getSession
-  GHC.getResumeContext >>= \case
-    [] ->
-      -- See Note [Don't crash if not stopped]
-      return (Right [])
-    r:_ -> case vk of
+  case vk of
+    -- Only `seq` the variable when inspecting a specific one (`SpecificVariable`)
+    -- (VARR)(b,c)
+    SpecificVariable key -> do
+      term <- obtainTerm key
 
-      -- Only `seq` the variable when inspecting a specific one (`SpecificVariable`)
-      -- (VARR)(b,c)
-      SpecificVariable key -> do
-        term <- obtainTerm key
+      case term of
 
-        case term of
+        -- (VARR)(b)
+        Suspension{} -> do
 
-          -- (VARR)(b)
-          Suspension{} -> do
+          -- Original Term was a suspension:
+          -- It is a "lazy" DAP variable: our reply can ONLY include
+          -- this single variable.
 
-            -- Original Term was a suspension:
-            -- It is a "lazy" DAP variable: our reply can ONLY include
-            -- this single variable.
+          term' <- forceTerm term
 
-            term' <- forceTerm term
+          vi <- termToVarInfo key term'
 
-            vi <- termToVarInfo key term'
+          return (Left vi)
 
-            return (Left vi)
+        -- (VARR)(c)
+        _ -> Right <$> do
 
-          -- (VARR)(c)
-          _ -> Right <$> do
+          -- Original Term was already something other than a Suspension;
+          -- Meaning the @SpecificVariable@ request means to inspect the structure.
+          -- Return ONLY the fields
 
-            -- Original Term was already something other than a Suspension;
-            -- Meaning the @SpecificVariable@ request means to inspect the structure.
-            -- Return ONLY the fields
+          termVarFields key term >>= \case
+            VarFields vfs -> return vfs
 
-            termVarFields key term >>= \case
-              VarFields vfs -> return vfs
+    -- (VARR)(a) from here onwards
 
-      -- (VARR)(a) from here onwards
+    LocalVariables -> fmap Right $ do
+      -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
+      mapM tyThingToVarInfo =<< GHC.getBindings
 
-      LocalVariables -> fmap Right $ do
-        -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
-        mapM tyThingToVarInfo =<< GHC.getBindings
+    ModuleVariables
+      | frameIx < length frames
+      , Just ibi <- DbgStackFrame.breakId frame
+      -> Right <$> do
+        curr_modl <- liftIO $ getBreakSourceMod ibi <$>
+                      readIModBreaks (hsc_HUG hsc_env) ibi
+        things <- typeEnvElts <$> getTopEnv curr_modl
+        mapM (\tt -> do
+          nameStr <- display (getName tt)
+          vi <- tyThingToVarInfo tt
+          return vi{varName = nameStr}) things
 
-      ModuleVariables -> Right <$> do
-        case GHC.resumeBreakpointId r of
-          Nothing -> return []
-          Just ibi -> do
-            curr_modl <- liftIO $ getBreakSourceMod ibi <$>
-                          readIModBreaks (hsc_HUG hsc_env) ibi
-            things <- typeEnvElts <$> getTopEnv curr_modl
-            mapM (\tt -> do
-              nameStr <- display (getName tt)
+    GlobalVariables
+      | frameIx < length frames
+      , Just ibi <- DbgStackFrame.breakId frame
+      -> Right <$> do
+        curr_modl <- liftIO $ getBreakSourceMod ibi <$>
+                      readIModBreaks (hsc_HUG hsc_env) ibi
+        names <- map greName . globalRdrEnvElts <$> getTopImported curr_modl
+        mapM (\n-> do
+          nameStr <- display n
+          liftIO (GHC.lookupType hsc_env n) >>= \case
+            Nothing ->
+              return VarInfo
+                { varName = nameStr
+                , varType = ""
+                , varValue = ""
+                , isThunk = False
+                , varRef = NoVariables
+                }
+            Just tt -> do
               vi <- tyThingToVarInfo tt
-              return vi{varName = nameStr}) things
+              return vi{varName = nameStr}
+          ) names
 
-      GlobalVariables -> Right <$> do
-        case GHC.resumeBreakpointId r of
-          Nothing -> return []
-          Just ibi -> do
-            curr_modl <- liftIO $ getBreakSourceMod ibi <$>
-                          readIModBreaks (hsc_HUG hsc_env) ibi
-            names <- map greName . globalRdrEnvElts <$> getTopImported curr_modl
-            mapM (\n-> do
-              nameStr <- display n
-              liftIO (GHC.lookupType hsc_env n) >>= \case
-                Nothing ->
-                  return VarInfo
-                    { varName = nameStr
-                    , varType = ""
-                    , varValue = ""
-                    , isThunk = False
-                    , varRef = NoVariables
-                    }
-                Just tt -> do
-                  vi <- tyThingToVarInfo tt
-                  return vi{varName = nameStr}
-              ) names
+    NoVariables -> Right <$> do
+      return []
 
-      NoVariables -> Right <$> do
-        return []
+    -- Couldn't find ibi or frame
+    _otherwise -> Right <$> do
+      return []
 
 --------------------------------------------------------------------------------
 -- Inspect
