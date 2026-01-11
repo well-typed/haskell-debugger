@@ -1,0 +1,13 @@
+# A bespoke snapshot for GHC 9.14.1. There is no Stackage snapshot for
+# GHC 9.14.1.
+#
+# The relevant package versions in this snapshot are known, by testing, to work
+# together, not withstanding the upper bounds on dependencies specified in their
+# Cabal files.
+snapshot: nightly-2026-01-10 # GHC 9.12.3.
+compiler: ghc-9.14.1
+
+# Not in nightly-2026-01-10:
+packages:
+- dap-0.3.1.0@sha256:2e3f360463bba05cb062e764ae0dd958dba0ad67e83791e0d6d5adb3d259539a,2324
+- implicit-hie-0.1.4.0@sha256:42a8bdc36713d98711c59b62fac238d81f6ce3ef7912752f38d456182260a5a3,3122

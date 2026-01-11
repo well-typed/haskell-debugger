@@ -149,12 +149,28 @@ built-in version in memory.
 
 # Building from source
 
-To build `hdb`:
+## Build `hdb` (using Cabal)
+
 ```
 cabal build -w /path/to/ghc-9.14 exe:hdb
 ```
 
-To build the VSCode extension
+## Build and install `hdb` (using Stack)
+
+On non-Windows operating systems:
+
+```
+stack install haskell-debugger
+```
+
+On Windows:
+
+```
+stack -w stack-windows.yaml install haskell-debugger
+```
+
+## Build VS Code extension (using Nix)
+
 ```
 cd vscode-extension
 nix-build
