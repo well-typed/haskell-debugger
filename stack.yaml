@@ -1,0 +1,12 @@
+# Stack project-level configuration for non-Windows operating systems only.
+
+snapshot: snapshot.yaml
+
+packages:
+- .
+- haskell-debugger-view
+
+# Applicable only to non-Windows operating systems:
+configure-options:
+  haskell-debugger:
+  - --enable-executable-dynamic

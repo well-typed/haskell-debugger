@@ -1,0 +1,7 @@
+# Stack project-level configuration for Windows only.
+
+snapshot: snapshot.yaml
+
+packages:
+- .
+- haskell-debugger-view

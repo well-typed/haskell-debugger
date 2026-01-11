@@ -6,3 +6,7 @@ vscode-extension/dist/
 vscode-extension/result
 dist-newstyle/
 cabal.project.local
+
+# Stack-related
+.stack-work
+*.yaml.lock
