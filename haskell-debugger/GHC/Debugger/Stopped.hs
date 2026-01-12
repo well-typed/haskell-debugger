@@ -21,6 +21,7 @@ import GHC.Driver.Env as GHC
 import GHC.Runtime.Eval
 import GHC.Types.SrcLoc
 import GHC.InfoProv
+import GHC.Data.FastString (unpackFS)
 import GHC.Utils.Outputable as Ppr
 import qualified GHC.Unit.Home.Graph as HUG
 
@@ -34,6 +35,10 @@ import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
 import GHC.Debugger.Utils
 import qualified GHC.Debugger.Logger as Logger
+import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
+import GHC.Debugger.Runtime.Term.Parser
+import GHCi.RemoteTypes (castForeignRef)
+import GHC.Builtin.Types (anyTy)
 
 {-
 Note [Don't crash if not stopped]
@@ -154,31 +159,36 @@ getStacktrace req_tid = do
     [] ->
       -- See Note [Don't crash if not stopped]
       return Nothing
-    r:_
-      | Just ss <- realSrcSpanToSourceSpan <$> srcSpanToRealSrcSpan (GHC.resumeSpan r)
-      , Just ss /= (fmap DbgStackFrame.sourceSpan (listToMaybe decoded_frames))
-          -- don't include the resume context entry if it is already at the
-          -- start of the decoded frames
-      , Just ibi <- GHC.resumeBreakpointId r
-      -> do
-        r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
-        if r_tid == req_tid then do
-          -- We're getting the stacktrace for the thread we're stopped at.
-          info_brks <- liftIO $ readIModBreaks hug ibi
-          let modl  = getBreakSourceMod ibi info_brks
-          modl_str  <- display modl
-          return $
-            Just DbgStackFrame
-              { name = modl_str ++ "." ++ GHC.resumeDecl r
-              , sourceSpan = ss
-              , breakId = Just ibi
-              }
-        else
-         return Nothing
-      | otherwise ->
-          -- No resume span; which should mean we're stopped on an exception.
-          -- No info for now.
-          return Nothing
+    r:_ -> do
+      let resumeSpanR = GHC.resumeSpan r
+          mRealSpan   = realSrcSpanToSourceSpan <$> srcSpanToRealSrcSpan resumeSpanR
+          firstSpan   = DbgStackFrame.sourceSpan <$> listToMaybe decoded_frames
+      r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
+      if r_tid /= req_tid then
+        return Nothing
+      else case GHC.resumeBreakpointId r of
+        Just ibi
+          | Just ss <- mRealSpan
+          , Just ss /= firstSpan -> do
+              -- We're getting the stacktrace for the thread we're stopped at.
+              info_brks <- liftIO $ readIModBreaks hug ibi
+              let modl  = getBreakSourceMod ibi info_brks
+              modl_str  <- display modl
+              return $
+                Just DbgStackFrame
+                  { name = modl_str ++ "." ++ GHC.resumeDecl r
+                  , sourceSpan = ss
+                  , breakId = Just ibi
+                  }
+        _ -> do
+          mExcSpan <- exceptionSourceSpanFromContext
+          case mExcSpan of
+            Just sourceSpan ->  return $ Just DbgStackFrame
+                                  { name = GHC.resumeDecl r
+                                  , sourceSpan
+                                  , breakId = Nothing
+                                  }
+            Nothing -> return Nothing
   return (maybe id (:) head_frame $ decoded_frames)
 
 --------------------------------------------------------------------------------
@@ -191,6 +201,12 @@ getScopes threadId frameIx = do
   frames <- getStacktrace threadId
   let frame = frames !! frameIx
   let sourceSpan = DbgStackFrame.sourceSpan frame
+      localsScope = ScopeInfo
+        { kind = LocalVariablesScope
+        , expensive = False
+        , numVars = Nothing
+        , sourceSpan
+        }
   if
     | frameIx < length frames
     , Just ibi <- DbgStackFrame.breakId frame
@@ -204,11 +220,7 @@ getScopes threadId frameIx = do
       in_mod   <- getTopEnv brk_modl
       imported <- getTopImported brk_modl
       return
-        [ ScopeInfo { kind = LocalVariablesScope
-                    , expensive = False
-                    , numVars = Nothing
-                    , sourceSpan
-                    }
+        [ localsScope
         , ScopeInfo { kind = ModuleVariablesScope
                     , expensive = True
                     , numVars = Just (sizeUFM in_mod)
@@ -221,7 +233,7 @@ getScopes threadId frameIx = do
                     }
         ]
     | otherwise ->
-      return []
+      return [localsScope]
 
 --------------------------------------------------------------------------------
 -- * Variables
@@ -354,3 +366,79 @@ getTopImported modl = do
   liftIO $ HUG.lookupHugByModule modl (hsc_HUG hsc_env) >>= \case
     Nothing -> return emptyGlobalRdrEnv
     Just hmi -> mkTopLevImportedEnv hsc_env hmi
+
+--------------------------------------------------------------------------------
+-- * Exception context helpers
+--------------------------------------------------------------------------------
+
+exceptionSourceSpanFromContext :: Debugger (Maybe SourceSpan)
+exceptionSourceSpanFromContext = do
+  GHC.getResumeContext >>= \case
+    r:_ | resumeHistoryIx r == 0
+        , Nothing <- GHC.resumeBreakpointId r -> do
+            let excRef = resumeApStack r
+            evalRes <- Remote.eval
+              (Remote.raw exceptionLocationExpr `Remote.app` Remote.untypedRef excRef)
+            case evalRes of
+              Left err -> do
+                logSDoc Logger.Debug $
+                  Ppr.text "Failed to evaluate exception context:" Ppr.<+> Ppr.text (show err)
+                return Nothing
+              Right fhv -> do
+                parsed <- obtainParsedTerm "Exception context location" 4 True anyTy (castForeignRef fhv)
+                  (maybeParser exceptionLocationTupleParser)
+                case parsed of
+                  Left errs -> do
+                    logSDoc Logger.Debug $
+                      Ppr.text "Failed to parse exception context location:"
+                        Ppr.<+> Ppr.vcat (map (Ppr.text . getTermErrorMessage) errs)
+                    return Nothing
+                  Right Nothing -> return Nothing
+                  Right (Just (file, line, col)) ->
+                    return $ Just SourceSpan
+                      { file = file
+                      , startLine = line
+                      , startCol = col
+                      , endLine = line
+                      , endCol = col
+                      }
+    _ -> return Nothing
+
+exceptionLocationTupleParser :: TermParser (String, Int, Int)
+exceptionLocationTupleParser =
+  (,,) <$> subtermWith 0 stringParser
+       <*> subtermWith 1 intParser
+       <*> subtermWith 2 intParser
+
+exceptionLocationExpr :: String
+exceptionLocationExpr = unlines
+  [ "let"
+  , "  fromCallStack cs = case GHC.Internal.Data.Maybe.listToMaybe (GHC.Internal.Stack.getCallStack cs) of"
+  , "    Just (_, loc) -> Just ( GHC.Internal.Stack.Types.srcLocFile loc"
+  , "                      , GHC.Internal.Stack.Types.srcLocStartLine loc"
+  , "                      , GHC.Internal.Stack.Types.srcLocStartCol loc)"
+  , "  go exc ="
+  , "    let ctx = GHC.Internal.Exception.Type.someExceptionContext exc"
+  , "        bts :: [GHC.Internal.Exception.Backtrace.Backtraces]"
+  , "        bts = Control.Exception.Context.getExceptionAnnotations ctx"
+  , "    in case bts of"
+  , "         bt : _ -> case GHC.Internal.Exception.Backtrace.btrHasCallStack bt of"
+  , "           Just cs -> fromCallStack cs"
+  , "           Nothing -> Nothing"
+  , "         [] -> Nothing"
+  , " in go"
+  ]
+
+fallbackExceptionSourceSpan :: Maybe SrcSpan -> SourceSpan
+fallbackExceptionSourceSpan mspan =
+  let fileLabel = maybe "<exception>" spanLabel mspan
+  in SourceSpan
+       { file = fileLabel
+       , startLine = 0
+       , startCol = 0
+       , endLine = 0
+       , endCol = 0
+       }
+  where
+    spanLabel (RealSrcSpan rss _) = unpackFS (srcSpanFile rss)
+    spanLabel (UnhelpfulSpan reason) = unpackFS (unhelpfulSpanFS reason)
