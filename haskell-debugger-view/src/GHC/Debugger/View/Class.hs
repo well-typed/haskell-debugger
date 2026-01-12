@@ -51,6 +51,7 @@ module GHC.Debugger.View.Class
 
 import Data.Int
 import Data.Word
+import Control.Exception
 
 -- | Custom handling of debug terms (e.g. in the variables pane, or when
 -- inspecting a lazy variable)
@@ -180,6 +181,15 @@ instance DebugView (a, b) where
     [ ("fst", VarFieldValue x)
     , ("snd", VarFieldValue y) ]
 
+instance DebugView SomeException where
+  debugValue e = simpleValue (displayException e) True
+  debugFields e@(SomeException exc) =
+    let !ctx = someExceptionContext e
+    in pure $ VarFields
+    [ ("exception", VarFieldValue exc)
+    , ("context", VarFieldValue ctx)
+    ]
+
 -- | This instance will display up to the first 50 forced elements of a list.
 instance {-# OVERLAPPABLE #-} DebugView [a] where
   debugValue [] = simpleValue "[]" False
@@ -219,4 +229,3 @@ toVarFieldsIO :: VarFields -> [(IO String, VarFieldValue)]
 toVarFieldsIO x =
   case x of
     VarFields fls -> [ (pure fl_s, b) | (fl_s, b) <- fls]
-
