@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase, ViewPatterns, RecordWildCards #-}
+{-# LANGUAGE LambdaCase, ViewPatterns, RecordWildCards, OverloadedRecordDot #-}
 module Development.Debug.Interactive where
 
 import System.IO
@@ -20,6 +20,8 @@ import GHC.Debugger.Logger
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Monad
 import GHC.Debugger
+import Control.Monad
+import Data.List (intercalate)
 
 -- | Interactive debugging monad
 type InteractiveDM a = InputT (RWST (FilePath{-entry file-},String{-entry point-}, [String]{-run args-}) ()
@@ -108,31 +110,55 @@ debugInteractive recorder = withInterrupt loop
               printResponse debugRec out
       loop
 
+showExceptionDetails :: Recorder (WithSeverity DebuggerLog) -> RemoteThreadId -> InteractiveDM ()
+showExceptionDetails recd tid = do
+  infoResp <- lift . lift $ execute recd (GetExceptionInfo tid)
+  case infoResp of
+    GotExceptionInfo exc_info -> outputStrLn $ renderExceptionInfo exc_info
+    _ -> pure ()
+  stackResp <- lift . lift $ execute recd (GetStacktrace tid)
+  case stackResp of
+    GotStacktrace (frame:_) ->
+      outputStrLn $
+        "Exception location: " ++ renderSourceSpan (frame.sourceSpan)
+    _ -> outputStrLn "Exception location: <unknown>"
+
 --------------------------------------------------------------------------------
 -- Printing
 --------------------------------------------------------------------------------
 
 printResponse :: Recorder (WithSeverity DebuggerLog) -> Response -> InteractiveDM ()
 printResponse recd = \case
-  DidEval er -> outputStrLn $ showEvalResult er
+  DidEval er -> outputEvalResult recd er
   DidSetBreakpoint bf       -> outputStrLn $ show bf
   DidRemoveBreakpoint bf    -> outputStrLn $ show bf
   DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
   DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
-  DidContinue er -> outputStrLn $ showEvalResult er
+  DidContinue er -> outputEvalResult recd er
   DidStep er -> printEvalResult recd er
-  DidExec er -> outputStrLn $ showEvalResult er
+  DidExec er -> outputEvalResult recd er
   GotThreads threads -> outputStrLn $ show threads
   GotStacktrace stackframes -> outputStrLn $ show stackframes
   GotScopes scopeinfos -> outputStrLn $ show scopeinfos
   GotVariables vis -> outputStrLn $ showVarInfoEither vis
+  GotExceptionInfo exc_info -> outputStrLn $ renderExceptionInfo exc_info
   Aborted err_str -> outputStrLn ("Aborted: " ++ err_str)
   Initialised -> pure ()
+  where
+    outputEvalResult recd' er = do
+      outputStrLn (showEvalResult er)
+      maybeShowException recd' er
+
+    maybeShowException recd' EvalStopped{breakId = Nothing, breakThread=tid} =
+      showExceptionDetails recd' tid
+    maybeShowException _ _ = pure ()
 
 printEvalResult :: Recorder (WithSeverity DebuggerLog) -> EvalResult -> InteractiveDM ()
 printEvalResult recd EvalStopped{..} = do
   out <- lift . lift $ execute recd (GetScopes breakThread 0)
   printResponse recd out
+  when (breakId == Nothing) $
+    showExceptionDetails recd breakThread
 printEvalResult _ er = outputStrLn $ showEvalResult er
 
 showEvalResult :: EvalResult -> String
@@ -147,6 +173,29 @@ showVarInfoEither (Right vis) = unlines $ map showVarInfo vis
 
 showVarInfo :: VarInfo -> String
 showVarInfo VarInfo{..} = unwords [varName, ":", varType, "=", varValue]
+
+renderSourceSpan :: SourceSpan -> String
+renderSourceSpan SourceSpan{..} =
+  file ++ ":" ++ show startLine ++ ":" ++ show startCol
+
+renderExceptionInfo :: ExceptionInfo -> String
+renderExceptionInfo = unlines . go 0
+  where
+    go depth exInfo =
+      let indent = replicate (depth * 2) ' '
+          typeLine = indent ++ "Exception: " ++ exceptionInfoTypeName exInfo
+          messageLine = indent ++ "Message: " ++ exceptionInfoMessage exInfo
+          ctxLine = case exceptionInfoContext exInfo of
+            Nothing -> indent ++ "Call stack: <unavailable>"
+            Just ctx -> indent ++ "Call stack:\n" ++ indentMultiline (depth + 1) ctx
+          innerLines = case exceptionInfoInner exInfo of
+            [] -> []
+            xs -> (indent ++ "Inner exceptions:") : concatMap (go (depth + 1)) xs
+      in typeLine : messageLine : ctxLine : innerLines
+
+    indentMultiline depth txt =
+      let pref = replicate (depth * 2) ' '
+      in intercalate "\n" (map (pref ++) (lines txt))
 
 --------------------------------------------------------------------------------
 -- Command parser

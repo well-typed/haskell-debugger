@@ -18,6 +18,7 @@ import Development.Debug.Adapter.Breakpoints
 import Development.Debug.Adapter.Stepping
 import Development.Debug.Adapter.Stopped
 import Development.Debug.Adapter.Evaluation
+import Development.Debug.Adapter.ExceptionInfo
 import Development.Debug.Adapter.Exit
 import Development.Debug.Adapter.Handles
 import GHC.Debugger.Logger
@@ -115,7 +116,7 @@ getConfig port = do
       , supportsRestartRequest                = False
       , supportsExceptionOptions              = True
       , supportsValueFormattingOptions        = True
-      , supportsExceptionInfoRequest          = False
+      , supportsExceptionInfoRequest          = True
       , supportTerminateDebuggee              = True
       , supportSuspendDebuggee                = False
       , supportsDelayedStackTraceLoading      = False
@@ -220,6 +221,7 @@ talk l support_rit_var _pid_var client_proxy_signal = \ case
   CommandSetBreakpoints            -> commandSetBreakpoints
   CommandSetFunctionBreakpoints    -> commandSetFunctionBreakpoints
   CommandSetExceptionBreakpoints   -> commandSetExceptionBreakpoints
+  CommandExceptionInfo             -> commandExceptionInfo
   CommandSetDataBreakpoints        -> undefined
   CommandSetInstructionBreakpoints -> undefined
 ----------------------------------------------------------------------------
@@ -276,4 +278,3 @@ ack l _ref rrr = case rrr.reverseRequestCommand of
     when rrr.success $ do
       logWith l Info $ LaunchLog $ T.pack "RunInTerminal was successful"
   _ -> pure ()
-

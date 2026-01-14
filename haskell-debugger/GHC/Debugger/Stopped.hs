@@ -374,8 +374,7 @@ getTopImported modl = do
 exceptionSourceSpanFromContext :: Debugger (Maybe SourceSpan)
 exceptionSourceSpanFromContext = do
   GHC.getResumeContext >>= \case
-    r:_ | resumeHistoryIx r == 0
-        , Nothing <- GHC.resumeBreakpointId r -> do
+    r:_ | Nothing <- GHC.resumeBreakpointId r -> do
             let excRef = resumeApStack r
             evalRes <- Remote.eval
               (Remote.raw exceptionLocationExpr `Remote.app` Remote.untypedRef excRef)
@@ -394,12 +393,12 @@ exceptionSourceSpanFromContext = do
                         Ppr.<+> Ppr.vcat (map (Ppr.text . getTermErrorMessage) errs)
                     return Nothing
                   Right Nothing -> return Nothing
-                  Right (Just (file, line, col)) ->
+                  Right (Just (file, srcLine, col)) ->
                     return $ Just SourceSpan
                       { file = file
-                      , startLine = line
+                      , startLine = srcLine
                       , startCol = col
-                      , endLine = line
+                      , endLine = srcLine
                       , endCol = col
                       }
     _ -> return Nothing
@@ -413,13 +412,13 @@ exceptionLocationTupleParser =
 exceptionLocationExpr :: String
 exceptionLocationExpr = unlines
   [ "let"
-  , "  fromCallStack cs = case GHC.Internal.Data.Maybe.listToMaybe (GHC.Internal.Stack.getCallStack cs) of"
-  , "    Just (_, loc) -> Just ( GHC.Internal.Stack.Types.srcLocFile loc"
-  , "                      , GHC.Internal.Stack.Types.srcLocStartLine loc"
-  , "                      , GHC.Internal.Stack.Types.srcLocStartCol loc)"
+  , "  fromCallStack cs = case Data.Maybe.listToMaybe (GHC.Exception.getCallStack cs) of"
+  , "    Just (_, loc) -> Just ( GHC.Exception.srcLocFile loc"
+  , "                      , GHC.Exception.srcLocStartLine loc"
+  , "                      , GHC.Exception.srcLocStartCol loc)"
   , "  go exc ="
-  , "    let ctx = GHC.Internal.Exception.Type.someExceptionContext exc"
-  , "        bts :: [GHC.Internal.Exception.Backtrace.Backtraces]"
+  , "    let ctx = Control.Exception.someExceptionContext exc"
+  , "        bts :: [Control.Exception.Backtrace.Backtraces]"
   , "        bts = Control.Exception.Context.getExceptionAnnotations ctx"
   , "    in case bts of"
   , "         bt : _ -> case GHC.Internal.Exception.Backtrace.btrHasCallStack bt of"
@@ -428,6 +427,85 @@ exceptionLocationExpr = unlines
   , "         [] -> Nothing"
   , " in go"
   ]
+
+getExceptionInfo :: RemoteThreadId -> Debugger ExceptionInfo
+getExceptionInfo req_tid = GHC.getResumeContext >>= \case
+  [] -> return defaultExceptionInfo
+  r:_ -> do
+    r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
+    case (r_tid == req_tid, GHC.resumeBreakpointId r) of
+      (True, Nothing) -> do
+        let excRef = resumeApStack r
+        fromMaybe defaultExceptionInfo <$> exceptionInfoFromContext excRef
+      _ -> return defaultExceptionInfo
+
+exceptionInfoFromContext :: ForeignHValue -> Debugger (Maybe ExceptionInfo)
+exceptionInfoFromContext excRef = do
+  -- 1. Compile the datatype definition we need
+  _ <- runDecls exceptionInfoData
+  -- 2. Gather the exception information.
+  evalRes <- Remote.eval
+    (Remote.raw exceptionInfoExpr `Remote.app` Remote.untypedRef excRef)
+  case evalRes of
+    Left err -> do
+      logSDoc Logger.Debug $
+        Ppr.text "Failed to evaluate exception info:" Ppr.<+> Ppr.text (show err)
+      return Nothing
+    Right fhv -> do
+      parsed <- obtainParsedTerm "Exception info" 4 True anyTy (castForeignRef fhv)
+        exceptionInfoParser
+      case parsed of
+        Left errs -> do
+          logSDoc Logger.Debug $
+            Ppr.text "Failed to parse exception info:"
+              Ppr.<+> Ppr.vcat (map (Ppr.text . getTermErrorMessage) errs)
+          return Nothing
+        Right info -> return (Just info)
+
+exceptionInfoParser :: TermParser ExceptionInfo
+exceptionInfoParser = do
+  ExceptionInfo
+    <$> subtermWith 0 stringParser
+    <*> subtermWith 1 stringParser
+    <*> subtermWith 2 stringParser
+    <*> subtermWith 3 (maybeParser stringParser)
+    <*> subtermWith 4 (parseList exceptionInfoParser)
+
+-- Need to use a specific datatype since ExceptionInfoNode is recursive
+exceptionInfoData :: String
+exceptionInfoData = "data ExceptionInfoNode = ExceptionInfoNode String String String (Maybe String) [ExceptionInfoNode]"
+
+exceptionInfoExpr :: String
+exceptionInfoExpr =
+  unlines
+    [ "\\se ->"
+    , "  let collectExceptionInfo :: SomeException -> ExceptionInfoNode"
+    , "      collectExceptionInfo se' ="
+    , "        case se' of"
+    , "          SomeException exc ->"
+    , "            let ctx = Control.Exception.someExceptionContext se'"
+    , "                rendered = Control.Exception.Context.displayExceptionContext ctx"
+    , "                whileHandling = Control.Exception.Context.getExceptionAnnotations ctx"
+    , "                innerNodes = map (collectExceptionInfo . unwrap) whileHandling"
+    , "                simpleTypeName = Data.Typeable.tyConName tc"
+    , "                modulePrefix = case Data.Typeable.tyConModule tc of"
+    , "                  mdl | null mdl -> \"\""
+    , "                      | otherwise -> mdl ++ \".\""
+    , "                packagePrefix = case Data.Typeable.tyConPackage tc of"
+    , "                  pkg | null pkg -> \"\""
+    , "                      | otherwise -> pkg ++ \":\""
+    , "                tc = Data.Typeable.typeRepTyCon (Data.Typeable.typeOf exc)"
+    , "                fullTypeName = packagePrefix ++ modulePrefix ++ simpleTypeName"
+    , "                unwrap (Control.Exception.WhileHandling inner) = inner"
+    , "                contextText = if null rendered then Nothing else Just rendered"
+    , "            in ExceptionInfoNode"
+    , "                 simpleTypeName"
+    , "                 fullTypeName"
+    , "                 (Control.Exception.displayException se')"
+    , "                 contextText"
+    , "                 innerNodes"
+    , "  in collectExceptionInfo se"
+    ]
 
 fallbackExceptionSourceSpan :: Maybe SrcSpan -> SourceSpan
 fallbackExceptionSourceSpan mspan =
@@ -442,3 +520,20 @@ fallbackExceptionSourceSpan mspan =
   where
     spanLabel (RealSrcSpan rss _) = unpackFS (srcSpanFile rss)
     spanLabel (UnhelpfulSpan reason) = unpackFS (unhelpfulSpanFS reason)
+
+defaultExceptionInfo :: ExceptionInfo
+defaultExceptionInfo = ExceptionInfo
+  { exceptionInfoTypeName = "Exception"
+  , exceptionInfoFullTypeName = "Exception"
+  , exceptionInfoMessage = "Exception information not available"
+  , exceptionInfoContext = Nothing
+  , exceptionInfoInner = []
+  }
+
+currentlyStoppedOnException :: Debugger Bool
+currentlyStoppedOnException = do
+  resumes <- GHC.getResumeContext
+  return $ case resumes of
+    [] -> False
+    r:_ -> isNothing (GHC.resumeBreakpointId r)
+

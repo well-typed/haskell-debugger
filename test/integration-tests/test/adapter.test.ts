@@ -290,6 +290,82 @@ describe("Debug Adapter Tests", function () {
 
     })
 
+    // Note: It is not clear that stopping 5 times is the right thing to happen here,
+    // but it just tests the existing behaviour.
+    describe("Exception info", function () {
+        it("reports nested exceptions and continues after the first break", async () => {
+            const config = mkConfig({
+                projectRoot: "/data/exceptions",
+                entryFile: "Main.hs",
+                entryPoint: "main",
+                entryArgs: [],
+                extraGhcArgs: []
+            });
+
+            await Promise.all([
+                dc.waitForEvent('initialized').then(() =>
+                    dc.setExceptionBreakpointsRequest({
+                        filters: ['break-on-exception']
+                    }).then(() => dc.configurationDoneRequest())
+                ),
+                dc.launch(config),
+            ]);
+
+            const firstStopped = await dc.waitForEvent('stopped');
+            assert.strictEqual(firstStopped.body.reason, 'exception', "Expected first stop to be an exception");
+            const firstThreadId = firstStopped.body.threadId;
+
+            const firstInfo = await dc.exceptionInfoRequest({ threadId: firstThreadId });
+            assert.strictEqual(firstInfo.body.exceptionId, 'ErrorCall');
+            assert.ok(firstInfo.body.details, "Exception details should be present");
+            assert.strictEqual(firstInfo.body.details?.message, 'outer boom');
+            assert.ok(!firstInfo.body.details?.innerException || firstInfo.body.details?.innerException?.length === 0, "First exception should not have inner exceptions");
+
+            await dc.continueRequest({ threadId: firstThreadId });
+
+            const secondStopped = await dc.waitForEvent('stopped');
+            assert.strictEqual(secondStopped.body.reason, 'exception', "Expected second stop to be an exception");
+            const secondThreadId = secondStopped.body.threadId;
+
+            const secondInfo = await dc.exceptionInfoRequest({ threadId: secondThreadId });
+            assert.ok(secondInfo.body.details, "Second exception details should be present");
+            assert.strictEqual(secondInfo.body.details?.message, 'inner boom');
+
+            await dc.continueRequest({ threadId: secondThreadId });
+            const thirdStopped = await dc.waitForEvent('stopped');
+            assert.strictEqual(thirdStopped.body.reason, 'exception', "Expected second stop to be an exception");
+            const thirdThreadId = thirdStopped.body.threadId;
+
+            const thirdInfo = await dc.exceptionInfoRequest({ threadId: thirdThreadId });
+            assert.ok(thirdInfo.body.details, "Third exception details should be present");
+            assert.strictEqual(thirdInfo.body.details?.message, 'inner boom');
+
+
+            await dc.continueRequest({ threadId: thirdThreadId });
+            const fourthStopped = await dc.waitForEvent('stopped');
+            assert.strictEqual(fourthStopped.body.reason, 'exception', "Expected fourth stop to be an exception");
+            const fourthThreadId = fourthStopped.body.threadId;
+
+            const fourthInfo = await dc.exceptionInfoRequest({ threadId: fourthThreadId });
+            assert.ok(fourthInfo.body.details, "Fourth exception details should be present");
+            assert.strictEqual(fourthInfo.body.details?.message, 'inner boom');
+
+            await dc.continueRequest({ threadId: fourthThreadId });
+
+            const fifthStopped = await dc.waitForEvent('stopped');
+            assert.strictEqual(fifthStopped.body.reason, 'exception', "Expected fifth stop to be an exception");
+            const fifthThreadId = fifthStopped.body.threadId;
+
+            const fifthInfo = await dc.exceptionInfoRequest({ threadId: fifthThreadId });
+            assert.ok(fifthInfo.body.details, "Fifth exception details should be present");
+            assert.strictEqual(fifthInfo.body.details?.message, 'inner boom');
+
+            await dc.continueRequest({ threadId: fifthThreadId });
+
+            await dc.waitForEvent('terminated');
+        });
+    })
+
     describe("Multiple main function tests", function () {
         const multiMainConfig = mkConfig({
             projectRoot: "/data/multi-mains",

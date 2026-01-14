@@ -1,0 +1,3 @@
+#!/bin/sh
+
+hdb cli prog/Main.hs < exceptions-multiple.hdb-stdin

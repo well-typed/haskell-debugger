@@ -132,6 +132,7 @@ executable hdb
                       Development.Debug.Adapter.Stepping,
                       Development.Debug.Adapter.Stopped,
                       Development.Debug.Adapter.Evaluation,
+                      Development.Debug.Adapter.ExceptionInfo,
                       Development.Debug.Adapter.Init,
                       Development.Debug.Adapter.Interface,
                       Development.Debug.Adapter.Output,
