@@ -30,6 +30,7 @@ execute recorder = \case
   GetStacktrace i -> GotStacktrace <$> getStacktrace i
   GetScopes threadId frameIx -> GotScopes <$> getScopes threadId frameIx
   GetVariables threadId frameIx varRef -> GotVariables <$> getVariables threadId frameIx varRef
+  GetExceptionInfo threadId -> GotExceptionInfo <$> getExceptionInfo threadId
   DoEval exp_s -> DidEval <$> doEval exp_s
   DoContinue -> DidContinue <$> doContinue
   DoSingleStep -> DidStep <$> doSingleStep
@@ -46,4 +47,3 @@ data DebuggerLog
 instance Pretty DebuggerLog where
   pretty = \ case
     EvalLog msg -> pretty msg
-

@@ -23,7 +23,7 @@ import GHC.Debugger.Runtime.Term.Key
 data Command
 
   -- | Set a breakpoint on a given function, or module by line number
-  = SetBreakpoint { brk       :: Breakpoint 
+  = SetBreakpoint { brk       :: Breakpoint
                   , hitCount  :: Maybe Int
                   -- ^ Stop after N hits (if @isJust condition@, count down only when @eval condition == True@)
                   , condition :: Maybe String
@@ -60,6 +60,9 @@ data Command
 
   -- | Evaluate an expression at the current breakpoint.
   | DoEval String
+
+  -- | Get information about the current exception (if any) on a thread.
+  | GetExceptionInfo RemoteThreadId
 
   -- | Continue executing from the current breakpoint
   | DoContinue
@@ -196,6 +199,7 @@ data Response
   | GotStacktrace [DbgStackFrame]
   | GotScopes [ScopeInfo]
   | GotVariables (Either VarInfo [VarInfo])
+  | GotExceptionInfo ExceptionInfo
   | Aborted String
   | Initialised
 
@@ -268,10 +272,18 @@ data DbgStackFrame
     }
   deriving (Show)
 
+data ExceptionInfo = ExceptionInfo
+  { exceptionInfoTypeName     :: String
+  , exceptionInfoFullTypeName :: String
+  , exceptionInfoMessage      :: String
+  , exceptionInfoContext      :: Maybe String
+  , exceptionInfoInner        :: [ExceptionInfo]
+  }
+  deriving (Show)
+
 --------------------------------------------------------------------------------
 -- Instances
 --------------------------------------------------------------------------------
 
 instance Show GHC.InternalBreakpointId where
   show (GHC.InternalBreakpointId m ix) = "InternalBreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix
-

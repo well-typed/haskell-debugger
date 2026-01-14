@@ -1,0 +1,25 @@
+[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/prog/Main.hs, interpreted )[main]
+(hdb) BreakFoundNoLoc {changed = True}
+(hdb) About to throw first
+Stopped at breakpoint
+Exception: ErrorCall
+Message: boom first
+Call stack:
+  IPE backtrace:
+  HasCallStack backtrace:
+    error, called at <TEMPORARY-DIRECTORY>/prog/Main.hs:8:10 in main:Main
+
+Exception location: <TEMPORARY-DIRECTORY>/prog/Main.hs:8:10
+(hdb) Handled first exception: boom first
+Continuing after first exception
+Stopped at breakpoint
+Exception: ErrorCall
+Message: boom second
+Call stack:
+  IPE backtrace:
+  HasCallStack backtrace:
+    error, called at <TEMPORARY-DIRECTORY>/prog/Main.hs:10:3 in main:Main
+
+Exception location: <TEMPORARY-DIRECTORY>/prog/Main.hs:10:3
+(hdb) 

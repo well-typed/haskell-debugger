@@ -160,4 +160,3 @@ debuggerViewTextContents = stringToStringBuffer $(embedStringFile "haskell-debug
 -- | GHC.Debugger.View.ByteString
 debuggerViewByteStringContents :: StringBuffer
 debuggerViewByteStringContents = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/ByteString.hs")
-
