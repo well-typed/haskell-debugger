@@ -28,9 +28,6 @@ data PathFragment (b :: Bool {- whether allow custom field -}) where
   PositionalIndex :: Int -> PathFragment b
   -- | A labeled field indexes a datacon fields by name
   LabeledField    :: Name -> PathFragment b
-  -- | Similar to LabeledField, but originates from a custom 'DebugView'
-  -- instance rather than a proper data con label (hence why we don't have a name).
-  CustomField     :: String -> PathFragment True
 deriving instance Eq (PathFragment b)
 deriving instance Ord (PathFragment b)
 
@@ -42,13 +39,4 @@ instance Outputable TermKey where
 instance Outputable (PathFragment b) where
   ppr (PositionalIndex i) = text "_" <> ppr i
   ppr (LabeledField n)    = ppr n
-  ppr (CustomField s)     = text s
 
--- | >>> unconsTermKey (FromPath (FromPath (FromId hi) (Pos 1)) (Pos 2))
--- (hi, [1, 2])
-unconsTermKey :: TermKey -> (Id, [PathFragment True])
-unconsTermKey = go [] where
-  go acc (FromId i)                       = (i, reverse acc)
-  go acc (FromPath k (PositionalIndex i)) = go (PositionalIndex i:acc) k
-  go acc (FromPath k (LabeledField n))    = go (LabeledField n:acc) k
-  go acc (FromCustomTerm k s _)           = go (CustomField s:acc) k
