@@ -15,28 +15,34 @@ data TermKey where
 
   -- | Append a PathFragment to the current Term Key. Used to construct keys
   -- for indexed and labeled fields.
-  FromPath :: TermKey -> PathFragment False -> TermKey
+  FromPath :: TermKey -> PathFragment -> TermKey
 
   -- | Use a custom term, by custom name, along a TermKey path, rather than
   -- reconstructing one from the 'FromId' root.
-  FromCustomTerm :: TermKey -> String -> Term -> TermKey
+  FromCustomPath :: TermKey -> String -> Term -> TermKey
+
+  -- | Use a custom term, by custom name, as the root of the key
+  FromCustomRoot :: String -> Term -> TermKey
 
 -- | A term may be identified by an 'Id' (such as a local variable) plus a list
 -- of 'PathFragment's to an arbitrarily nested field.
-data PathFragment (b :: Bool {- whether allow custom field -}) where
+data PathFragment where
+
   -- | A positional index is an index from 1 to inf
-  PositionalIndex :: Int -> PathFragment b
+  PositionalIndex :: Int -> PathFragment
+
   -- | A labeled field indexes a datacon fields by name
-  LabeledField    :: Name -> PathFragment b
-deriving instance Eq (PathFragment b)
-deriving instance Ord (PathFragment b)
+  LabeledField    :: Name -> PathFragment
+
+  deriving (Eq, Ord)
 
 instance Outputable TermKey where
   ppr (FromId i)             = ppr i
   ppr (FromPath _ last_p)    = ppr last_p
-  ppr (FromCustomTerm _ s _) = text s
+  ppr (FromCustomPath _ s _) = text s
+  ppr (FromCustomRoot s _)   = text s
 
-instance Outputable (PathFragment b) where
+instance Outputable PathFragment where
   ppr (PositionalIndex i) = text "_" <> ppr i
   ppr (LabeledField n)    = ppr n
 

@@ -55,7 +55,7 @@ termVarFields top_key top_term = do
     -- The custom instance case (top_term should always be a @Term@ if @Just@)
     Just fls -> do
 
-      let keys = map (\(f_name, f_term) -> FromCustomTerm top_key f_name f_term) fls
+      let keys = map (\(f_name, f_term) -> FromCustomPath top_key f_name f_term) fls
       VarFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
 
     -- The general case

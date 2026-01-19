@@ -120,10 +120,10 @@ checkType ty = do
   t <- anyTerm
   unless (termType t `eqType` ty) (parseError (TermParseError "ty mismatch"))
 
-traceTerm :: TermParser ()
-traceTerm = do
+traceTerm :: String -> TermParser ()
+traceTerm s = do
   t <- anyTerm
-  liftDebugger $ logSDoc Logger.Debug (ppr t)
+  liftDebugger $ logSDoc Logger.Debug (text s <+> ppr t)
 
 -- | Evaluate the currently focused term
 seqTermP :: HasCallStack => TermParser a -> TermParser a
@@ -237,6 +237,10 @@ foreignValueToTerm ty fhv =
   liftDebugger $ do
     hsc_env <- getSession
     liftIO $ cvObtainTerm hsc_env 2 False ty fhv
+
+-- | Attempt to parse something, return Nothing if it fails
+tryParser :: TermParser a -> TermParser (Maybe a)
+tryParser p = (Just <$> p) <|> pure Nothing
 
 --------------------------------------------------------------------------------
 -- * Logging parsers

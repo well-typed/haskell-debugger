@@ -3,7 +3,7 @@
 -- | Getting information about where we're stopped at (current suspended state).
 --
 -- Includes the commands to execute the following requests on the debuggee state:
--- 
+--
 -- @
 -- Threads
 --    StackTrace

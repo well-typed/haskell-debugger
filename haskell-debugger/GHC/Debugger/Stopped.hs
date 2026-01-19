@@ -10,7 +10,7 @@ import qualified Data.List as L
 
 import GHC
 import GHC.Types.Unique.FM
-import GHC.Types.Name.Occurrence (sizeOccEnv)
+import GHC.Types.Name.Occurrence (sizeOccEnv, occNameString)
 import GHC.ByteCode.Breakpoints
 import GHC.Types.Name.Reader
 import GHC.Unit.Home.ModInfo
@@ -23,6 +23,7 @@ import GHC.Types.SrcLoc
 import GHC.InfoProv
 import GHC.Utils.Outputable as Ppr
 import qualified GHC.Unit.Home.Graph as HUG
+import GHC.Exts.Heap.Closures
 
 import GHC.Debugger.Stopped.Exception
 import GHC.Debugger.Stopped.Variables
@@ -30,6 +31,7 @@ import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Thread
 import GHC.Debugger.Runtime.Thread.Stack
 import GHC.Debugger.Runtime.Thread.Map
+import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
@@ -123,7 +125,7 @@ getStacktrace req_tid = do
       -- and use the BRK_FUN src locations.
       ibis <- getRemoteThreadStackCopy f_tid
       forM ibis $ \case
-        StackFrameBreakpointInfo ibi -> do
+        StackFrameBreakpointInfo ibi bcoArgs -> do
           info_brks <- liftIO $ readIModBreaks hug ibi
           let modl  = getBreakSourceMod ibi info_brks
           srcSpan   <- liftIO $ getBreakLoc (readIModModBreaks hug) ibi info_brks
@@ -134,6 +136,7 @@ getStacktrace req_tid = do
             { name = modl_str ++ "." ++ decl
             , sourceSpan = realSrcSpanToSourceSpan $ realSrcSpan srcSpan
             , breakId = Just ibi
+            , bcoArgs = Just bcoArgs
             }
         StackFrameIPEInfo ipe -> do
           case srcSpanStringToSourceSpan (ipLoc ipe) of
@@ -148,6 +151,7 @@ getStacktrace req_tid = do
                 { name = ipMod ipe ++ "." ++ ipLabel ipe
                 , sourceSpan = sourceSpan
                 , breakId = Nothing
+                , bcoArgs = Nothing -- currently, no args for IPE frames
                 }
 
   -- Add the latest resume context at the head.
@@ -175,6 +179,7 @@ getStacktrace req_tid = do
                   { name = modl_str ++ "." ++ GHC.resumeDecl r
                   , sourceSpan = ss
                   , breakId = Just ibi
+                  , bcoArgs = Nothing -- the topmost frame reports its args using GHC.getBindings
                   }
         _ -> do
           mExcSpan <- exceptionSourceSpanFromContext
@@ -183,6 +188,7 @@ getStacktrace req_tid = do
                                   { name = GHC.resumeDecl r
                                   , sourceSpan
                                   , breakId = Nothing
+                                  , bcoArgs = Nothing
                                   }
             Nothing -> return Nothing
   return (maybe id (:) head_frame $ decoded_frames)
@@ -293,9 +299,38 @@ getVariables threadId frameIx vk = do
 
     -- (VARR)(a) from here onwards
 
-    LocalVariables -> fmap Right $ do
-      -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
-      mapM tyThingToVarInfo =<< GHC.getBindings
+    LocalVariables
+      | frameIx == 0
+      -> Right <$> do
+        -- For the top-most frame use getBindings
+        mapM tyThingToVarInfo =<< GHC.getBindings
+      | frameIx < length frames
+      , Just ibi      <- DbgStackFrame.breakId frame
+      , Just bco_args <- DbgStackFrame.bcoArgs frame
+      -> Right <$> do
+        -- For other stack frames lookup in bco args directly
+        occs <- liftIO $ do
+          let hug = hsc_HUG hsc_env
+          info_brks <- readIModBreaks hug ibi
+          getBreakVars (readIModModBreaks hug) ibi info_brks
+
+        forM (zip bco_args occs) $ \(field, occ) ->
+          case field of
+            -- Unboxed field
+            StackWord w -> do
+              return VarInfo
+                { varName = occNameString occ
+                , varType = "An unboxed type" -- TODO: Correct type of unboxed value
+                , varValue = show w -- TODO: Display unboxed value using the right type
+                , isThunk = False
+                , varRef = NoVariables
+                }
+            -- Boxed field
+            StackBox tm -> do
+              pprTraceM "StackBox:TM" (ppr tm)
+              let key = FromCustomRoot (occNameString occ) tm
+              term <- obtainTerm key
+              termToVarInfo key term
 
     ModuleVariables
       | frameIx < length frames

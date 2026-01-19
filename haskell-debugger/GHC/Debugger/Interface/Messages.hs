@@ -1,5 +1,6 @@
 {-# OPTIONS_GHC -Wno-orphans #-} -- TODO: drop this and Show GHC.InternalBreakpointId...
 {-# LANGUAGE LambdaCase,
+             RecordWildCards,
              StandaloneDeriving,
              DataKinds,
              OverloadedStrings,
@@ -11,7 +12,9 @@
 module GHC.Debugger.Interface.Messages where
 
 import qualified GHC
-import qualified GHC.Utils.Outputable as GHC
+import qualified GHC.Exts.Heap.Closures as GHC
+import qualified GHC.Runtime.Heap.Inspect as GHC
+import GHC.Utils.Outputable as GHC
 
 import GHC.Debugger.Runtime.Term.Key
 
@@ -160,6 +163,14 @@ data VariableReference
   -- Used to force its result or get its structured children
   | SpecificVariable TermKey
 
+instance Outputable VariableReference where
+  ppr = \case
+    NoVariables -> GHC.text "NoVariables"
+    LocalVariables -> GHC.text "LocalVariables"
+    ModuleVariables -> GHC.text "ModuleVariables"
+    GlobalVariables -> GHC.text "GlobalVariables"
+    SpecificVariable k -> GHC.text "SpecificVariable" <+> GHC.parens (ppr k)
+
 scopeToVarRef :: ScopeVariablesReference -> VariableReference
 scopeToVarRef = \case
   LocalVariablesScope -> LocalVariables
@@ -231,7 +242,7 @@ newtype RemoteThreadId = RemoteThreadId
     -- find the proper remote 'ThreadId' corresponding to this numeric
     -- identifier, lookup the 'remoteThreadIntRef' in the 'ThreadMap'
     }
-    deriving (Show, Eq, Ord)
+    deriving (Show, Eq, Ord, GHC.Outputable)
 
 data EvalResult
   = EvalCompleted { resultVal :: String
@@ -269,8 +280,20 @@ data DbgStackFrame
     , breakId :: Maybe GHC.InternalBreakpointId
     -- ^ Is this a BCO continuation frame with a breakpoint?
     -- If yes, we can leverage the breakpoint info to report scopes.
+    , bcoArgs :: Maybe [GHC.GenStackField GHC.Term]
+    -- ^ Is this a BCO continuation frame with a breakpoint?
+    -- If it is a RetBCO, then this Just will be populated with the bcoArgs of
+    -- the RetBCO, with the 'Box' values being returned as ForeignHValues.
     }
-  deriving (Show)
+
+instance Show DbgStackFrame where
+  show DbgStackFrame{..} = unlines
+    [ "DbgStackFrame"
+    , "    name: "            ++ name
+    , "    sourceSpan: "      ++ show sourceSpan
+    , "    length(bcoArgs): " ++ show (length bcoArgs)
+    , "    breakId: "         ++ show breakId
+    ]
 
 data ExceptionInfo = ExceptionInfo
   { exceptionInfoTypeName     :: String

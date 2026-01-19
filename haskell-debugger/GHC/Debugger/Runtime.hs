@@ -38,9 +38,16 @@ obtainTerm key = do
          RefWrap{wrapped_term} ->
            wrapped_term -- regardless of PathFragment
          _ -> error ("Unexpected term for the given TermKey because <term> should have been expanded before and we're getting a path fragment!\n" ++ showPprUnsafe (ppr key <+> ppr k <+> ppr pf))
-     FromCustomTerm _key _name ctm -> do
+     FromCustomPath _key _name ctm -> do
        -- For custom terms return them straightaway.
        liftIO $ expandTerm hsc_env ctm
+     FromCustomRoot _name ctm -> do
+       liftIO $ expandTerm hsc_env ctm
+     -- import GHC.Builtin.Types.Prim (alphaTyVar, alphaTy)
+     -- FromHValRoot _name val -> do
+     --   -- Use (forall a. a) polymorphic type to refine
+     --   let polyTy = mkForAllTy (mkTyVarBinder Specified alphaTyVar) alphaTy
+     --   liftIO $ cvObtainTerm hsc_env defaultDepth False polyTy val
 
 
 -- | Before returning a 'Term' we want to expand its heap representation up to the 'defaultDepth'

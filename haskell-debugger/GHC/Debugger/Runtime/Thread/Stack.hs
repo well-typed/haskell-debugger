@@ -28,6 +28,7 @@ import GHC.Runtime.Heap.Inspect
 
 import GHC.Driver.Env
 import GHC.Runtime.Interpreter as Interp
+import GHC.Exts.Heap.Closures
 import GHC.Utils.Outputable
 
 import GHCi.Message
@@ -49,7 +50,7 @@ data StackFrameInfo
   -- | Information derived from an IPE entry
   = StackFrameIPEInfo !InfoProv
   -- | Information derived from a continuation BCO breakpoint info.
-  | StackFrameBreakpointInfo !InternalBreakpointId
+  | StackFrameBreakpointInfo !InternalBreakpointId [GenStackField Term]
 
 -- | Clone the stack of the given remote thread and get the breakpoint ids of available frames
 getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [StackFrameInfo]
@@ -89,7 +90,7 @@ stackFrameInfoParser = do
   case mipe of
     Nothing ->
       -- Try decoding a continuation BCO with a breakpoint next
-      fmap StackFrameBreakpointInfo
+      fmap (uncurry StackFrameBreakpointInfo)
         <$> subtermWith 0 retBCOParser
     Just ipe -> pure $
       Just (StackFrameIPEInfo ipe)
@@ -106,13 +107,13 @@ infoProvParser = InfoProv
   <*> subtermWith 6 stringParser -- ipSrcFile
   <*> subtermWith 7 stringParser -- ipSrcSpan
 
--- | Try to decode an 'InternalBreakpointId' from a @StackFrame@ term
-retBCOParser :: TermParser (Maybe InternalBreakpointId)
+-- | Try to decode an @('InternalBreakpointId', ['GenStackField' 'Term'])@ from a @StackFrame@ term
+retBCOParser :: TermParser (Maybe (InternalBreakpointId, [GenStackField Term]))
 retBCOParser = do
   -- Match against "RetBCO" frames and extract the BCOClosure information
-  (matchConstructorTerm "RetBCO" *> subtermWith 1 (subtermWith 0{-take from Box-} (Just <$> anyTerm)) <|> pure Nothing)
+  tryParser retBCOFrame
     >>= \case
-      Just Suspension{val, ctype=BCO} -> do
+      Just (Suspension{val, ctype=BCO}, bco_args) -> do
         {-"the otherwise case: Unknown closure", hence Suspension-}
 
         -- Decode the BCO closure using 'getClosureData' on the foreign heap
@@ -124,8 +125,31 @@ retBCOParser = do
           obtainParsedTerm "BCO BRK_FUN info" 2 True anyTy (castForeignRef bco_closure_fv) bcoInternalBreakpointId
         case r of
           Left err -> fail (show err)
-          Right t  -> return t
+          Right t  -> return $ (, bco_args) <$> t
       _ -> pure Nothing
+  where
+    retBCOFrame :: TermParser (Term, [GenStackField Term])
+    retBCOFrame = do
+      matchConstructorTerm "RetBCO"
+      t <- anyTerm
+      liftDebugger $ do
+        pprTraceM "--------------------------------------------------------------------------------" (ppr t)
+      (,)
+        <$> subtermWith 1 (subtermWith 0{-take from Box-} anyTerm)
+        <*> subtermWith 2 (parseList bcoStackField)
+
+-- | Parse a @'GenStackField' 'Term'@ from a @'GenStackField' 'Box'@
+bcoStackField :: TermParser (GenStackField Term)
+bcoStackField = bcoStackWord <|> bcoStackBox
+  where
+    bcoStackWord = do
+      matchConstructorTerm "StackWord"
+      StackWord <$>
+        subtermWith 0 wordParser
+    bcoStackBox = do
+      matchConstructorTerm "StackBox"
+      StackBox <$>
+        subtermWith 0{-StackBox's field-} (subtermTerm 0{-Box's field-})
 
 -- | Parse an 'InternalBreakpointId' out of a 'BCOClosure' term.
 bcoInternalBreakpointId :: TermParser (Maybe InternalBreakpointId)

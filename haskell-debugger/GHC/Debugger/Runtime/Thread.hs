@@ -117,7 +117,7 @@ getRemoteThreadsLabels :: [ForeignRef ThreadId] -> Debugger [Maybe String]
 getRemoteThreadsLabels threadIdRefs = do
 
   forM threadIdRefs $ \threadIdRef -> do
-    
+
     r <- Remote.evalIOList $ Remote.do
       mb_str <- Remote.threadLabel (Remote.ref threadIdRef)
       Remote.return (Remote.maybeToList mb_str)
