@@ -78,7 +78,6 @@ library
 
                       GHC.Debugger.Runtime.Term.Parser,
                       GHC.Debugger.Runtime.Term.Key,
-                      GHC.Debugger.Runtime.Term.Cache,
 
                       GHC.Debugger.Runtime.Thread,
                       GHC.Debugger.Runtime.Thread.Stack,
