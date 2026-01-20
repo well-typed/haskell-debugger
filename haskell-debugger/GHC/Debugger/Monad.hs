@@ -11,6 +11,11 @@
 
 module GHC.Debugger.Monad where
 
+#if __GLASGOW_HASKELL__ >= 916
+import System.Environment
+#endif
+import System.Process
+import Control.Concurrent
 import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
@@ -33,6 +38,8 @@ import GHC.Data.StringBuffer
 import GHC.Driver.Config.Diagnostic
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
+import GHC.Driver.Monad
+import GHC.Driver.Hooks
 import GHC.Driver.Errors
 import GHC.Driver.Errors.Types
 import GHC.Driver.Main
@@ -79,7 +86,7 @@ data DebuggerState = DebuggerState
         -- ^ Maps a 'InternalBreakpointId' in Trie representation (map of Module to map of Int) to the
         -- 'BreakpointStatus' it was activated with.
 
-      , rtinstancesCache :: IORef RuntimeInstancesCache
+      , rtinstancesCache  :: IORef RuntimeInstancesCache
       -- ^ RuntimeInstancesCache
 
       , threadMap         :: IORef TM.ThreadMap
@@ -154,6 +161,9 @@ runDebugger :: Recorder (WithSeverity DebuggerMonadLog)
             -> Debugger a -- ^ 'Debugger' action to run on the session constructed from this invocation
             -> IO a
 runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp conf (Debugger action) = do
+#if __GLASGOW_HASKELL__ >= 916
+  thisProg <- getExecutablePath
+#endif
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
   GHC.runGhc (Just libdir) $ do
 #ifdef MIN_VERSION_unix
@@ -177,6 +187,20 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
           `GHC.gopt_set` GHC.Opt_IgnoreHpcChanges
           `GHC.gopt_set` GHC.Opt_UseBytecodeRatherThanObjects
           `GHC.gopt_set` GHC.Opt_InsertBreakpoints
+
+          -- Enable the external interpreter by default! See #169
+          -- And use the custom-for-debugger external interpreter
+          `GHC.gopt_set` GHC.Opt_ExternalInterpreter
+#if __GLASGOW_HASKELL__ >= 916
+          -- See Note [Custom external interpreter]
+          -- Ext interp is the same program as this, with "--external-interpreter"
+          & setPgmI thisProg
+          -- ideally, we'd set "external-interpreter" *before* the file
+          -- descriptors. since there's no way to do that yet, we just have
+          -- some logic in main to detect [writefd, readfd, --external-interpreter]
+          & addOptI "--external-interpreter"
+#endif
+
           & setBytecodeBackend
           & enableByteCodeGeneration
 
@@ -195,11 +219,26 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
       (dflags2, fileish_args, warns)
         <- parseDynamicFlags logger dflags1 (map noLoc extraGhcArgs)
       liftIO $ printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
-      -- todo: consider fileish_args?
       forM_ fileish_args $ \fish_arg -> liftIO $ do
         logMsg logger MCOutput noSrcSpan $ text "Ignoring extraGhcArg which isn't a recognized flag:" <+> text (unLoc fish_arg)
         printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
       return dflags2
+
+    -- Make sure to override the function which creates the external
+    -- interpreter, because we need to keep track of the standard handles
+    iserv_handles <- liftIO newEmptyMVar
+    modifySession $ \h -> h
+      { hsc_hooks = (hsc_hooks h)
+          { createIservProcessHook = Just $ \cp -> do
+              (Just i,Just o, Just e, ph) <-
+                createProcess cp { std_in  = CreatePipe
+                                 , std_out = CreatePipe
+                                 , std_err = CreatePipe }
+              putMVar iserv_handles (i, o, e)
+              return ph
+          }
+      }
+    (serv_in, serv_out, serv_err) <- liftIO $ takeMVar iserv_handles
 
     -- Set the session dynflags now to initialise the hsc_interp.
     _ <- GHC.setSessionDynFlags dflags2
@@ -306,6 +345,41 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
 
     runReaderT action =<< initialDebuggerState l (if loadedBuiltinModNames == [] then Nothing else Just hdv_uid)
 
+{-
+Note [Custom external interpreter]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+We compile a custom external interpreter server with custom commands which make
+certain debugger operations possible in the remote process directly.
+This allows us to avoid excessive `Term` parsing and remote execution.
+
+The custom external interpreter is the same executable as the debugger but invoked as:
+
+  hdb <write-fd> <read-fd> --external-interpreter
+
+(Note: external-interpreter is not the first argument because all `-opti`s are
+always inserted after the write-fd and read-fd.)
+
+When setting up the debugger session, we essentially:
+  - Enable -fexternal-interpreter
+  - Set -pgmi=hdb and -opti=--external-interpreter
+
+However, we only start using a custom external interpreter from GHC 9.16
+onwards. The reason is ghc's c94aaacd4c4. With 9.14.1, GHC still looks for a
+`-dyn` suffixed version of the custom external `-pgmi`, in this case `hdb`
+(we never have `hdb-dyn`). Until 9.16, we generate the external interpreter
+server on the fly (by leaving `-pgmi=""`).
+
+This means that with 9.14, in principle, we support debugging a profiled
+executable. With 9.16, since we set the -pgmi to `hdb` itself, we only support
+static+dynamic, or profiled+profiled-dynamic, if `hdb` itself is profiled.
+Here's a table showcasing this:
+
+ GHC | Custom commands | Profiled debuggee |
+-----+-----------------+-------------------+
+9.14 |              NO |               YES |
+9.16 |             YES | Requires prof hdb |
+-----+-----------------+-------------------+
+-}
 --------------------------------------------------------------------------------
 
 -- | Run downsweep on the currently set targets (see @hsc_targets@)

@@ -63,6 +63,17 @@ proxyParser = HdbProxy
      <> help "proxy port to which the debugger connects" )
   <*> verbosityParser (Verbosity Warning)
 
+-- | Parser for @hdb external-interpreter <write-fd> <read-fd>@
+-- See Note [Custom external interpreter]
+extInterpParser :: Parser HdbOptions
+extInterpParser = HdbExternalInterpreter
+  <$> argument auto
+    ( metavar "WRITE_FD"
+   <> help "external interpreter write file descriptor" )
+  <*> argument auto
+    ( metavar "READ_FD"
+   <> help "external interpreter read file descriptor" )
+
 -- | Combined parser for HdbOptions
 hdbOptionsParser :: Parser HdbOptions
 hdbOptionsParser = hsubparser
@@ -75,8 +86,11 @@ hdbOptionsParser = hsubparser
  <> Options.Applicative.command "proxy"
     ( info proxyParser
       ( progDesc "Internal mode used by the DAP server to proxy the stdin/stdout to the DAP client's terminal" ) )
+ <> Options.Applicative.command "external-interpreter"
+    ( info extInterpParser
+      ( progDesc "Start the custom-for-debugger external interpreter" ) )
   )
-  <|> cliParser  -- Default to CLI mode if no subcommand
+  <|> cliParser -- Default to CLI mode if no subcommand
 
 -- | Parser for --version flag
 versioner :: Parser (a -> a)

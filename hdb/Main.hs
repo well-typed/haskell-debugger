@@ -1,4 +1,6 @@
-{-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass, DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards, ViewPatterns #-}
+{-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass,
+   DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards, ViewPatterns,
+   DataKinds #-}
 module Main where
 
 import System.Environment
@@ -30,6 +32,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import GHC.IO.Handle.FD
 
+import qualified GHCi.Server as GHCi
+
 import Development.Debug.Options (HdbOptions(..))
 import Development.Debug.Options.Parser (parseHdbOptions)
 import Development.Debug.Adapter
@@ -48,11 +52,18 @@ main = do
   setBacktraceMechanismState HasCallStackBacktrace True
   setBacktraceMechanismState IPEBacktrace True
 
-  hdbOpts <- parseHdbOptions
+  allArgs <- getArgs
+  hdbOpts <- case allArgs of
+    [writeFd, readFd, "--external-interpreter"] ->
+         -- Special case to detect --external-interpreter in the third
+         -- position. If we could specify -opti options to put *before* the
+         -- descriptors we could get rid of this.
+         pure (HdbExternalInterpreter (read writeFd) (read readFd))
+    _ -> parseHdbOptions
   let
     timeStampLogger  = cmapIO renderWithTimestamp . fromCologAction
     loggerWithSev    = cmap renderPrettyWithSeverity
-    loggerFinal opts = applyVerbosity opts.verbosity . loggerWithSev . timeStampLogger
+    loggerFinal verb = applyVerbosity verb . loggerWithSev . timeStampLogger
   case hdbOpts of
     HdbDAPServer{port} -> do
       config <- getConfig port
@@ -60,7 +71,7 @@ main = do
         hSetBuffering realStdout LineBuffering
         l <- handleLogger realStdout
         let dapLogger = cmap DAP.renderDAPLog $ timeStampLogger l
-        let runLogger = loggerFinal hdbOpts l
+        let runLogger = loggerFinal hdbOpts.verbosity l
         init_var <- liftIO (newIORef False{-not supported by default-})
         pid_var  <- liftIO (newIORef Nothing)
         ccon_var <- liftIO newEmptyMVar
@@ -69,13 +80,17 @@ main = do
           (ack runLogger pid_var)
     HdbCLI{..} -> do
         l <- handleLogger stdout
-        let runLogger = cmapWithSev InteractiveLog $ loggerFinal hdbOpts l
+        let runLogger = cmapWithSev InteractiveLog $ loggerFinal hdbOpts.verbosity l
         runIDM runLogger entryPoint entryFile entryArgs extraGhcArgs $
           debugInteractive runLogger
     HdbProxy{port} -> do
         l <- handleLogger stdout
-        let runLogger = cmapWithSev RunProxyClientLog $ loggerFinal hdbOpts l
+        let runLogger = cmapWithSev RunProxyClientLog $ loggerFinal hdbOpts.verbosity l
         runInTerminalHdbProxy runLogger port
+    HdbExternalInterpreter{writeFd, readFd} -> do
+      withArgs [show writeFd, show readFd] $
+        GHCi.defaultServer
+
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: Int -> IO ServerConfig

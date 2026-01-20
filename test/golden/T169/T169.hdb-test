@@ -1,0 +1,3 @@
+#!/bin/sh
+
+echo "run" | hdb -v0 Main.hs --extra-ghc-args -fno-external-interpreter 2>&1

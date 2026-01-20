@@ -40,3 +40,23 @@ data HdbOptions
     , verbosity :: Verbosity
     }
 
+  -- | Launch the custom-for-the-debugger external interpreter for running the
+  -- debuggee process.
+  --
+  -- Using an external interpreter will guarantee the debugger and debuggee run
+  -- on separate processes. This comes with many benefits:
+  --  * Debugger vs debuggee threads naturally separated
+  --  * Debugger vs debuggee stdin/stdout/stderr naturally separated
+  --  * No *** Ignoring breakpoint when debugging the debugger against another program
+  --
+  --  A custom server is necessary for the custom commands (starting with GHC
+  --  9.16) and because the external interpreter in GHC 9.14 is not compiled
+  --  with -threaded, which is a requirement for using thread/stack cloning
+  --  messages in the external process.
+  --
+  --  See #169
+  | HdbExternalInterpreter
+      { writeFd :: Int
+      , readFd  :: Int
+      }
+
