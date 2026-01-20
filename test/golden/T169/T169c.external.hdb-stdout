@@ -1,5 +1,5 @@
 [1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
-[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, interpreted )[main]
-(hdb) hello
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/T169c.hs, interpreted )[main]
+(hdb) "hello there"
 ()
 (hdb) Exiting...

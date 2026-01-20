@@ -1,3 +1,3 @@
 #!/bin/sh
 
-hdb cli prog/Main.hs < exceptions-uncaught.hdb-stdin
+$HDB prog/Main.hs < exceptions-uncaught.hdb-stdin

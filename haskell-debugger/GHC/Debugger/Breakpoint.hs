@@ -12,6 +12,7 @@ import Data.Bits (xor)
 import Data.IORef
 import System.Directory
 import System.FilePath
+import qualified Colog.Core as Logger
 
 import GHC
 import GHC.ByteCode.Breakpoints
@@ -28,7 +29,6 @@ import qualified GHCi.BreakArray as BA
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Session
-import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Breakpoint.Map as BM

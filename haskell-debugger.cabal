@@ -58,7 +58,6 @@ library
     exposed-modules:  GHC.Debugger,
                       GHC.Debugger.Breakpoint,
                       GHC.Debugger.Breakpoint.Map,
-                      GHC.Debugger.Logger,
                       GHC.Debugger.Run,
                       GHC.Debugger.Stopped,
                       GHC.Debugger.Stopped.Exception,
@@ -114,7 +113,6 @@ library
                       attoparsec >= 0.13 && < 0.15,
                       -- Logger dependencies
                       time >= 1.14 && < 2,
-                      prettyprinter >= 1.7.1 && < 2,
                       text >= 2.1 && < 2.3,
                       co-log-core >= 0.3.2.5 && < 0.4,
 
@@ -153,7 +151,7 @@ executable hdb
                       Paths_haskell_debugger
     autogen-modules:  Paths_haskell_debugger
     build-depends:
-        base, ghc,
+        base, ghc, ghci,
         exceptions, aeson, bytestring,
         containers, filepath,
         process, mtl,
@@ -164,8 +162,7 @@ executable hdb
         co-log-core >= 0.3.2.5 && < 0.4,
         implicit-hie ^>=0.1.4.0,
         transformers >= 0.6 && < 0.7,
-        -- Logger dependencies
-        prettyprinter,
+        time,
 
         directory >= 1.3.9 && < 1.4,
         network >= 3.2.8,
@@ -180,6 +177,8 @@ executable hdb
     default-language: GHC2021
     default-extensions: CPP
     ghc-options: -threaded
+    -- See Note [Custom external interpreter]
+    ghc-options: -fkeep-cafs
 
 test-suite haskell-debugger-test
     import:           warnings

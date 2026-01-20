@@ -6,7 +6,6 @@ Stopped at breakpoint
 Exception: ErrorCall
 Message: boom first
 Call stack:
-  IPE backtrace:
   HasCallStack backtrace:
     error, called at <TEMPORARY-DIRECTORY>/prog/Main.hs:8:10 in main:Main
 
@@ -17,7 +16,6 @@ Stopped at breakpoint
 Exception: ErrorCall
 Message: boom second
 Call stack:
-  IPE backtrace:
   HasCallStack backtrace:
     error, called at <TEMPORARY-DIRECTORY>/prog/Main.hs:10:3 in main:Main
 

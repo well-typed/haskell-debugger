@@ -1,6 +1,9 @@
-{-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass, DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards, ViewPatterns #-}
+{-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass,
+   DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards, ViewPatterns,
+   DataKinds #-}
 module Main where
 
+import System.Process
 import System.Environment
 import Data.Maybe
 import Data.IORef
@@ -9,6 +12,7 @@ import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Except
+import Control.Exception (uninterruptibleMask)
 import Control.Exception.Backtrace
 
 import DAP
@@ -21,15 +25,24 @@ import Development.Debug.Adapter.Evaluation
 import Development.Debug.Adapter.ExceptionInfo
 import Development.Debug.Adapter.Exit
 import Development.Debug.Adapter.Handles
-import GHC.Debugger.Logger
-import Prettyprinter
+import Colog.Core
 
-import System.IO (hSetBuffering, BufferMode(LineBuffering))
+import Data.Time
+import System.IO (hSetBuffering, BufferMode(LineBuffering), Handle, openFile, IOMode(ReadMode))
 import qualified DAP.Log as DAP
+import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import GHC.IO.Handle.FD
+import Data.Functor.Contravariant
 
+import qualified GHCi.Server as GHCi
+import qualified GHCi.Signals as GHCi
+import qualified GHCi.Utils as GHCi
+import qualified GHCi.Message as GHCi
+
+import GHC.Utils.Logger (defaultLogActionWithHandles)
+import GHC.Debugger.Monad (DebuggerLog(..), RunDebuggerSettings(..))
 import Development.Debug.Options (HdbOptions(..))
 import Development.Debug.Options.Parser (parseHdbOptions)
 import Development.Debug.Adapter
@@ -46,36 +59,55 @@ main :: IO ()
 main = do
   setBacktraceMechanismState CostCentreBacktrace False
   setBacktraceMechanismState HasCallStackBacktrace True
-  setBacktraceMechanismState IPEBacktrace True
+  setBacktraceMechanismState IPEBacktrace False -- TODO: True, see #181
 
-  hdbOpts <- parseHdbOptions
-  let
-    timeStampLogger  = cmapIO renderWithTimestamp . fromCologAction
-    loggerWithSev    = cmap renderPrettyWithSeverity
-    loggerFinal opts = applyVerbosity opts.verbosity . loggerWithSev . timeStampLogger
+  allArgs <- getArgs
+  hdbOpts <- case allArgs of
+    [writeFd, readFd, "--external-interpreter"] ->
+         -- Special case to detect --external-interpreter in the third
+         -- position. If we could specify -opti options to put *before* the
+         -- descriptors we could get rid of this.
+         pure (HdbExternalInterpreter (read writeFd) (read readFd))
+    _ -> parseHdbOptions
   case hdbOpts of
-    HdbDAPServer{port} -> do
+    HdbDAPServer{port, internalInterpreter} -> do
       config <- getConfig port
       withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
         hSetBuffering realStdout LineBuffering
-        l <- handleLogger realStdout
-        let dapLogger = cmap DAP.renderDAPLog $ timeStampLogger l
-        let runLogger = loggerFinal hdbOpts l
+        l <- mainLogger hdbOpts.verbosity realStdout
         init_var <- liftIO (newIORef False{-not supported by default-})
         pid_var  <- liftIO (newIORef Nothing)
         ccon_var <- liftIO newEmptyMVar
-        runDAPServerWithLogger (toCologAction dapLogger) config
-          (talk runLogger init_var pid_var ccon_var)
-          (ack runLogger pid_var)
+        runDAPServerWithLogger (contramap DAPLibraryLog l) config
+          (talk l init_var pid_var ccon_var internalInterpreter)
+          (ack l pid_var)
     HdbCLI{..} -> do
-        l <- handleLogger stdout
-        let runLogger = cmapWithSev InteractiveLog $ loggerFinal hdbOpts l
-        runIDM runLogger entryPoint entryFile entryArgs extraGhcArgs $
-          debugInteractive runLogger
+        l <- mainLogger hdbOpts.verbosity stdout
+        stdinStream <- case debuggeeStdin of
+          Just fp -> UseHandle <$> System.IO.openFile fp ReadMode
+          Nothing -> pure Inherit
+        let runConf = RunDebuggerSettings
+              { supportsANSIStyling = True -- todo: check!!
+              , supportsANSIHyperlinks = False
+              , preferInternalInterpreter = internalInterpreter
+              , externalInterpreterStdinStream = stdinStream
+              }
+        runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs
+          runConf debugInteractive
     HdbProxy{port} -> do
-        l <- handleLogger stdout
-        let runLogger = cmapWithSev RunProxyClientLog $ loggerFinal hdbOpts l
-        runInTerminalHdbProxy runLogger port
+        l <- mainLogger hdbOpts.verbosity stdout
+        runInTerminalHdbProxy (contramap RunProxyClientLog l) port
+    HdbExternalInterpreter{writeFd, readFd} -> do
+      inh  <- GHCi.readGhcHandle (show readFd)
+      outh <- GHCi.readGhcHandle (show writeFd)
+      GHCi.installSignalHandlers
+      pipe <- GHCi.mkPipeFromHandles inh outh
+      let verbose = False
+      uninterruptibleMask $ GHCi.serv verbose hook pipe
+      where hook = return -- empty hook
+        -- we cannot allow any async exceptions while communicating, because
+        -- we will lose sync in the protocol, hence uninterruptibleMask.
+
 
 -- | Fetch config from environment, fallback to sane defaults
 getConfig :: Int -> IO ServerConfig
@@ -149,25 +181,10 @@ getConfig port = do
 -- * Talk
 --------------------------------------------------------------------------------
 
-data MainLog
-  = InitLog InitLog
-  | LaunchLog T.Text
-  | InteractiveLog InteractiveLog
-  | RunProxyServerLog ProxyLog
-  | RunProxyClientLog ProxyLog
-
-instance Pretty MainLog where
-  pretty = \ case
-    InitLog msg -> pretty msg
-    LaunchLog msg -> pretty msg
-    InteractiveLog msg -> pretty msg
-    RunProxyServerLog msg -> pretty ("Proxy Server:" :: String) <+> pretty msg
-    RunProxyClientLog msg -> pretty ("Proxy Client:" :: String) <+> pretty msg
-
 -- | Main function where requests are received and Events + Responses are returned.
 -- The core logic of communicating between the client <-> adaptor <-> debugger
 -- is implemented in this function.
-talk :: Recorder (WithSeverity MainLog)
+talk :: LogAction IO MainLog
      -> IORef Bool
      -- ^ Whether the client supports runInTerminal
      -> IORef (Maybe Int)
@@ -175,9 +192,11 @@ talk :: Recorder (WithSeverity MainLog)
      -> MVar ()
      -- ^ A var to block on waiting for the proxy client to connect, if a proxy
      -- connection is expected. See #95.
+     -> Bool
+     -- ^ Prefer internal interpreter
      -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l support_rit_var _pid_var client_proxy_signal = \ case
+talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter = \ case
   CommandInitialize -> do
     InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
     let runInTerminal = fromMaybe False supportsRunInTerminalRequest
@@ -187,14 +206,16 @@ talk l support_rit_var _pid_var client_proxy_signal = \ case
     -- If runInTerminal is not supported by the client, signal readiness right away
     when (not runInTerminal) $
       liftIO $ putMVar client_proxy_signal ()
-
 --------------------------------------------------------------------------------
   CommandLaunch -> do
     launch_args <- getArguments
 
     supportsRunInTerminalRequest <- liftIO $ readIORef support_rit_var
 
-    merror <- runExceptT $ initDebugger (cmapWithSev InitLog l) supportsRunInTerminalRequest launch_args
+    merror <- runExceptT $
+      initDebugger (contramap DAPLog l)
+        supportsRunInTerminalRequest prefer_internal_interpreter
+        launch_args
     case merror of
       Right () -> do
         sendLaunchResponse   -- ack
@@ -205,9 +226,9 @@ talk l support_rit_var _pid_var client_proxy_signal = \ case
         when supportsRunInTerminalRequest $ do
           -- Run proxy thread, server side, and
           -- send the 'runInTerminal' request
-          serverSideHdbProxy (cmapWithSev RunProxyServerLog l) client_proxy_signal
+          serverSideHdbProxy (contramap RunProxyServerLog l) client_proxy_signal
 
-        logWith l Info $ LaunchLog $ T.pack "Debugger launched successfully."
+        liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "Debugger launched successfully.") Info)
 
       Left (InitFailed err) -> do
         sendErrorResponse (ErrorMessage (T.pack err)) Nothing
@@ -269,12 +290,82 @@ talk l support_rit_var _pid_var client_proxy_signal = \ case
 ----------------------------------------------------------------------------
 
 -- | Receive reverse request responses (such as runInTerminal response)
-ack :: Recorder (WithSeverity MainLog)
+ack :: LogAction IO MainLog
     -> IORef (Maybe Int)
     -- ^ Reference to PID of runInTerminal proxy process running
     -> ReverseRequestResponse -> DebugAdaptorCont ()
 ack l _ref rrr = case rrr.reverseRequestCommand of
   ReverseCommandRunInTerminal -> do
     when rrr.success $ do
-      logWith l Info $ LaunchLog $ T.pack "RunInTerminal was successful"
+      liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "RunInTerminal was successful") Info)
   _ -> pure ()
+
+--------------------------------------------------------------------------------
+-- * Logging
+--------------------------------------------------------------------------------
+
+data MainLog
+  = DAPLog DAPLog
+  | InteractiveLog InteractiveLog
+  | RunProxyServerLog (WithSeverity T.Text)
+  | RunProxyClientLog (WithSeverity T.Text)
+  | DAPLaunchLog (WithSeverity T.Text)
+  | DAPLibraryLog DAP.DAPLog
+
+-- | Given the severity threshold from which we start logging, create a base
+-- logger for consuming the top-level debugger logs ('MainLog').
+-- Outputs to given handle.
+mainLogger :: Severity -> Handle -> IO (LogAction IO MainLog)
+mainLogger threshold h = do
+  l <- handleLogger h
+  let
+    logSessionLog (WithSeverity msg sev)
+      | sev >= threshold =
+        cmapM renderWithTimestamp l <& (renderSeverity sev <> T.pack (show msg))
+      | otherwise = pure ()
+
+    logDebuggerLog = \case
+      DebuggerLog sev msg
+        | sev >= threshold ->
+          cmapM renderWithTimestamp l <&
+            (renderSeverity sev <> T.pack (show msg))
+      GHCLog logflags msg_class srcSpan msg ->
+        defaultLogActionWithHandles h h logflags msg_class srcSpan msg
+      LogDebuggeeOut out ->
+        -- If we wanted, we could log the debuggee output differently if we are
+        -- on the DAP debug mode vs, say, hdb.
+        l <& out
+      LogDebuggeeErr err -> l <& err
+      _ -> pure ()
+
+    defaultLog (WithSeverity msg sev)
+      | sev >= threshold =
+        cmapM renderWithTimestamp l <& (renderSeverity sev <> msg)
+      | otherwise = pure ()
+
+  pure $ LogAction $ \case
+    DAPLog (DAPSessionSetupLog sessionLog)       -> logSessionLog sessionLog
+    DAPLog (DAPDebuggerLog debuggerLog)          -> logDebuggerLog debuggerLog
+    InteractiveLog (ISessionSetupLog sessionLog) -> logSessionLog sessionLog
+    InteractiveLog (IDebuggerLog debuggerLog)    -> logDebuggerLog debuggerLog
+    RunProxyServerLog sev_msg -> defaultLog sev_msg
+    RunProxyClientLog sev_msg -> defaultLog sev_msg
+    DAPLaunchLog sev_msg      -> defaultLog sev_msg
+    DAPLibraryLog t ->
+      l <& DAP.renderDAPLog t
+  where
+    renderSeverity :: Severity -> Text
+    renderSeverity = \ case
+      Debug -> "[DEBUG] "
+      Info -> "[INFO] "
+      Warning -> "[WARNING] "
+      Error -> "[ERROR] "
+
+    renderWithTimestamp :: Text -> IO Text
+    renderWithTimestamp msg = do
+      t <- getCurrentTime
+      let timeStamp = utcTimeToText t
+      pure $ "[" <> timeStamp <> "] " <> msg
+      where
+        utcTimeToText utcTime = T.pack $
+          formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%6QZ" utcTime

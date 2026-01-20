@@ -25,7 +25,7 @@ import GHC.Debugger.Interface.Messages
   , ExceptionInfo(..)
   , RemoteThreadId(..)
   )
-import qualified GHC.Debugger.Logger as Logger
+import qualified Colog.Core as Logger
 import GHC.Debugger.Runtime.Thread
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import GHC.Debugger.Runtime.Term.Parser

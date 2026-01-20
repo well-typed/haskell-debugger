@@ -1,0 +1,3 @@
+#!/bin/sh
+
+$HDB -v0 T169c.hs --debuggee-stdin T169c.debuggee-stdin < T169c.hdb-stdin 2>&1

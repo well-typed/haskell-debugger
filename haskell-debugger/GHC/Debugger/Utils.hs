@@ -5,11 +5,13 @@ module GHC.Debugger.Utils
   ( module GHC.Debugger.Utils
   , module GHC.Utils.Outputable
   , module GHC.Utils.Trace
+  , showSDoc
   ) where
 
+import Control.Monad
 import Control.Applicative
-import Control.Monad.IO.Class
 import Control.Exception
+import System.IO
 
 import GHC
 import GHC.Data.FastString
@@ -18,12 +20,33 @@ import GHC.Driver.Ppr
 import GHC.Utils.Outputable hiding (char)
 import GHC.Utils.Trace
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 
 import Data.Attoparsec.Text
 
-import GHC.Debugger.Monad
-import GHC.Debugger.Logger as Logger
+import Colog.Core as Logger
 import GHC.Debugger.Interface.Messages
+
+--------------------------------------------------------------------------------
+-- * Handle utils
+--------------------------------------------------------------------------------
+
+-- | Read output from the given handle and write it to the given
+-- log action (forever).
+forwardHandleToLogger :: Handle -> LogAction IO T.Text -> IO ()
+forwardHandleToLogger read_h logger = do
+  forwarding `catch` -- handles read EOF
+    \(_e::SomeException) -> do
+      -- Cleanly exit on exception
+      -- print _e
+      return ()
+  where
+    forwarding = forever $ do
+      -- Mask exceptions to avoid being killed between reading
+      -- a line and outputting it.
+      mask_ $ do
+        out_line <- T.hGetLine read_h -- See Note [External interpreter buffering]
+        logger <& out_line
 
 --------------------------------------------------------------------------------
 -- * GHC Utilities
@@ -40,23 +63,11 @@ realSrcSpanToSourceSpan ss = SourceSpan
   }
 
 -- | Display an Outputable value as a String
-display :: Outputable a => a -> Debugger String
+display :: (GhcMonad m, Outputable a) => a -> m String
 display x = do
   dflags <- getDynFlags
   return $ showSDoc dflags (ppr x)
 {-# INLINE display #-}
-
---------------------------------------------------------------------------------
--- * More utils
---------------------------------------------------------------------------------
-
-expectRight :: Exception e => Either e a -> Debugger a
-expectRight s = case s of
-  Left e -> do
-    logSDoc Logger.Error (text $ displayException e)
-    liftIO $ throwIO e
-  Right a -> do
-    pure a
 
 --------------------------------------------------------------------------------
 -- * Parsing

@@ -10,7 +10,7 @@ import GHC.Utils.Outputable
 import Control.Monad.Reader
 
 import GHC.Debugger.Monad
-import GHC.Debugger.Logger as Logger
+import Colog.Core as Logger
 import GHC.Debugger.Runtime.Instances.Discover
 import GHC.Debugger.Runtime.Term.Parser
 
