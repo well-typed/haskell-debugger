@@ -9,6 +9,7 @@ import Control.Monad.IO.Class
 import GHC.Debugger.Breakpoint
 import GHC.Debugger.Run
 import GHC.Debugger.Stopped
+import GHC.Debugger.Stopped.Exception (getExceptionInfo)
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Logger

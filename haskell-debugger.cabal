@@ -61,6 +61,7 @@ library
                       GHC.Debugger.Logger,
                       GHC.Debugger.Run,
                       GHC.Debugger.Stopped,
+                      GHC.Debugger.Stopped.Exception,
                       GHC.Debugger.Stopped.Variables,
 
                       GHC.Debugger.Runtime,
