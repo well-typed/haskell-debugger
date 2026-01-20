@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase, ViewPatterns, RecordWildCards, OverloadedRecordDot #-}
 module Development.Debug.Interactive where
 
+import Data.Functor.Contravariant
 import System.IO
 import System.Exit
 import System.Directory
@@ -16,7 +17,7 @@ import Options.Applicative
 
 import Development.Debug.Session.Setup
 
-import GHC.Debugger.Logger
+import Colog.Core
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Monad
 import GHC.Debugger
@@ -39,28 +40,22 @@ data RunContext = RunContext
 type InteractiveDM a = InputT (RWST RunOptions () RunContext Debugger) a
 
 data InteractiveLog
-  = DebuggerLog DebuggerLog
-  | DebuggerMonadLog DebuggerMonadLog
-  | FlagsLog FlagsLog
-
-instance Pretty InteractiveLog where
-  pretty = \ case
-    DebuggerLog msg -> pretty msg
-    FlagsLog msg -> pretty msg
-    DebuggerMonadLog msg -> pretty msg
+  = IDebuggerLog DebuggerLog
+  | ISessionSetupLog (WithSeverity SessionSetupLog)
 
 -- | Run it
-runIDM :: Recorder (WithSeverity InteractiveLog)
+runIDM :: LogAction IO InteractiveLog
        -> String   -- ^ entryPoint
        -> FilePath -- ^ entryFile
        -> [String] -- ^ entryArgs
        -> [String] -- ^ extraGhcArgs
+       -> RunDebuggerSettings
        -> InteractiveDM a
        -> IO a
-runIDM logger entryPoint entryFile entryArgs extraGhcArgs act = do
+runIDM logger entryPoint entryFile entryArgs extraGhcArgs runConf act = do
   projectRoot <- getCurrentDirectory
 
-  let hieBiosLogger = cmapWithSev FlagsLog logger
+  let hieBiosLogger = contramap ISessionSetupLog logger
   runExceptT (hieBiosSetup hieBiosLogger projectRoot entryFile) >>= \case
     Left e               -> exitWithMsg e
     Right (Left e)       -> exitWithMsg e
@@ -68,15 +63,10 @@ runIDM logger entryPoint entryFile entryArgs extraGhcArgs act = do
       | HieBiosFlags{..} <- flags
                          -> do
 
-      let defaultRunConf = RunDebuggerSettings
-            { supportsANSIStyling = True -- todo: check!!
-            , supportsANSIHyperlinks = False
-            }
-
       let absEntryFile = normalise $ projectRoot </> entryFile
-      let debugRec = cmapWithSev DebuggerMonadLog logger
+      let debugRec = contramap IDebuggerLog logger
 
-      runDebugger debugRec stdout rootDir componentDir libdir units ghcInvocation extraGhcArgs absEntryFile defaultRunConf $
+      runDebugger debugRec rootDir componentDir libdir units ghcInvocation extraGhcArgs absEntryFile runConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
                    (RunOptions { runEntryFile = entryFile, runEntryPoint = entryPoint, runEntryArgs = entryArgs })
@@ -98,10 +88,9 @@ runIDM logger entryPoint entryFile entryArgs extraGhcArgs act = do
   --         _ -> return []
 
 -- | Run the interactive command-line debugger
-debugInteractive :: Recorder (WithSeverity InteractiveLog) -> InteractiveDM ()
-debugInteractive recorder = withInterrupt loop
+debugInteractive :: InteractiveDM ()
+debugInteractive = withInterrupt loop
   where
-    debugRec = cmapWithSev DebuggerLog recorder
     loop = handleInterrupt loop $ do
       minput <- getInputLine "(hdb) "
       case minput of
@@ -110,25 +99,25 @@ debugInteractive recorder = withInterrupt loop
           lift (gets runLastCommand) >>= \case
             Nothing -> return ()
             Just cmd -> do
-              out <- lift . lift $ execute debugRec cmd -- repeat last command
-              printResponse debugRec out
+              out <- lift . lift $ execute cmd -- repeat last command
+              printResponse out
         Just input -> do
           mcmd <- parseCmd input
           lift $ modify (\ o -> o { runLastCommand = mcmd })
           case mcmd of
             Nothing -> return ()
             Just cmd -> do
-              out <- lift . lift $ execute debugRec cmd
-              printResponse debugRec out
+              out <- lift . lift $ execute cmd
+              printResponse out
       loop
 
-showExceptionDetails :: Recorder (WithSeverity DebuggerLog) -> RemoteThreadId -> InteractiveDM ()
-showExceptionDetails recd tid = do
-  infoResp <- lift . lift $ execute recd (GetExceptionInfo tid)
+showExceptionDetails :: RemoteThreadId -> InteractiveDM ()
+showExceptionDetails tid = do
+  infoResp <- lift . lift $ execute (GetExceptionInfo tid)
   case infoResp of
     GotExceptionInfo exc_info -> outputStrLn $ renderExceptionInfo exc_info
     _ -> pure ()
-  stackResp <- lift . lift $ execute recd (GetStacktrace tid)
+  stackResp <- lift . lift $ execute (GetStacktrace tid)
   case stackResp of
     GotStacktrace (frame:_) ->
       outputStrLn $
@@ -139,16 +128,16 @@ showExceptionDetails recd tid = do
 -- Printing
 --------------------------------------------------------------------------------
 
-printResponse :: Recorder (WithSeverity DebuggerLog) -> Response -> InteractiveDM ()
-printResponse recd = \case
-  DidEval er -> outputEvalResult recd er
+printResponse :: Response -> InteractiveDM ()
+printResponse = \case
+  DidEval er -> outputEvalResult er
   DidSetBreakpoint bf       -> outputStrLn $ show bf
   DidRemoveBreakpoint bf    -> outputStrLn $ show bf
   DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
   DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
-  DidContinue er -> outputEvalResult recd er
-  DidStep er -> printEvalResult recd er
-  DidExec er -> outputEvalResult recd er
+  DidContinue er -> outputEvalResult er
+  DidStep er -> printEvalResult er
+  DidExec er -> outputEvalResult er
   GotThreads threads -> outputStrLn $ show threads
   GotStacktrace stackframes -> outputStrLn $ show stackframes
   GotScopes scopeinfos -> outputStrLn $ show scopeinfos
@@ -157,14 +146,14 @@ printResponse recd = \case
   Aborted err_str -> outputStrLn ("Aborted: " ++ err_str)
   Initialised -> pure ()
   where
-    outputEvalResult recd' er = do
+    outputEvalResult er = do
       outputStrLn (showEvalResult er)
-      maybeShowException recd' er
+      maybeShowException er
       rememberThreadContext er
 
-    maybeShowException recd' EvalStopped{breakId = Nothing, breakThread=tid} =
-      showExceptionDetails recd' tid
-    maybeShowException _ _ = pure ()
+    maybeShowException EvalStopped{breakId = Nothing, breakThread=tid} =
+      showExceptionDetails tid
+    maybeShowException _ = pure ()
 
     rememberThreadContext er =
       case er of
@@ -188,20 +177,20 @@ printResponse recd = \case
 
     fetchFields _ _ VarInfo{varRef = NoVariables} = pure []
     fetchFields threadId frameIx VarInfo{varRef = ref@(SpecificVariable _), ..} = do
-      resp <- lift . lift $ execute recd (GetVariables threadId frameIx ref)
+      resp <- lift . lift $ execute (GetVariables threadId frameIx ref)
       case resp of
         GotVariables res -> pure (variableResultToList res)
         Aborted err -> outputStrLn ("Failed to fetch fields for " ++ varName ++ ": " ++ err) >> pure []
         _ -> outputStrLn ("Unexpected response when fetching fields for " ++ varName) >> pure []
     fetchFields _ _ _ = pure []
 
-printEvalResult :: Recorder (WithSeverity DebuggerLog) -> EvalResult -> InteractiveDM ()
-printEvalResult recd EvalStopped{..} = do
-  out <- lift . lift $ execute recd (GetScopes breakThread 0)
-  printResponse recd out
+printEvalResult :: EvalResult -> InteractiveDM ()
+printEvalResult EvalStopped{..} = do
+  out <- lift . lift $ execute (GetScopes breakThread 0)
+  printResponse out
   when (breakId == Nothing) $
-    showExceptionDetails recd breakThread
-printEvalResult _ er = outputStrLn $ showEvalResult er
+    showExceptionDetails breakThread
+printEvalResult er = outputStrLn $ showEvalResult er
 
 showEvalResult :: EvalResult -> String
 showEvalResult (EvalCompleted{..}) = resultVal
@@ -314,10 +303,7 @@ runParser opts =
 -- | Combined parser for 'Command'
 cmdParser :: RunOptions -> RunContext -> Parser Command
 cmdParser opts ctx = hsubparser
-  ( Options.Applicative.command "break"
-    ( info (SetBreakpoint <$> breakpointParser <*> hitCountBreakParser <*> conditionalBreakParser)
-      ( progDesc "Set a breakpoint" ) )
-  <>
+   (
     Options.Applicative.command "delete"
     ( info (DelBreakpoint <$> breakpointParser)
       ( progDesc "Delete a breakpoint" ) )
@@ -362,6 +348,9 @@ cmdParser opts ctx = hsubparser
     Options.Applicative.command "variables"
     ( info (variablesParser ctx <**> helper)
       ( progDesc "Print local variables" ) )
+  <> Options.Applicative.command "break"
+    ( info (SetBreakpoint <$> breakpointParser <*> hitCountBreakParser <*> conditionalBreakParser)
+      ( progDesc "Set a breakpoint" ) )
   )
 
 stackTraceParser :: RunContext -> Parser Command

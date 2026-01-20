@@ -9,7 +9,6 @@ module Development.Debug.Adapter.Handles
 
 import DAP
 
-
 import System.IO ()
 import DAP.Log
 import qualified Data.Text as T
@@ -21,16 +20,6 @@ import System.Process
 import Control.Exception
 import Control.Monad
 import Control.Concurrent.Async
-
-{- Note [Debugger Handles]
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The debugger executes arbritary user programs which will output to stdout and stderr.
-This output needs to be sent to the debug client. Any output we wish to put in a
-log or elsewhere needs to be directed to another handle.
-
-
--}
 
 handleLogger :: Handle -> IO (LogAction IO T.Text)
 handleLogger out_handle = do

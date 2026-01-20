@@ -9,14 +9,12 @@ Message: boom while handling
 Call stack:
   While handling boom outer
   
-  IPE backtrace:
   HasCallStack backtrace:
     error, called at <TEMPORARY-DIRECTORY>/prog/Main.hs:14:3 in main:Main
 Inner exceptions:
   Exception: ErrorCall
   Message: boom outer
   Call stack:
-    IPE backtrace:
     HasCallStack backtrace:
       error, called at <TEMPORARY-DIRECTORY>/prog/Main.hs:8:10 in main:Main
 

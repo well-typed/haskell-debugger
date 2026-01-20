@@ -30,8 +30,7 @@ import GHC.Utils.Outputable
 import GHCi.Message
 import GHCi.RemoteTypes
 
-import GHC.Debugger.Utils
-import GHC.Debugger.Logger as Logger
+import Colog.Core as Logger
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime.Term.Parser

@@ -22,6 +22,9 @@ module GHC.Debugger.Session (
   setCacheDirs,
   setBytecodeBackend,
   enableByteCodeGeneration,
+  enableExternalInterpreter,
+  enableDynamicDebuggee,
+  setPgmI, addOptI,
   setDynFlagWays
   )
   where
@@ -55,9 +58,11 @@ import GHC.Unit.Types
 import qualified GHC.Unit.State                        as State
 import GHC.Driver.Env
 import GHC.Types.SrcLoc
+import GHC.Settings (ToolSettings(..))
 import Language.Haskell.Syntax.Module.Name
 import qualified Data.Foldable as Foldable
 import qualified GHC.Unit.Home.Graph as HUG
+import qualified Data.Set as Set
 import Data.Maybe
 import GHC.Types.Target (InputFileBuffer)
 
@@ -419,8 +424,46 @@ setBytecodeBackend dflags = dflags
 #endif
   }
 
+-- | Enable the external interpreter by default unless the user sets
+-- @preferInternalInterpreter=True@ (with @--internal-interpreter@)
+enableExternalInterpreter :: Bool -> DynFlags -> DynFlags
+enableExternalInterpreter preferInternalInterpreter dflags
+  | preferInternalInterpreter
+  = dflags `GHC.gopt_unset` GHC.Opt_ExternalInterpreter
+  | otherwise
+  = dflags `GHC.gopt_set` GHC.Opt_ExternalInterpreter
+
+-- | Force -dynamic on the debuggee if the debugger (which is also the external
+-- interpreter) was compiled with -dynamic. On Windows the debugger can't be
+-- built dynamic, so we won't enable it there.
+--
+-- See Note [Dynamic Debuggee for dynamic debugger]
+enableDynamicDebuggee :: DynFlags -> DynFlags
+enableDynamicDebuggee dflags
+  | hostIsDynamic
+  = addWay' WayDyn dflags
+  | otherwise
+  = dflags
+
+setPgmI, addOptI :: String -> DynFlags -> DynFlags
+setPgmI f = alterToolSettings $ \s -> s { toolSettings_pgm_i = f }
+addOptI f = alterToolSettings $ \s -> s { toolSettings_opt_i = f : toolSettings_opt_i s }
+
+alterToolSettings :: (ToolSettings -> ToolSettings) -> DynFlags -> DynFlags
+alterToolSettings f dynFlags = dynFlags { toolSettings = f (toolSettings dynFlags) }
+
 setDynFlagWays :: Ways -> DynFlags -> DynFlags
-setDynFlagWays ws dyn = dyn { targetWays_ = ws }
+setDynFlagWays ws dyn = Set.foldr addWay' dyn ws
+
+addWay' :: Way -> DynFlags -> DynFlags
+addWay' w dflags0 =
+   let platform = targetPlatform dflags0
+       dflags1 = dflags0 { targetWays_ = addWay w (targetWays_ dflags0) }
+       dflags2 = foldr GHC.setGeneralFlag' dflags1
+                       (wayGeneralFlags platform w)
+       dflags3 = foldr GHC.unSetGeneralFlag' dflags2
+                       (wayUnsetGeneralFlags platform w)
+   in dflags3
 
 -- ----------------------------------------------------------------------------
 -- Utils that we need, but don't want to incur an additional dependency for.

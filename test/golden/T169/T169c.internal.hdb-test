@@ -1,0 +1,3 @@
+#!/bin/sh
+
+$HDB -v0 T169c.hs < T169c.internal.hdb-stdin 2>&1

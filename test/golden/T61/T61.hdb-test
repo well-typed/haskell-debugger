@@ -1,1 +1,1 @@
-hdb cli x/Main.hs < T61.hdb-stdin
+$HDB x/Main.hs < T61.hdb-stdin

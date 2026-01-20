@@ -4,7 +4,6 @@
 module Development.Debug.Adapter.Proxy
   ( serverSideHdbProxy
   , runInTerminalHdbProxy
-  , ProxyLog(..)
   ) where
 
 import DAP
@@ -27,15 +26,8 @@ import qualified Network.Socket.ByteString as NBS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.HashMap.Strict as H
 
-import GHC.Debugger.Logger
+import Colog.Core
 import Development.Debug.Adapter
-
-newtype ProxyLog = ProxyLog T.Text
-  deriving newtype Pretty
-
--- | Connect to a running @hdb proxy@ process on the given port
--- connectToHdbProxy :: Recorder (WithVerbosity x) -> Int -> DebugAdaptor ()
--- connectToHdbProxy = _
 
 -- | Fork a new thread to run the server-side of the proxy.
 --
@@ -47,7 +39,7 @@ newtype ProxyLog = ProxyLog T.Text
 -- 2. In a loop,
 -- 2.1 Read stdin from the socket and push it to a Chan
 -- 2.1 Read from a stdout Chan and write to the socket
-serverSideHdbProxy :: Recorder (WithSeverity ProxyLog)
+serverSideHdbProxy :: LogAction IO (WithSeverity T.Text)
                    -> MVar ()
                    -> DebugAdaptor ()
 serverSideHdbProxy l client_conn_signal = do
@@ -67,7 +59,7 @@ serverSideHdbProxy l client_conn_signal = do
     myThreadId >>= \tid -> labelThread tid "Debug/Adapter/Proxy: TCP Server"
     runTCPServerWithSocket sock $ \scket -> do
 
-      logWith l Info $ ProxyLog $ T.pack $ "Connected to client on port " ++ show port ++ "...!"
+      infoMsg (T.pack $ "Connected to client on port " ++ show port ++ "...!")
       putMVar client_conn_signal () -- signal ready (see #95)
 
       -- -- Read stdout from chan and write to socket
@@ -76,7 +68,7 @@ serverSideHdbProxy l client_conn_signal = do
         labelThread tid "Debug/Adapter/Proxy: Forward stdout"
         forever $ do
           bs <- readChan dbOut
-          logWith l Debug $ ProxyLog $ T.pack $ "Writing to socket: " ++ BS8.unpack bs
+          debugMsg (T.pack $ "Writing to socket: " ++ BS8.unpack bs)
           NBS.sendAll scket bs
 
       -- Read stderr from chan and write to socket
@@ -85,7 +77,7 @@ serverSideHdbProxy l client_conn_signal = do
         labelThread tid "Debug/Adapter/Proxy: Forward stderr"
         forever $ do
           bs <- readChan dbErr
-          logWith l Debug $ ProxyLog $ T.pack $ "Writing to socket (from stderr): " ++ BS8.unpack bs
+          debugMsg (T.pack $ "Writing to socket (from stderr): " ++ BS8.unpack bs)
           NBS.sendAll scket bs
 
       -- Read stdin from socket and write to chan
@@ -93,10 +85,10 @@ serverSideHdbProxy l client_conn_signal = do
             bs <- NBS.recv scket 4096
             if BS8.null bs
               then do
-                logWith l Debug $ ProxyLog $ T.pack "Connection to client was closed."
+                debugMsg (T.pack "Connection to client was closed.")
                 close scket
               else do
-                logWith l Debug $ ProxyLog $ T.pack $ "Read from socket: " ++ BS8.unpack bs
+                debugMsg (T.pack $ "Read from socket: " ++ BS8.unpack bs)
                 writeChan dbIn bs >> loop
        in ignoreIOException loop
 
@@ -104,7 +96,9 @@ serverSideHdbProxy l client_conn_signal = do
 
   where
     ignoreIOException a = catch a $ \(e::IOException) ->
-      logWith l Info $ ProxyLog $ T.pack $ "Ignoring connection broken to proxy client: " ++ show e
+      infoMsg (T.pack $ "Ignoring connection broken to proxy client: " ++ show e)
+    debugMsg msg = l <& WithSeverity msg Debug
+    infoMsg msg  = l <& WithSeverity msg Info
 
 -- | The proxy code running on the terminal in which the @hdb proxy@ process is launched.
 --
@@ -112,9 +106,9 @@ serverSideHdbProxy l client_conn_signal = do
 -- 1. Connecting to the given proxy-server port
 -- 2. Forwarding stdin to the port it is connected to
 -- 3. Read from the network the output and write it to stdout
-runInTerminalHdbProxy :: Recorder (WithSeverity ProxyLog) -> Int -> IO ()
+runInTerminalHdbProxy :: LogAction IO (WithSeverity T.Text) -> Int -> IO ()
 runInTerminalHdbProxy l port = do
-  logWith l Info $ ProxyLog $ T.pack $ "Running in terminal on port " ++ show port ++ "...!"
+  l <& WithSeverity (T.pack $ "Running in terminal on port " ++ show port ++ "...!") Info
   hSetBuffering stdin LineBuffering
 
   dbg_inv <- lookupEnv "DEBUGGEE_INVOCATION"
@@ -137,7 +131,7 @@ runInTerminalHdbProxy l port = do
         msg <- NBS.recv sock 4096
         if BS8.null msg
           then do
-            logWith l Info $ ProxyLog $ T.pack "Exiting..."
+            l <& WithSeverity (T.pack "Exiting...") Info
             close sock
             exitSuccess
           else BS8.hPut stdout msg >> hFlush stdout
