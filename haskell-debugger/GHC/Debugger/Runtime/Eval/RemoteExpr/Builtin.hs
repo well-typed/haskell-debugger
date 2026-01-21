@@ -26,6 +26,7 @@ import GHC.Exts.Heap
 import GHC.Exts.Heap.Closures
 import GHC.Debugger.Runtime.Eval.RemoteExpr (RemoteExpr)
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
+import GHC.Stack.Annotation.Experimental
 
 -- | Remote 'GHC.Stack.CloneStack.cloneThreadStack'
 cloneThreadStack :: RemoteExpr ThreadId -> RemoteExpr (IO StackSnapshot)
@@ -85,3 +86,7 @@ compose :: RemoteExpr (b -> c) -> RemoteExpr (a -> b) -> RemoteExpr (a -> c)
 f `compose` g = Remote.app (Remote.app composeVar f) g where
   composeVar :: RemoteExpr ((b -> c) -> (a -> b) -> (a -> c))
   composeVar = Remote.var (mkModuleName "GHC.Base") "." []
+
+displayStackAnnotation :: RemoteExpr SomeStackAnnotation -> RemoteExpr String
+displayStackAnnotation = Remote.app $
+  Remote.var (mkModuleName "GHC.Stack.Annotation.Experimental") "displayStackAnnotation" ["SomeStackAnnotation"]

@@ -181,6 +181,20 @@ data SourceSpan = SourceSpan
       }
       deriving (Show, Eq)
 
+-- | This is a completely unhelpful source span!
+-- It doesn't point to anything and is of no help to the user
+-- whatsoever.
+--
+-- Use this only as a last resort if no other source span can be provided.
+unhelpfulSourceSpan :: SourceSpan
+unhelpfulSourceSpan = SourceSpan
+  { file = ""
+  , startLine = 0
+  , endLine = 0
+  , startCol = 0
+  , endCol = 0
+  }
+
 --------------------------------------------------------------------------------
 -- Responses
 --------------------------------------------------------------------------------

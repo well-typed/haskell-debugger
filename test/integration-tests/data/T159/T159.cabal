@@ -1,0 +1,12 @@
+cabal-version:   3.8
+name:            T159
+version:         0.1.0.0
+build-type:      Simple
+
+executable T159
+    main-is:          Main.hs
+    build-depends:    base,
+                      ghc-experimental,
+    hs-source-dirs:   app,
+    default-language: Haskell2010
+    ghc-options: -finfo-table-map
