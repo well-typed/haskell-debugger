@@ -1,0 +1,3 @@
+packages: .
+
+with-compiler: /home/hugin/Documents/haskell/ghc-more-annotations/_default/stage1/bin/ghc

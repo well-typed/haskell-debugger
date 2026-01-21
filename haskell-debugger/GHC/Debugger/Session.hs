@@ -37,6 +37,9 @@ import GHC.ResponseFile (expandResponse)
 import HIE.Bios.Environment as HIE
 import System.FilePath
 import Data.Time
+#if MIN_VERSION_ghc(9,14,2)
+import Data.Function ((&))
+#endif
 import qualified System.Directory as Directory
 import qualified System.Environment as Env
 

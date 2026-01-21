@@ -1151,6 +1151,28 @@ describe("Debug Adapter Tests", function () {
         // Contains the IPE frame
         assert.ok(frameNames.includes("MyLib.thenDo"), "Stack trace should contain thenDo");
       })
+      it("should display stack annotation frames (issue #159)", async () => {
+        let config = mkConfig({
+              projectRoot: "/data/T159",
+              entryFile: "app/Main.hs",
+              entryPoint: "main",
+              entryArgs: [],
+              extraGhcArgs: []
+            })
+
+        const expected = { path: config.projectRoot + "/" + config.entryFile, line: 10 }
+
+        await dc.hitBreakpoint(config, { path: config.entryFile, line: 10 }, expected, expected);
+
+        const threadsResp = await dc.threadsRequest();
+        const threadId = threadsResp.body.threads[0].id;
+        const stResp = await dc.stackTraceRequest({ threadId: threadId });
+        const frames = stResp.body.stackFrames;
+        const frameNames = frames.map(f => f.name);
+        // Contains the stack anntotions
+        assert.ok(frameNames.includes("Lovely annotation"), "Stack trace should contain user-defined message");
+        assert.ok(frameNames.includes("[1,2,3,4]"), "Stack trace should contain user-defined value");
+        // assert.ok(frameNames.includes("MyLib.thenDo"), "Stack trace should contain source location");
+      })
     })
 })
-

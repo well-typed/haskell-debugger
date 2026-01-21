@@ -181,6 +181,15 @@ data SourceSpan = SourceSpan
       }
       deriving (Show, Eq)
 
+unhelpfulSourceSpan :: SourceSpan
+unhelpfulSourceSpan = SourceSpan
+  { file = ""
+  , startLine = 0
+  , endLine = 0
+  , startCol = 0
+  , endCol = 0
+  }
+
 --------------------------------------------------------------------------------
 -- Responses
 --------------------------------------------------------------------------------

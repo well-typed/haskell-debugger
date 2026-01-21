@@ -25,6 +25,7 @@ import GHC.InfoProv
 import GHC
 import GHC.Builtin.Types
 import GHC.Runtime.Heap.Inspect
+import qualified GHC.Stack.Types as Stack
 
 import GHC.Driver.Env
 import GHC.Runtime.Interpreter as Interp
@@ -40,6 +41,7 @@ import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Runtime.Eval
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
+
 --------------------------------------------------------------------------------
 -- * Thread stack frames
 --------------------------------------------------------------------------------
@@ -48,6 +50,8 @@ import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
 data StackFrameInfo
   -- | Information derived from an IPE entry
   = StackFrameIPEInfo !InfoProv
+  -- | User-defined Stack Frame annotation
+  | StackFrameAnnotation !(Maybe Stack.SrcLoc) !String
   -- | Information derived from a continuation BCO breakpoint info.
   | StackFrameBreakpointInfo !InternalBreakpointId
 
@@ -68,7 +72,7 @@ getRemoteThreadStackCopy threadIdRef = do
       logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
       return []
     Right stack_frames_fvs -> fmap catMaybes $
-      forM stack_frames_fvs $ \stack_frame_fv ->
+      forM stack_frames_fvs $ \ stack_frame_fv -> do
         obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} (castForeignRef stack_frame_fv)
           stackFrameInfoParser >>= \case
             Left errs -> do
@@ -84,15 +88,21 @@ getRemoteThreadStackCopy threadIdRef = do
 -- | Try to decode a 'StackFrameInfo' from a @(StackFrame, Maybe InfoProv)@ term
 stackFrameInfoParser :: TermParser (Maybe StackFrameInfo)
 stackFrameInfoParser = do
-  -- Try IPE first
-  mipe <- subtermWith 1 (maybeParser infoProvParser)
-  case mipe of
-    Nothing ->
-      -- Try decoding a continuation BCO with a breakpoint next
-      fmap StackFrameBreakpointInfo
-        <$> subtermWith 0 retBCOParser
-    Just ipe -> pure $
-      Just (StackFrameIPEInfo ipe)
+  -- Try a stack annotation next
+  stackAnno <- subtermWith 0 stackAnnoParser
+  case stackAnno of
+    Nothing -> do
+      -- Try IPE first
+      mipe <- subtermWith 1 (maybeParser infoProvParser)
+      case mipe of
+        Nothing -> do
+          -- Try decoding a continuation BCO with a breakpoint next
+          fmap StackFrameBreakpointInfo
+            <$> subtermWith 0 retBCOParser
+        Just ipe -> pure $
+          Just (StackFrameIPEInfo ipe)
+    Just (srcLoc, ann) -> pure $
+      Just (StackFrameAnnotation srcLoc ann)
 
 -- | Decode an 'InfoProv' from an @InfoProv@ term
 infoProvParser :: TermParser InfoProv
@@ -127,6 +137,31 @@ retBCOParser = do
           Right t  -> return t
       _ -> pure Nothing
 
+-- | Try to decode an 'StackAnnotation' from a @StackFrame@ term
+stackAnnoParser :: TermParser (Maybe (Maybe Stack.SrcLoc, String))
+stackAnnoParser = do
+  -- Match against "AnnFrame" frames and extract the 'SomeStackAnnotation'
+  (matchConstructorTerm "AnnFrame" *> subtermWith 1 (subtermWith 0{-take from Box-} (Just <$> anyTerm)) <|> pure Nothing)
+    >>= \case
+      Just Term{val} -> do
+        stack_anno <- liftDebugger $
+          expectRight =<< Remote.evalString
+            (Remote.displayStackAnnotationShort (Remote.ref (castForeignRef val)))
+
+        src_loc_fv <- liftDebugger $
+          expectRight =<< Remote.eval
+            (Remote.sourceLocationOfStackAnnotation (Remote.ref (castForeignRef val)))
+
+        src_loc_either <- liftDebugger $
+           obtainParsedTerm "Annotation SrcLoc" maxBound True anyTy (castForeignRef src_loc_fv) (maybeParser srcLocParser)
+
+        src_loc <- case src_loc_either of
+          Left err -> fail (show err)
+          Right t  -> return t
+        pure $ Just (src_loc, stack_anno)
+      _ ->
+        pure Nothing
+
 -- | Parse an 'InternalBreakpointId' out of a 'BCOClosure' term.
 bcoInternalBreakpointId :: TermParser (Maybe InternalBreakpointId)
 bcoInternalBreakpointId = do
@@ -142,6 +177,18 @@ bcoInternalBreakpointId = do
         , eb_info_mod_unit = utf8EncodeShortByteString mod_id
         , eb_info_index    = fromIntegral $ brk_info_ix_hi .<<. 16 + brk_info_ix_lo
         }
+
+-- | Parse a 'SrcLoc'.
+srcLocParser :: TermParser Stack.SrcLoc
+srcLocParser = do
+  Stack.SrcLoc
+    <$> subtermWith 0 stringParser -- srcLocPackage
+    <*> subtermWith 1 stringParser -- srcLocModule
+    <*> subtermWith 2 stringParser -- srcLocFile
+    <*> subtermWith 3 intPrimParser -- unpacked srcLocStartLine
+    <*> subtermWith 4 intPrimParser -- unpacked srcLocStartCol
+    <*> subtermWith 5 intPrimParser -- unpacked srcLocEndLine
+    <*> subtermWith 6 intPrimParser -- unpacked srcLocEndCol
 
 -- | Parse a literal 'String' from a BCO given a valid index into the literals array
 bcoLiteralString :: Word -> TermParser String

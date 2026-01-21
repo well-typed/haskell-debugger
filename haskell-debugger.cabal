@@ -112,6 +112,7 @@ library
                       hie-bios >= 0.15 && < 0.18,
                       file-embed >= 0.0.16 && < 0.1,
                       attoparsec >= 0.13 && < 0.15,
+                      ghc-stack-annotations ^>=0.1,
                       -- Logger dependencies
                       time >= 1.14 && < 2,
                       prettyprinter >= 1.7.1 && < 2,

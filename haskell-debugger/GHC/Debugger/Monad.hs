@@ -313,11 +313,7 @@ doDownsweep :: GhcMonad m
             -> m ModuleGraph -- ^ Module graph constructed from current set targets
 doDownsweep reuse_mg = do
   hsc_env <- getSession
-#if MIN_VERSION_ghc(9,15,0)
-  let msg = batchMultiMsg hsc_env
-#else
   let msg = batchMultiMsg
-#endif
   (errs_base, mod_graph) <- liftIO $ downsweep hsc_env mkUnknownDiagnostic (Just msg) (maybe [] mgModSummaries reuse_mg) [] False
   when (not $ null errs_base) $ do
 #if MIN_VERSION_ghc(9,15,0)
@@ -330,11 +326,7 @@ doDownsweep reuse_mg = do
 
 doLoad :: GhcMonad m => Maybe ModIfaceCache -> LoadHowMuch -> ModuleGraph -> m SuccessFlag
 doLoad if_cache how_much mg = do
-#if MIN_VERSION_ghc(9,15,0)
-  msg <- batchMultiMsg <$> getSession
-#else
   let msg = batchMultiMsg
-#endif
   load' if_cache how_much mkUnknownDiagnostic (Just msg) mg
 
 -- | Returns @Just modName@ if the given module was successfully loaded

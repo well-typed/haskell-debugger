@@ -23,9 +23,19 @@ import GHC.Debugger
 import Control.Monad
 import Data.List (intercalate)
 
+data RunOptions = RunOptions
+  { runEntryFile :: FilePath
+  , runEntryPoint :: String
+  , runEntryArgs :: [String]
+  }
+
+data RunContext = RunContext
+  { runCurrentThread :: Maybe Int
+  , runLastCommand :: Maybe Command
+  }
+
 -- | Interactive debugging monad
-type InteractiveDM a = InputT (RWST (FilePath{-entry file-},String{-entry point-}, [String]{-run args-}) ()
-                                (Maybe Command{-last cmd-}) Debugger) a
+type InteractiveDM a = InputT (RWST RunOptions () RunContext Debugger) a
 
 data InteractiveLog
   = DebuggerLog DebuggerLog
@@ -68,7 +78,8 @@ runIDM logger entryPoint entryFile entryArgs extraGhcArgs act = do
       runDebugger debugRec stdout rootDir componentDir libdir units ghcInvocation extraGhcArgs absEntryFile defaultRunConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
-                   (entryFile, entryPoint, entryArgs) Nothing
+                   (RunOptions { runEntryFile = entryFile, runEntryPoint = entryPoint, runEntryArgs = entryArgs })
+                   (RunContext { runLastCommand = Nothing, runCurrentThread = Nothing } )
   where
     exitWithMsg txt = do
       hPutStrLn stderr txt
@@ -95,14 +106,14 @@ debugInteractive recorder = withInterrupt loop
       case minput of
         Nothing -> outputStrLn "Exiting..." >> liftIO (exitWith ExitSuccess)
         Just "" -> do
-          lift get >>= \case
+          lift (gets runLastCommand) >>= \case
             Nothing -> return ()
-            Just (cmd :: Command) -> do
+            Just cmd -> do
               out <- lift . lift $ execute debugRec cmd -- repeat last command
               printResponse debugRec out
         Just input -> do
           mcmd <- parseCmd input
-          lift $ put mcmd
+          lift $ modify (\ o -> o { runLastCommand = mcmd })
           case mcmd of
             Nothing -> return ()
             Just cmd -> do
@@ -243,16 +254,16 @@ hitCountBreakParser =
    <> metavar "N:INT"
    <> help "Ignore first N:INT times this breakpoint is hit" ))
 
-runParser :: FilePath -> String -> [String] -> Parser Command
-runParser entryFile entryPoint entryArgs =
+runParser :: RunOptions -> Parser Command
+runParser opts =
   -- --entry <name> with some args
   -- (DebugExecution <$> parseEntry <*> parseSomeArgs)
   -- --entry <name> without any args
   -- <|> (DebugExecution <$> parseEntry <*> pure [])
   -- just some args
-  (DebugExecution (mkEntry entryPoint) entryFile <$> parseSomeArgs)
+  (DebugExecution (mkEntry (runEntryPoint opts)) (runEntryFile opts) <$> parseSomeArgs)
   -- just "run"
-  <|> (pure $ DebugExecution (mkEntry entryPoint) entryFile entryArgs)
+  <|> (pure $ DebugExecution (mkEntry (runEntryPoint opts)) (runEntryFile opts) (runEntryArgs opts))
   where
     _parseEntry =
       fmap mkEntry $
@@ -267,11 +278,11 @@ runParser entryFile entryPoint entryArgs =
         ( metavar "ARGS" <> help "Arguments to pass to the entry point. If empty, the arguments given at the debugger invocation are used." ) )
     mkEntry entry
       | entry == "main" = MainEntry Nothing
-      | otherwise = FunctionEntry entryPoint
+      | otherwise = FunctionEntry (runEntryPoint opts)
 
 -- | Combined parser for 'Command'
-cmdParser :: FilePath -> String -> [String] -> Parser Command
-cmdParser entryFile entryPoint entryArgs = hsubparser
+cmdParser :: RunOptions -> Parser Command
+cmdParser opts = hsubparser
   ( Options.Applicative.command "break"
     ( info (SetBreakpoint <$> breakpointParser <*> hitCountBreakParser <*> conditionalBreakParser)
       ( progDesc "Set a breakpoint" ) )
@@ -281,7 +292,7 @@ cmdParser entryFile entryPoint entryArgs = hsubparser
       ( progDesc "Delete a breakpoint" ) )
   <>
     Options.Applicative.command "run"
-    ( info (runParser entryFile entryPoint entryArgs)
+    ( info (runParser opts)
       ( progDesc "Run the debuggee" ) )
   <>
     Options.Applicative.command "next"
@@ -308,21 +319,32 @@ cmdParser entryFile entryPoint entryArgs = hsubparser
     Options.Applicative.command "exit"
     ( info (pure TerminateProcess)
       ( progDesc "Terminate and exit the debugger session" ) )
+  <>
+    Options.Applicative.command "threads"
+    ( info (pure GetThreads)
+      ( progDesc "Print current stack trace" ) )
+  <>
+    Options.Applicative.command "backtrace"
+    ( info (GetStacktrace <$> threadIdParser)
+      ( progDesc "Print current stack trace" ) )
   )
 
+threadIdParser :: Parser RemoteThreadId
+threadIdParser = RemoteThreadId <$> argument auto (metavar "THREAD_ID" <> help "Id of the Thread")
+
 -- | Main parser info
-cmdParserInfo :: FilePath -> String -> [String] -> ParserInfo Command
-cmdParserInfo entryFile entryPoint entryArgs = info (cmdParser entryFile entryPoint entryArgs)
+cmdParserInfo :: RunOptions -> ParserInfo Command
+cmdParserInfo opts = info (cmdParser opts)
   ( fullDesc )
 
 -- | Parse command line arguments
 parseCmd :: String -> InteractiveDM (Maybe Command)
 parseCmd input = do
-  (entryFile, entryPoint, entryArgs) <- lift ask
+  opts <- lift ask
   let
     res = execParserPure
      parserPrefs
-     (cmdParserInfo entryFile entryPoint entryArgs)
+     (cmdParserInfo opts)
      (words input)
    in case res of
     Success x ->
