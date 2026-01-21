@@ -35,6 +35,7 @@ import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
 import GHC.Debugger.Utils
 import qualified GHC.Debugger.Logger as Logger
+import qualified GHC.Stack.Types as Stack
 
 {-
 Note [Don't crash if not stopped]
@@ -121,8 +122,8 @@ getStacktrace req_tid = do
     Just f_tid -> do
       -- Try decoding a stack with interpreter continuation frames (RetBCOs)
       -- and use the BRK_FUN src locations.
-      ibis <- getRemoteThreadStackCopy f_tid
-      forM ibis $ \case
+      stack_frames <- getRemoteThreadStackCopy f_tid
+      forM stack_frames $ \case
         StackFrameBreakpointInfo ibi -> do
           info_brks <- liftIO $ readIModBreaks hug ibi
           let modl  = getBreakSourceMod ibi info_brks
@@ -149,6 +150,12 @@ getStacktrace req_tid = do
                 , sourceSpan = sourceSpan
                 , breakId = Nothing
                 }
+        StackFrameAnnotation srcLoc ann -> do
+            return $ Just DbgStackFrame
+              { name = ann
+              , sourceSpan = maybe unhelpfulSourceSpan srcLocToSourceSpan srcLoc
+              , breakId = Nothing
+              }
 
   -- Add the latest resume context at the head.
   head_frame <- GHC.getResumeContext >>= \case
@@ -186,6 +193,16 @@ getStacktrace req_tid = do
                                   }
             Nothing -> return Nothing
   return (maybe id (:) head_frame $ decoded_frames)
+
+srcLocToSourceSpan :: Stack.SrcLoc -> SourceSpan
+srcLocToSourceSpan srcLoc =
+  SourceSpan
+    { file = Stack.srcLocFile srcLoc
+    , startLine = Stack.srcLocStartLine srcLoc
+    , endLine = Stack.srcLocEndLine srcLoc
+    , startCol = Stack.srcLocStartCol srcLoc
+    , endCol = Stack.srcLocEndCol srcLoc
+    }
 
 --------------------------------------------------------------------------------
 -- * Scopes

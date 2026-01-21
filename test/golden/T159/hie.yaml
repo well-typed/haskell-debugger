@@ -1,0 +1,8 @@
+cradle:
+  direct:
+    arguments: 
+      - -i
+      - -i.
+      - T159.hs
+      - -package base
+      - -package ghc-experimental

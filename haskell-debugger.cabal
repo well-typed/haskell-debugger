@@ -96,6 +96,7 @@ library
                       ghc >= 9.14 && < 9.16, ghci >= 9.14 && < 9.16,
                       ghc-boot-th >= 9.14 && < 9.16,
                       ghc-boot >= 9.14 && < 9.16,
+                      ghc-experimental >= 9.1401 && < 9.1600,
                       ghc-heap >= 9.14 && < 9.16,
                       array >= 0.5.8 && < 0.6,
                       containers >= 0.7 && < 0.9,
