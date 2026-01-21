@@ -27,6 +27,7 @@ import GHC.Exts.Heap.Closures
 import GHC.Debugger.Runtime.Eval.RemoteExpr (RemoteExpr)
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import GHC.Stack.Annotation.Experimental
+import GHC.Types.SrcLoc
 
 -- | Remote 'GHC.Stack.CloneStack.cloneThreadStack'
 cloneThreadStack :: RemoteExpr ThreadId -> RemoteExpr (IO StackSnapshot)
@@ -88,5 +89,10 @@ f `compose` g = Remote.app (Remote.app composeVar f) g where
   composeVar = Remote.var (mkModuleName "GHC.Base") "." []
 
 displayStackAnnotation :: RemoteExpr SomeStackAnnotation -> RemoteExpr String
-displayStackAnnotation = Remote.app $
-  Remote.var (mkModuleName "GHC.Stack.Annotation.Experimental") "displayStackAnnotation" ["GHC.Stack.Annotation.Experimental.SomeStackAnnotation"]
+displayStackAnnotation = Remote.app $ Remote.var (mkModuleName "GHC.Internal.Stack.Annotation") "displayStackAnnotation" ["GHC.Stack.Annotation.Experimental.SomeStackAnnotation"]
+
+displayStackAnnotationShort :: RemoteExpr SomeStackAnnotation -> RemoteExpr String
+displayStackAnnotationShort = Remote.app $ Remote.var (mkModuleName "GHC.Internal.Stack.Annotation") "displayStackAnnotationShort" ["GHC.Stack.Annotation.Experimental.SomeStackAnnotation"]
+
+stackAnnotationSourceLocation :: RemoteExpr SomeStackAnnotation -> RemoteExpr (Maybe SrcLoc)
+stackAnnotationSourceLocation = Remote.app $ Remote.var (mkModuleName "GHC.Internal.Stack.Annotation") "stackAnnotationSourceLocation" ["SGHC.Stack.Annotation.Experimental.omeStackAnnotation"]

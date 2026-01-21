@@ -140,8 +140,8 @@ threadInfo threadId = do
 stackFrameInfo :: (StackFrame, Maybe InfoProv) -> IO (Maybe StackFrameInfo)
 stackFrameInfo (AnnFrame{annotation}, _)
   | let Box annVal = annotation
-  , let stack_anno = displayStackAnnotation @SomeStackAnnotation (unsafeCoerce annVal)
-  = pure $ Just $ StackFrameAnnotation Nothing{-No source locations yet-} stack_anno
+  , let stack_frame = stackAnnoToStackFrameInfo (unsafeCoerce @_ @SomeStackAnnotation annVal)
+  = pure $ Just stack_frame
 stackFrameInfo (_, Just ipe)
   = pure $ Just (StackFrameIPEInfo ipe)
 stackFrameInfo (RetBCO{bco}, _)
@@ -149,6 +149,14 @@ stackFrameInfo (RetBCO{bco}, _)
   = fmap StackFrameBreakpointInfo <$> (lookupBCOBreakpoint =<< Heap.getClosureData bco_hval)
 stackFrameInfo _
   = pure Nothing
+
+stackAnnoToStackFrameInfo :: SomeStackAnnotation -> StackFrameInfo
+stackAnnoToStackFrameInfo stack_anno =
+#if MIN_VERSION_ghc_experimental(9,1402,0)
+  StackFrameAnnotation (stackAnnotationSourceLocation stack_anno) (displayStackAnnotationShort stack_anno)
+#else
+  StackFrameAnnotation Nothing {-No source locations yet-} (displayStackAnnotation stack_anno)
+#endif
 
 -- | Try to find a BRK_FUN breakpoint location at the start of a BCO heap closure
 lookupBCOBreakpoint :: Heap.GenClosure Box -> IO (Maybe InternalBreakpointId)

@@ -148,9 +148,15 @@ stackAnnoParser = do
       Just Term{val} -> do
         stack_anno <- liftDebugger $
           expectRight =<< Remote.evalString
+#if MIN_VERSION_ghc_experimental(9,1402,0)
+            (Remote.displayStackAnnotationShort (Remote.ref (castForeignRef val)))
+#else
             (Remote.displayStackAnnotation (Remote.ref (castForeignRef val)))
+#endif
 
-        pure $ Just (Nothing {- No source locations yet :( -}, stack_anno)
+        src_loc <- getOptionalStackAnnotationSrcLoc
+
+        pure $ Just (src_loc, stack_anno)
       _ ->
         pure Nothing
 
@@ -169,6 +175,37 @@ bcoInternalBreakpointId = do
         , eb_info_mod_unit = utf8EncodeShortByteString mod_id
         , eb_info_index    = fromIntegral $ brk_info_ix_hi .<<. 16 + brk_info_ix_lo
         }
+
+getOptionalStackAnnotationSrcLoc :: TermParser (Maybe Stack.SrcLoc)
+#if MIN_VERSION_ghc_experimental(9,1402,0)
+getOptionalStackAnnotationSrcLoc = do
+  src_loc_fv <- liftDebugger $
+    expectRight =<< Remote.eval
+      (Remote.stackAnnotationSourceLocation (Remote.ref (castForeignRef val)))
+
+  src_loc_either <- liftDebugger $
+    obtainParsedTerm "Annotation SrcLoc" maxBound True anyTy (castForeignRef src_loc_fv) (maybeParser srcLocParser)
+
+  case src_loc_either of
+    Left err -> fail (show err)
+    Right t  -> return t
+ where
+  -- | Parse a 'SrcLoc'.
+  srcLocParser :: TermParser Stack.SrcLoc
+  srcLocParser = do
+    Stack.SrcLoc
+      <$> subtermWith 0 stringParser -- srcLocPackage
+      <*> subtermWith 1 stringParser -- srcLocModule
+      <*> subtermWith 2 stringParser -- srcLocFile
+      <*> subtermWith 3 intPrimParser -- unpacked srcLocStartLine
+      <*> subtermWith 4 intPrimParser -- unpacked srcLocStartCol
+      <*> subtermWith 5 intPrimParser -- unpacked srcLocEndLine
+      <*> subtermWith 6 intPrimParser -- unpacked srcLocEndCol
+#else
+getOptionalStackAnnotationSrcLoc = do
+  pure Nothing
+#endif
+
 
 -- | Parse a literal 'String' from a BCO given a valid index into the literals array
 bcoLiteralString :: Word -> TermParser String
