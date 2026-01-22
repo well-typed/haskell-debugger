@@ -7,6 +7,7 @@
 module GHC.Debugger.Session (
   parseHomeUnitArguments,
   setupHomeUnitGraph,
+  validateUnitsWays,
   TargetDetails(..),
   Target(..),
   toGhcTarget,
@@ -21,6 +22,7 @@ module GHC.Debugger.Session (
   setCacheDirs,
   setBytecodeBackend,
   enableByteCodeGeneration,
+  setDynFlagWays
   )
   where
 
@@ -41,6 +43,7 @@ import qualified System.Directory as Directory
 import qualified System.Environment as Env
 
 import qualified GHC
+import GHC.Platform.Ways
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Monad
 import qualified GHC.Driver.Session as GHC
@@ -229,6 +232,17 @@ setupMultiHomeUnitGhcSession exts hsc_env cis = do
       return (L.nubOrdOn targetTarget ctargets)
     pure (hscEnv', concat ts)
 
+-- | Find and return the ways in which the home units are built.
+-- INVARIANT: All home units are built with the same 'Ways'
+validateUnitsWays :: NonEmpty.NonEmpty (DynFlags, [GHC.Target]) -> IO Ways
+validateUnitsWays flagsAndTargets = do
+    let unitWays  = NonEmpty.map (ways . fst) flagsAndTargets
+        firstWays = NonEmpty.head unitWays
+        restWays  = NonEmpty.tail unitWays
+    if all (== firstWays) restWays
+        then return firstWays
+        else error "Unexpected: the home units have different ways! Not supported, see GHC#26765"
+
 data TargetDetails = TargetDetails
   { targetTarget :: Target
   -- ^ Simplified version of 'TargetId', storing enough information
@@ -404,6 +418,9 @@ setBytecodeBackend dflags = dflags
   backend = GHC.interpreterBackend
 #endif
   }
+
+setDynFlagWays :: Ways -> DynFlags -> DynFlags
+setDynFlagWays ws dyn = dyn { targetWays_ = ws }
 
 -- ----------------------------------------------------------------------------
 -- Utils that we need, but don't want to incur an additional dependency for.

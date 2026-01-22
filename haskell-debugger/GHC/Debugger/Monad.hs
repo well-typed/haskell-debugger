@@ -213,6 +213,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
 
     -- Discover the user-given flags and targets
     flagsAndTargets <- parseHomeUnitArguments mainFp compDir units ghcInvocation dflags2 rootDir
+    buildWays       <- liftIO $ validateUnitsWays flagsAndTargets
 
     -- Setup base HomeUnitGraph
     setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
@@ -230,7 +231,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
 
         -- Add the custom unit to the HUG
         let base_dep_uids = [uid | UnitNode _ uid <- mg_mss mod_graph_base]
-        addInMemoryHsDebuggerViewUnit base_dep_uids =<< getDynFlags
+        addInMemoryHsDebuggerViewUnit base_dep_uids . setDynFlagWays buildWays =<< getDynFlags
 
         tryLoadHsDebuggerViewModule l if_cache (const False) debuggerViewClassModName debuggerViewClassContents
           >>= \case
