@@ -15,7 +15,6 @@ module GHC.Debugger.Monad where
 import System.Environment
 #endif
 import System.Process
-import Control.Concurrent
 import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
@@ -226,19 +225,16 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
 
     -- Make sure to override the function which creates the external
     -- interpreter, because we need to keep track of the standard handles
-    iserv_handles <- liftIO newEmptyMVar
     modifySession $ \h -> h
       { hsc_hooks = (hsc_hooks h)
           { createIservProcessHook = Just $ \cp -> do
-              (Just i,Just o, Just e, ph) <-
-                createProcess cp { std_in  = CreatePipe
-                                 , std_out = CreatePipe
-                                 , std_err = CreatePipe }
-              putMVar iserv_handles (i, o, e)
+              (_,_,_, ph) <-
+                createProcess cp { std_in  = Inherit
+                                 , std_out = Inherit
+                                 , std_err = Inherit }
               return ph
           }
       }
-    (serv_in, serv_out, serv_err) <- liftIO $ takeMVar iserv_handles
 
     -- Set the session dynflags now to initialise the hsc_interp.
     _ <- GHC.setSessionDynFlags dflags2
