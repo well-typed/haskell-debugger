@@ -4,14 +4,14 @@
 module Development.Debug.Options
   ( HdbOptions(..) ) where
 
-import GHC.Debugger.Logger
+import Colog.Core (Severity)
 
 -- | The options `hdb` is invoked in the command line with
 data HdbOptions
   -- | @server --port <port>@
   = HdbDAPServer
     { port :: Int
-    , verbosity :: Verbosity
+    , verbosity :: Severity
     }
   -- | @cli [--entry-point=<entryPoint>] [--extra-ghc-args="<args>"] [<entryFile>] -- [<entryArgs>]@
   | HdbCLI
@@ -19,7 +19,7 @@ data HdbOptions
     , entryFile :: FilePath
     , entryArgs :: [String]
     , extraGhcArgs :: [String]
-    , verbosity :: Verbosity
+    , verbosity :: Severity
     }
 
   -- | @proxy --port <port>@
@@ -37,7 +37,7 @@ data HdbOptions
   -- See #44 for the original ticket
   | HdbProxy
     { port :: Int
-    , verbosity :: Verbosity
+    , verbosity :: Severity
     }
 
   -- | Launch the custom-for-the-debugger external interpreter for running the

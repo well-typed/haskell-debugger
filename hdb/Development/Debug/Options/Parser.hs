@@ -11,7 +11,7 @@ import Data.Version
 import qualified Options.Applicative
 import qualified Paths_haskell_debugger as P
 
-import GHC.Debugger.Logger
+import Colog.Core
 import Development.Debug.Options
 
 --------------------------------------------------------------------------------
@@ -26,7 +26,7 @@ serverParser = HdbDAPServer
      <> short 'p'
      <> metavar "PORT"
      <> help "DAP server port" )
-  <*> verbosityParser (Verbosity Debug)
+  <*> verbosityParser Debug
 
 -- | Parser for 'HdbCLI' options
 cliParser :: Parser HdbOptions
@@ -51,7 +51,7 @@ cliParser = HdbCLI
      <> metavar "GHC_ARGS"
      <> value []
      <> help "Additional flags to pass to the ghc invocation that loads the program for debugging" )
-  <*> verbosityParser (Verbosity Warning)
+  <*> verbosityParser Warning
 
 -- | Parser for 'HdbProxy' options
 proxyParser :: Parser HdbOptions
@@ -61,7 +61,7 @@ proxyParser = HdbProxy
      <> short 'p'
      <> metavar "PORT"
      <> help "proxy port to which the debugger connects" )
-  <*> verbosityParser (Verbosity Warning)
+  <*> verbosityParser Warning
 
 -- | Parser for @hdb external-interpreter <write-fd> <read-fd>@
 -- See Note [Custom external interpreter]
@@ -101,7 +101,7 @@ versioner = simpleVersioner $ "Haskell Debugger, version " ++ showVersion P.vers
 -- The default verbosity differs by mode (#86):
 -- - DAP server mode: DEBUG
 -- - CLI mode: WARNING
-verbosityParser :: Verbosity -> Parser Verbosity
+verbosityParser :: Severity -> Parser Severity
 verbosityParser vdef = option verb
     ( long "verbosity"
    <> short 'v'
@@ -110,7 +110,7 @@ verbosityParser vdef = option verb
    <> help "Logger verbosity in [0..3] interval, where 0 is silent and 3 is debug"
     )
   where
-    verb = Verbosity <$> (verbNum =<< auto)
+    verb = verbNum =<< auto
     verbNum n = case n :: Int of
       0 -> pure Error
       1 -> pure Warning

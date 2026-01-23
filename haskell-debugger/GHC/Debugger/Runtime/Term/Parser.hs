@@ -16,14 +16,13 @@ import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as Interp
 import GHC.Types.Name (nameOccName)
 import GHC.Types.Name.Occurrence (occNameString)
-import qualified GHC.Debugger.Logger as Logger
+import qualified Colog.Core as Logger
 import GHC.Utils.Outputable (text, (<+>), ppr)
 import Control.Monad.Reader
 import GHC.Core.TyCo.Compare
 import GHC.Stack
 
 import GHC.Debugger.Monad
-import GHC.Debugger.Utils (expectRight)
 
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import qualified GHC.Debugger.Runtime.Compile as Comp

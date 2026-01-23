@@ -34,7 +34,7 @@ import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
 import GHC.Debugger.Utils
-import qualified GHC.Debugger.Logger as Logger
+import qualified Colog.Core as Logger
 import qualified GHC.Stack.Types as Stack
 
 {-

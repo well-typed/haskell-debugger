@@ -12,15 +12,14 @@ import GHC.Debugger.Stopped
 import GHC.Debugger.Stopped.Exception (getExceptionInfo)
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
-import GHC.Debugger.Logger
 
 --------------------------------------------------------------------------------
 -- * Executing commands
 --------------------------------------------------------------------------------
 
 -- | Execute the given debugger command in the current 'Debugger' session
-execute :: Recorder (WithSeverity DebuggerLog) -> Command -> Debugger Response
-execute recorder = \case
+execute :: Command -> Debugger Response
+execute = \case
   ClearFunctionBreakpoints -> DidClearBreakpoints <$ clearBreakpoints Nothing
   ClearModBreakpoints fp -> DidClearBreakpoints <$ clearBreakpoints (Just fp)
   SetBreakpoint{brk, hitCount, condition} ->
@@ -37,14 +36,7 @@ execute recorder = \case
   DoSingleStep -> DidStep <$> doSingleStep
   DoStepOut -> DidStep <$> doStepOut
   DoStepLocal -> DidStep <$> doLocalStep
-  DebugExecution { entryPoint, entryFile, runArgs } -> DidExec <$> debugExecution (cmapWithSev EvalLog recorder) entryFile entryPoint runArgs
+  DebugExecution { entryPoint, entryFile, runArgs } -> DidExec <$> debugExecution entryFile entryPoint runArgs
   TerminateProcess -> liftIO $ do
     -- Terminate!
     exitWith ExitSuccess
-
-data DebuggerLog
-  = EvalLog EvalLog
-
-instance Pretty DebuggerLog where
-  pretty = \ case
-    EvalLog msg -> pretty msg

@@ -32,12 +32,15 @@ import Data.Aeson as Aeson
 import GHC.Generics
 import System.Directory
 import System.FilePath
+import Data.Functor.Contravariant
 
 import Development.Debug.Adapter
 import Development.Debug.Adapter.Exit
-import GHC.Debugger.Logger as Logger
+import Colog.Core as Logger
 import qualified Development.Debug.Adapter.Output as Output
 
+import GHC.Utils.Logger (defaultLogActionHPrintDoc)
+import GHC.Debugger.Utils (forwardHandleToLogger)
 import qualified GHC.Debugger as Debugger
 import qualified GHC.Debugger.Monad as Debugger
 import qualified GHC.Debugger.Interface.Messages as D (Command, Response)
@@ -46,21 +49,6 @@ import GHC.Debugger.Interface.Messages hiding (Command, Response)
 import DAP
 import Development.Debug.Adapter.Handles
 import Development.Debug.Session.Setup
-
---------------------------------------------------------------------------------
--- * Logging
---------------------------------------------------------------------------------
-
-data InitLog
-  = DebuggerLog Debugger.DebuggerLog
-  | DebuggerMonadLog Debugger.DebuggerMonadLog
-  | FlagsLog FlagsLog
-
-instance Pretty InitLog where
-  pretty = \ case
-    DebuggerLog msg -> pretty msg
-    DebuggerMonadLog msg -> pretty msg
-    FlagsLog msg -> pretty msg
 
 --------------------------------------------------------------------------------
 -- * Client
@@ -86,8 +74,17 @@ data LaunchArgs
     deriving anyclass FromJSON
 
 --------------------------------------------------------------------------------
+-- * Logging
+--------------------------------------------------------------------------------
+
+data DAPLog
+  = DAPSessionSetupLog (WithSeverity SessionSetupLog)
+  | DAPDebuggerLog Debugger.DebuggerLog
+
+--------------------------------------------------------------------------------
 -- * Launch Debugger
 --------------------------------------------------------------------------------
+
 
 -- | Exception type for when hie-bios initialization fails
 newtype InitFailed = InitFailed String deriving Show
@@ -95,7 +92,7 @@ newtype InitFailed = InitFailed String deriving Show
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
-initDebugger :: Recorder (WithSeverity InitLog) -> Bool -> LaunchArgs -> ExceptT InitFailed DebugAdaptor ()
+initDebugger :: LogAction IO DAPLog -> Bool -> LaunchArgs -> ExceptT InitFailed DebugAdaptor ()
 initDebugger l supportsRunInTerminal
                LaunchArgs{ __sessionId
                          , projectRoot = givenRoot
@@ -116,7 +113,7 @@ initDebugger l supportsRunInTerminal
 
   projectRoot <- maybe (liftIO getCurrentDirectory) pure givenRoot
 
-  let hieBiosLogger = cmapWithSev FlagsLog l
+  let hieBiosLogger = contramap DAPSessionSetupLog l
   liftIO (runExceptT (hieBiosSetup hieBiosLogger projectRoot entryFile)) >>= \case
     Left e              -> throwError $ InitFailed e
     Right (Left e)      -> lift       $ exitWithMsg e
@@ -130,25 +127,30 @@ initDebugger l supportsRunInTerminal
             , supportsANSIHyperlinks = False -- VSCode does not support this
             }
 
-      -- Create pipes to read/write the debugger (not debuggee's) output.
-      -- The write end is given to `runDebugger` and the read end is continuously
-      -- read from until we read an EOF.
-      (readDebuggerOutput, writeDebuggerOutput) <- liftIO P.createPipe
+      -- Create a pipe to which messages to send to the DAP console are written and read.
+      -- todo: This could just be a Haskell channel now...
+      (readDAPOutput, writeDAPOutput) <- liftIO P.createPipe
       liftIO $ do
-        hSetBuffering readDebuggerOutput LineBuffering
-        hSetBuffering writeDebuggerOutput NoBuffering
+        hSetBuffering readDAPOutput LineBuffering
+        hSetBuffering writeDAPOutput NoBuffering
         -- GHC output uses utf8
-        hSetEncoding readDebuggerOutput utf8
-        hSetEncoding writeDebuggerOutput utf8
+        hSetEncoding readDAPOutput utf8
+        hSetEncoding writeDAPOutput utf8
         setLocaleEncoding utf8
 
       finished_init <- liftIO $ newEmptyMVar
 
+      dbgLog <- liftIO $
+        createDebuggerLogger l writeDAPOutput (supportsRunInTerminal, syncProxyOut, syncProxyErr)
+
       let absEntryFile = normalise $ projectRoot </> entryFile
       lift $ registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{entryFile=absEntryFile,..}
-        [ debuggerThread l finished_init writeDebuggerOutput projectRoot flags
+        [ debuggerThread dbgLog finished_init projectRoot flags
             extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
-        , handleDebuggerOutput readDebuggerOutput
+
+        , \withAdaptor -> forwardHandleToLogger readDAPOutput $
+            LogAction (\msg -> withAdaptor (Output.neutral msg))
+
         , stdinForwardThread  supportsRunInTerminal syncProxyIn
         , stdoutCaptureThread supportsRunInTerminal syncProxyOut
         , stderrCaptureThread supportsRunInTerminal syncProxyErr
@@ -162,7 +164,7 @@ initDebugger l supportsRunInTerminal
           -- This can happen if compilation fails and the compiler exits cleanly.
           --
           -- Instead of signalInitialized, respond with error and exit.
-          lift $ exitCleanupWithMsg readDebuggerOutput e
+          lift $ exitCleanupWithMsg readDAPOutput e
 
 -- | This thread captures stdout from the debuggee and sends it to the client.
 -- NOTE, redirecting the stdout handle is a process-global operation. So this thread
@@ -239,9 +241,8 @@ stdinForwardThread runInTerminal syncIn _withAdaptor = do
 --    This sets the global CWD for this process, disallowing multiple sessions
 --    at the same, but that's OK because we currently only support
 --    single-session mode. Each new session gets a new debugger process.
-debuggerThread :: Recorder (WithSeverity InitLog)
+debuggerThread :: LogAction IO Debugger.DebuggerLog
                -> MVar (Either String ()) -- ^ To signal when initialization is complete.
-               -> Handle          -- ^ The write end of a handle for debug compiler output
                -> FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
                -> [String]        -- ^ Extra ghc args
@@ -252,7 +253,7 @@ debuggerThread :: Recorder (WithSeverity InitLog)
                -> (DebugAdaptorCont () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
+debuggerThread l finished_init workDir HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
 
   -- See Notes (CWD) above
   setCurrentDirectory workDir
@@ -266,20 +267,14 @@ debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{.
 
   catches
     (do
-      -- The logger should log things starting from Info to the debugger output
-      -- handle as well, so the user sees it in the Console.
-      debugAdapterLogger <- handleLogger writeDebuggerOutput
-      let final_logger = cmapWithSev DebuggerMonadLog recorder <>
-                         applyVerbosity (Verbosity Logger.Info)
-                          (cmap renderPrettyWithSeverity (fromCologAction debugAdapterLogger))
-      Debugger.runDebugger final_logger writeDebuggerOutput rootDir componentDir libdir units ghcInvocation extraGhcArgs mainFp runConf $ do
+      Debugger.runDebugger l rootDir componentDir libdir units ghcInvocation extraGhcArgs mainFp runConf $ do
         liftIO $ do
           tid <- myThreadId
           labelThread tid "Main Debugger Thread"
         liftIO $ signalInitialized (Right ())
         forever $ do
           req <- takeMVar requests & liftIO
-          resp <- (Debugger.execute (cmapWithSev DebuggerLog recorder) req <&> Right)
+          resp <- (Debugger.execute req <&> Right)
                     `catch` \(e :: SomeException) ->
                         pure (Left (displayExceptionWithContext e))
           either bad reply resp
@@ -298,19 +293,51 @@ debuggerThread recorder finished_init writeDebuggerOutput workDir HieBiosFlags{.
       hPutStrLn stderr m
       putMVar replies (Aborted ("Aborted debugger thread: " ++ m))
 
--- | Reads from the read end of the handle to which the debugger writes compiler messages.
--- Writes the compiler messages to the client console
-handleDebuggerOutput :: Handle
-                     -> (DebugAdaptorCont () -> IO ())
-                     -> IO ()
-handleDebuggerOutput readDebuggerOutput withAdaptor = do
+--------------------------------------------------------------------------------
+-- * Logging
+--------------------------------------------------------------------------------
+{-
+Note [Debugger, debuggee, and DAP logs]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Specification for the logger given to `Debugger`:
 
-  -- Mask exceptions to avoid being killed between reading a line and outputting it.
-  (forever $ mask_ $ do
-    line <- T.hGetLine readDebuggerOutput
-    withAdaptor $ Output.neutral line
-    ) `catch` -- handles read EOF
-        \(_e::SomeException) ->
-          -- Cleanly exit when readDebuggerOutput is closed or thread is killed.
-          return ()
+1. All -v3 DebuggerLog and GHCLog messages go to the normal stdout/stderr (this shows up in
+  the OUTPUT console in VSCode, without having to send special messages)
 
+2. All -v1 DebuggerLog, GHCLog, and all LogDebuggeeOut and LogDebuggeeErr output
+  goes to the DAP console (this is DEBUG CONSOLE in VSCode)
+
+3. All LogDebuggeeOut and LogDebuggeeErr output are forwarded to the proxy if
+  the proxy is enabled.
+-}
+
+-- See Note [Debugger, debuggee, and DAP logs]
+createDebuggerLogger
+  :: LogAction IO DAPLog
+  -> Handle -- ^ Handle to write to DAP output
+  -> (Bool, Chan BS.ByteString, Chan BS.ByteString) -- ^ Proxy channels, and whether is supported
+  -> IO (LogAction IO Debugger.DebuggerLog)
+createDebuggerLogger l writeDAPOutput (supportsRunInTerminal, syncProxyOut, syncProxyErr) = do
+  dapLogger <- handleLogger writeDAPOutput
+  return $
+    -- (1) (all output is logged to normal logger)
+    contramap DAPDebuggerLog l <>
+    -- (2) and (3) (log relevant output to DAP handle)
+      LogAction (\case
+        Debugger.DebuggerLog sev msg
+          | sev >= Info -> do
+            dapLogger <& T.pack (show msg)
+        Debugger.GHCLog logflags sdoc ->
+          defaultLogActionHPrintDoc logflags False writeDAPOutput sdoc
+        Debugger.LogDebuggeeOut txt -> debuggeeOut dapLogger syncProxyOut txt
+        Debugger.LogDebuggeeErr txt -> debuggeeOut dapLogger syncProxyErr txt
+        _ -> pure () -- don't log other messages, already logged to (1)
+        )
+  where
+    debuggeeOut l' proxyChan txt = do
+      -- (2)
+      l' <& txt
+      -- (3)
+      when supportsRunInTerminal $
+        writeChan proxyChan $
+          T.encodeUtf8 (txt <> "\n")

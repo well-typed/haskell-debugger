@@ -11,23 +11,24 @@
 
 module GHC.Debugger.Monad where
 
-#if __GLASGOW_HASKELL__ >= 916
 import System.Environment
-#endif
 import System.Process
+import Control.Concurrent
+import Control.Exception
 import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.Function
+import Data.Functor.Contravariant
 import Data.IORef
 import Data.Maybe
 import Data.Version (makeVersion, showVersion)
 import Prelude hiding (mod)
-import System.IO
 #ifdef MIN_VERSION_unix
 import System.Posix.Signals
 #endif
+import Data.Text (Text)
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
 
@@ -57,17 +58,19 @@ import GHC.Unit.Module.Graph
 import GHC.Unit.State
 import GHC.Unit.Module.ModSummary as GHC
 import GHC.Unit.Types
-import GHC.Utils.Logger as GHC
+import qualified GHC.Utils.Logger as GHC
 import GHC.Utils.Outputable as GHC
 import qualified GHC.LanguageExtensions as LangExt
 
 import GHC.Debugger.Interface.Messages
-import GHC.Debugger.Logger as Logger
 import GHC.Debugger.Session
 import GHC.Debugger.Session.Builtin
 import GHC.Debugger.Runtime.Compile.Cache
+import GHC.Debugger.Utils
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import qualified GHC.Debugger.Runtime.Thread.Map as TM
+
+import Colog.Core as Logger
 
 import {-# SOURCE #-} GHC.Debugger.Runtime.Instances.Discover (RuntimeInstancesCache, emptyRuntimeInstancesCache)
 
@@ -113,8 +116,16 @@ data DebuggerState = DebuggerState
       --
       -- If the user explicitly disabled custom views, use @Nothing@.
 
-      , dbgLogger :: Recorder (WithSeverity DebuggerMonadLog)
+      , dbgLogger :: LogAction Debugger DebuggerLog
+      -- ^ See Note [Logging in the debugger]
       }
+
+instance GHC.HasLogger Debugger where
+  getLogger = liftGhc GHC.getLogger
+
+instance GHC.GhcMonad Debugger where
+  getSession = liftGhc GHC.getSession
+  setSession s = liftGhc $ GHC.setSession s
 
 -- | Enabling/Disabling a breakpoint
 data BreakpointStatus
@@ -147,8 +158,7 @@ data RunDebuggerSettings = RunDebuggerSettings
       }
 
 -- | Run a 'Debugger' action on a session constructed from a given GHC invocation.
-runDebugger :: Recorder (WithSeverity DebuggerMonadLog)
-            -> Handle     -- ^ The handle to which GHC's output is logged. The debuggee output is not affected by this parameter.
+runDebugger :: LogAction IO DebuggerLog
             -> FilePath   -- ^ Cradle root directory
             -> FilePath   -- ^ Component root directory
             -> FilePath   -- ^ The libdir (given with -B as an arg)
@@ -159,10 +169,10 @@ runDebugger :: Recorder (WithSeverity DebuggerMonadLog)
             -> RunDebuggerSettings -- ^ Other debugger run settings
             -> Debugger a -- ^ 'Debugger' action to run on the session constructed from this invocation
             -> IO a
-runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp conf (Debugger action) = do
-#if __GLASGOW_HASKELL__ >= 916
+runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp conf (Debugger action) = do
+  let ghcLog = liftLogIO l :: LogAction Ghc DebuggerLog
+  let dbgLog = liftLogIO l :: LogAction Debugger DebuggerLog
   thisProg <- getExecutablePath
-#endif
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
   GHC.runGhc (Just libdir) $ do
 #ifdef MIN_VERSION_unix
@@ -190,7 +200,6 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
           -- Enable the external interpreter by default! See #169
           -- And use the custom-for-debugger external interpreter
           `GHC.gopt_set` GHC.Opt_ExternalInterpreter
-#if __GLASGOW_HASKELL__ >= 916
           -- See Note [Custom external interpreter]
           -- Ext interp is the same program as this, with "--external-interpreter"
           & setPgmI thisProg
@@ -198,14 +207,13 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
           -- descriptors. since there's no way to do that yet, we just have
           -- some logic in main to detect [writefd, readfd, --external-interpreter]
           & addOptI "--external-interpreter"
-#endif
 
           & setBytecodeBackend
           & enableByteCodeGeneration
 
     GHC.modifyLogger $
       -- Override the logger to output to the given handle
-      GHC.pushLogHook $ const $ debuggerLoggerAction dbg_out
+      GHC.pushLogHook $ const $ ghcLogAction l
 
     dflags2 <- getLogger >>= \logger -> do
       -- Set the extra GHC arguments for ALL units by setting them early in
@@ -219,24 +227,36 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
         <- parseDynamicFlags logger dflags1 (map noLoc extraGhcArgs)
       liftIO $ printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
       forM_ fileish_args $ \fish_arg -> liftIO $ do
-        logMsg logger MCOutput noSrcSpan $ text "Ignoring extraGhcArg which isn't a recognized flag:" <+> text (unLoc fish_arg)
+        GHC.logMsg logger MCOutput noSrcSpan $ text "Ignoring extraGhcArg which isn't a recognized flag:" <+> text (unLoc fish_arg)
         printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
       return dflags2
 
     -- Make sure to override the function which creates the external
     -- interpreter, because we need to keep track of the standard handles
+    iserv_handles <- liftIO newEmptyMVar
     modifySession $ \h -> h
       { hsc_hooks = (hsc_hooks h)
           { createIservProcessHook = Just $ \cp -> do
-              (_,_,_, ph) <-
-                createProcess cp { std_in  = Inherit
-                                 , std_out = Inherit
-                                 , std_err = Inherit }
+              (Just i, Just o, Just e, ph) <-
+                createProcess cp { std_in  = CreatePipe
+                                 , std_out = CreatePipe
+                                 , std_err = CreatePipe }
+              putMVar iserv_handles (i, o, e)
               return ph
           }
       }
 
-    -- Set the session dynflags now to initialise the hsc_interp.
+    when (GHC.gopt GHC.Opt_ExternalInterpreter dflags2) $ liftIO $ void $ do
+      -- The external interpreter is spawned lazily, so we block waiting for
+      -- the handles to be available in a new thread.
+      forkIO $ do
+        -- Forward external interpreter output to logger
+        (serv_in, serv_out, serv_err) <- takeMVar iserv_handles
+        forwardHandleToLogger serv_out (contramap LogDebuggeeOut l)
+        forwardHandleToLogger serv_err (contramap LogDebuggeeErr l)
+        -- TODO: serv_in
+
+    -- Initializes interpreter!
     _ <- GHC.setSessionDynFlags dflags2
 
     -- Initialise plugins here because the plugin author might already expect this
@@ -272,7 +292,8 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
           >>= \case
             Failed -> do
               -- Failed to load base debugger-view module!
-              logWith l Debug $ LogFailedToCompileDebugViewModule debuggerViewClassModName
+              ghcLog <& DebuggerLog Logger.Debug
+                (LogFailedToCompileDebugViewModule debuggerViewClassModName)
               return []
             Succeeded -> (debuggerViewClassModName:) . concat <$> do
 
@@ -288,12 +309,14 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
                           _ -> False) . GHC.targetId)
                       modName modContent >>= \case
                     Failed -> do
-                      logWith l Info $ LogFailedToCompileDebugViewModule modName
+                      ghcLog <& DebuggerLog Logger.Info
+                        (LogFailedToCompileDebugViewModule modName)
                       return []
                     Succeeded -> do
                       return [modName]
                 else do
-                  logWith l Debug $ LogSkippingViewModuleNoPkg modName pkgName (map unitIdString base_dep_uids)
+                  ghcLog <& DebuggerLog Logger.Debug
+                    (LogSkippingViewModuleNoPkg modName pkgName (map unitIdString base_dep_uids))
                   return []
 
       Just uid ->
@@ -339,7 +362,7 @@ runDebugger l dbg_out rootDir compDir libdir units ghcInvocation' extraGhcArgs m
         dbgViewImps ++
         map (GHC.IIModule . GHC.ms_mod) mss)
 
-    runReaderT action =<< initialDebuggerState l (if loadedBuiltinModNames == [] then Nothing else Just hdv_uid)
+    runReaderT action =<< initialDebuggerState dbgLog (if loadedBuiltinModNames == [] then Nothing else Just hdv_uid)
 
 {-
 Note [Custom external interpreter]
@@ -375,6 +398,9 @@ Here's a table showcasing this:
 9.14 |              NO |               YES |
 9.16 |             YES | Requires prof hdb |
 -----+-----------------+-------------------+
+
+Note: The custom external interpreter will have to be compiled using -fkeep-cafs.
+Will that require us to compile it as a separate executable, or can we compile the entire `hdb` with -fkeep-cafs?
 -}
 --------------------------------------------------------------------------------
 
@@ -411,7 +437,7 @@ doLoad if_cache how_much mg = do
 -- | Returns @Just modName@ if the given module was successfully loaded
 tryLoadHsDebuggerViewModule
   :: GhcMonad m
-  => Recorder (WithSeverity DebuggerMonadLog)
+  => LogAction IO DebuggerLog
   -> Maybe ModIfaceCache
   -> (GHC.Target -> Bool)
   -- ^ Predicate to determine which of the existing
@@ -429,9 +455,9 @@ tryLoadHsDebuggerViewModule l if_cache keepTarget modName modContents = do
   -- modules we're trying to load and compile.
   restore_logger <- GHC.getLogger
   GHC.modifyLogger $
-    -- Emit it all as Debug-level logs
+    -- Emit it all as Debug-level debugger logs
     GHC.pushLogHook $ const $ \_ _ _ sdoc ->
-      logWith l Logger.Debug $ LogSDoc dflags sdoc
+      l <& DebuggerLog Logger.Debug (LogSDoc dflags sdoc)
 
   -- Make the target
   dvcT <- liftIO $ makeInMemoryHsDebuggerViewTarget modName modContents
@@ -448,7 +474,7 @@ tryLoadHsDebuggerViewModule l if_cache keepTarget modName modContents = do
 
   -- Restore logger
   GHC.modifyLogger $
-    GHC.pushLogHook (const $ putLogMsg restore_logger)
+    GHC.pushLogHook (const $ GHC.putLogMsg restore_logger)
 
 
   return result
@@ -509,7 +535,7 @@ findHsDebuggerViewUnitId mod_graph = do
 --------------------------------------------------------------------------------
 
 -- | Initialize a 'DebuggerState'
-initialDebuggerState :: Recorder (WithSeverity DebuggerMonadLog) -> Maybe UnitId -> GHC.Ghc DebuggerState
+initialDebuggerState :: LogAction Debugger DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
 initialDebuggerState l hsDbgViewUid =
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
@@ -521,8 +547,6 @@ initialDebuggerState l hsDbgViewUid =
 -- | Lift a 'Ghc' action into a 'Debugger' one.
 liftGhc :: GHC.Ghc a -> Debugger a
 liftGhc = Debugger . ReaderT . const
-
---------------------------------------------------------------------------------
 
 data DebuggerFailedToLoad = DebuggerFailedToLoad
 instance Exception DebuggerFailedToLoad
@@ -538,6 +562,14 @@ instance Show UnsupportedHsDbgViewVersion where
   show (UnsupportedHsDbgViewVersion supported actual) =
     "Cannot use unsupported haskell-debugger-view version found in the transitive closure: " ++ showVersion actual ++
     " (supported: " ++ L.intercalate ", " (map showVersion supported) ++ ")"
+
+expectRight :: Exception e => Either e a -> Debugger a
+expectRight s = case s of
+  Left e -> do
+    logSDoc Logger.Error (text $ displayException e)
+    liftIO $ throwIO e
+  Right a -> do
+    pure a
 
 --------------------------------------------------------------------------------
 -- * Modules
@@ -593,51 +625,40 @@ deepseqTerm hsc_env t = case t of
   _              -> do seqTerm hsc_env t
 
 --------------------------------------------------------------------------------
--- * Instances
---------------------------------------------------------------------------------
-
-instance GHC.HasLogger Debugger where
-  getLogger = liftGhc GHC.getLogger
-
-instance GHC.GhcMonad Debugger where
-  getSession = liftGhc GHC.getSession
-  setSession s = liftGhc $ GHC.setSession s
-
---------------------------------------------------------------------------------
 -- * Logging
 --------------------------------------------------------------------------------
 
--- | The logger action used to log GHC output
-debuggerLoggerAction :: Handle -> GHC.LogAction
-debuggerLoggerAction h a b c d = do
-  hSetEncoding h utf8 -- GHC output uses utf8
-  -- potentially use the `Recorder` here?
-  defaultLogActionWithHandles h h a b c d
+-- | A debugger log. May include debuggee ouput.
+data DebuggerLog
+  = DebuggerLog !Logger.Severity !DebuggerMessage
+  | GHCLog !GHC.LogFlags !SDoc
+  | LogDebuggeeOut !Text
+  | LogDebuggeeErr !Text
 
-data DebuggerMonadLog
-  = LogFailedToCompileDebugViewModule GHC.ModuleName
-  | LogSkippingViewModuleNoPkg GHC.ModuleName String [String]
-  | LogSDoc DynFlags SDoc
+-- | A debugger log message
+data DebuggerMessage
+  = LogSDoc !DynFlags !SDoc
+  | LogFailedToCompileDebugViewModule !GHC.ModuleName
+  | LogSkippingViewModuleNoPkg !GHC.ModuleName String [String]
 
-instance Pretty DebuggerMonadLog where
-  pretty = \ case
+instance Show DebuggerMessage where
+  show = \ case
     LogFailedToCompileDebugViewModule mn ->
-      pretty $ "Failed to compile built-in " ++ moduleNameString mn ++ " module! Ignoring these custom debug views."
+      "Failed to compile built-in " ++ moduleNameString mn ++ " module! Ignoring these custom debug views."
     LogSkippingViewModuleNoPkg mn pkg uids ->
-      pretty $ "Skipping compilation of built-in " ++ moduleNameString mn ++ " module because package "
-                ++ show pkg ++ " wasn't found in dependencies " ++ show uids
-    LogSDoc dflags doc ->
-      pretty $ showSDoc dflags doc
+      "Skipping compilation of built-in " ++ moduleNameString mn ++ " module because package "
+          ++ show pkg ++ " wasn't found in dependencies " ++ show uids
+    LogSDoc dflags doc -> showSDoc dflags doc
 
 logSDoc :: Logger.Severity -> SDoc -> Debugger ()
 logSDoc sev doc = do
   dflags <- getDynFlags
   l <- asks dbgLogger
-  logWith l sev (LogSDoc dflags doc)
+  l <& DebuggerLog sev (LogSDoc dflags doc)
 
-logAction :: Recorder (WithSeverity DebuggerMonadLog) -> DynFlags -> GHC.LogAction
-logAction l dflags = \_ msg_class _ sdoc -> do
-    logWith l (msgClassSeverity msg_class) $ LogSDoc dflags sdoc
+ghcLogAction :: LogAction IO DebuggerLog -> GHC.LogAction
+ghcLogAction l = \logflags _ _ sdoc -> do
+    liftLogIO l <& GHCLog logflags sdoc
 
 msgClassSeverity :: MessageClass -> Logger.Severity
 msgClassSeverity = \case
@@ -646,10 +667,6 @@ msgClassSeverity = \case
   MCInteractive -> Info
   MCDump -> Debug
   MCInfo -> Info
-  MCDiagnostic sev _ _ -> ghcSevSeverity sev
-
-ghcSevSeverity :: GHC.Severity -> Logger.Severity
-ghcSevSeverity = \case
-  SevIgnore -> Debug -- ?
-  SevWarning -> Logger.Warning
-  SevError -> Logger.Error
+  MCDiagnostic SevIgnore _ _ -> Debug -- ?
+  MCDiagnostic SevWarning _ _ -> Logger.Warning
+  MCDiagnostic SevError _ _ -> Logger.Error
