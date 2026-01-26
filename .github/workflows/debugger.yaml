@@ -154,19 +154,42 @@ jobs:
         with:
           submodules: recursive
 
-      # Cabal store cache (main speed-up)
-      - uses: actions/cache@v3
-        with:
-          path: ~/.cabal/store
-          key: ${{ runner.os }}-ghc-${{ matrix.version }}-cabal-${{ hashFiles('**/*.cabal', 'cabal.project*') }}
-          restore-keys: |
-            ${{ runner.os }}-ghc-${{ matrix.version }}-cabal-
-
       - uses: haskell-actions/setup@v2
+        id: setup
         with:
           ghc-version: ${{ matrix.version }}
           cabal-version: 3.14
           ghcup-release-channel: ${{ matrix.channel }}
+
+      - name: Configure the build
+        run: |
+          cabal configure --enable-tests --enable-benchmarks --disable-documentation
+          cabal build all --dry-run
+        # The last step generates dist-newstyle/cache/plan.json for the cache key.
+
+      - name: Restore cached dependencies
+        uses: actions/cache/restore@v4
+        id: cache
+        env:
+          key: ${{ runner.os }}-ghc-${{ steps.setup.outputs.ghc-version }}-cabal-${{ steps.setup.outputs.cabal-version }}
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: ${{ env.key }}-plan-${{ hashFiles('**/plan.json') }}
+          restore-keys: ${{ env.key }}-
+          
+      - name: Install dependencies
+        # If we had an exact cache hit, the dependencies will be up to date.
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cabal build all --only-dependencies
+        
+      # Cache dependencies already here, so that we do not have to rebuild them should the subsequent steps fail.
+      - name: Save cached dependencies
+        uses: actions/cache/save@v4
+        # If we had an exact cache hit, trying to save the cache would error because of key clash.
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Build and Run Haskell tests
         shell: bash
