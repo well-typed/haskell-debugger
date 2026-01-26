@@ -75,7 +75,6 @@ jobs:
           name: Haskell Debugger Docs
           path: ${{ runner.temp }}/docs/
 
-      # Publish VSCode extension to marketplace
       - name: Publish to Visual Studio Marketplace
         uses: HaaLeo/publish-vscode-extension@v2
         with:
@@ -83,7 +82,13 @@ jobs:
           registryUrl: https://marketplace.visualstudio.com
           extensionFile: ${{ runner.temp }}/extension/haskell-debugger-extension-0.11.0.vsix
 
-      # Publish a new hackage release of the haskell-debugger
+      - name: Publish to Open VSX Registry
+        uses: HaaLeo/publish-vscode-extension@v2
+        with:
+          pat: ${{ secrets.OPEN_VSX_TOKEN }}
+          registryUrl: https://open-vsx.org
+          extensionFile: ${{ runner.temp }}/extension/haskell-debugger-extension-0.11.0.vsix
+
       - name: Hackage Release
         uses: haskell-actions/hackage-publish@v1
         with:
