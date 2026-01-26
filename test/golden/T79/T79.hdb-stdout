@@ -8,7 +8,7 @@
 [Info] You may want to edit the .cabal file and add a Description field.
 
 [1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
-[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>-tmp]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/app/Main.hs, interpreted )[T79-tmp-0.1.0.0-inplace-T79-tmp]
 (hdb) Hello, Haskell!
 ()
 (hdb) 

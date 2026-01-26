@@ -1,4 +1,4 @@
-cd $(mktemp -d) && cabal init -m -n -d base -p T79-tmp && hdb app/Main.hs <<'EOF'
+cabal init -m -n -d base -p T79-tmp && hdb app/Main.hs <<'EOF'
 run
 exit
 EOF

@@ -40,7 +40,7 @@ unitTests =
   ]
 
 -- | Receives as an argument the path to the @*.hdb-test@ which contains the
--- shell invocation for running 
+-- shell invocation for running
 mkGoldenTest :: Bool -> FilePath -> IO TestTree
 mkGoldenTest keepTmpDirs path = do
   let testName   = takeBaseName     path
@@ -56,7 +56,7 @@ mkGoldenTest keepTmpDirs path = do
         P.waitForProcess p >>= \case
           ExitSuccess   -> LBS.hGetContents hout
           ExitFailure c -> error $ "Test script in " ++ test_dir ++ " failed with exit code: " ++ show c
-        
+
 --------------------------------------------------------------------------------
 -- Tasty Golden Advanced wrapper
 --------------------------------------------------------------------------------
@@ -79,11 +79,19 @@ goldenVsStringComparing name ref act = do
   where
   upd = createDirectoriesAndWriteFile ref . LT.encodeUtf8
 
+  escapePathSeparators c =
+    if isPathSeparator c
+      then "\\" ++ [c]
+      else [c]
+
+  escapeRegex :: String -> String
+  escapeRegex = concatMap escapePathSeparators
+
   -- Normalise the action producing the output
   normalisingAct = do
     tmpDir <- getCanonicalTemporaryDirectory
     replaceREs <- traverse (uncurry compileSearchReplace)
-      [ ( tmpDir ++ ".*" ++ takeBaseName (takeDirectory ref) {- the folder in which the test is run, inside the canonical temp dir-}
+      [ ( escapeRegex $ tmpDir </> "[^/\\]+" </> takeBaseName (takeDirectory ref) {- the folder in which the test is run, inside the canonical temp dir-}
         , "<TEMPORARY-DIRECTORY>" )
       , ( "Using cabal specification: .*"
         , "Using cabal specification: <VERSION>" )
@@ -127,4 +135,3 @@ goldenVsStringComparing name ref act = do
             hClose yH
             (_exitCode, out, err) <- P.readProcessWithExitCode "diff" ["-u", xf, yf] ""
             return $ Just $ msg ++ "\nDiff output:\n" ++ out ++ err
-

@@ -1,4 +1,4 @@
-[1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>]
+[1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>/app/Main.hs, interpreted )[T130b-0.1.0.0-inplace-T130b]
 (hdb) MyType
 ()
 (hdb) Exiting...
