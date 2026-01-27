@@ -36,7 +36,7 @@ import Data.Functor.Contravariant
 
 import qualified GHCi.Server as GHCi
 
-import GHC.Utils.Logger (defaultLogActionHPrintDoc)
+import GHC.Utils.Logger (defaultLogActionWithHandles)
 import GHC.Debugger.Monad (DebuggerLog(..))
 import Development.Debug.Options (HdbOptions(..))
 import Development.Debug.Options.Parser (parseHdbOptions)
@@ -303,8 +303,8 @@ mainLogger threshold h = do
         | sev >= threshold ->
           cmapM renderWithTimestamp l <&
             (renderSeverity sev <> T.pack (show msg))
-      GHCLog logflags sdoc ->
-        defaultLogActionHPrintDoc logflags False h sdoc
+      GHCLog logflags msg_class srcSpan msg ->
+        defaultLogActionWithHandles h h logflags msg_class srcSpan msg
       LogDebuggeeOut out ->
         cmapM renderWithTimestamp l <& ("[DEBUGGEE STDOUT] " <> out)
       LogDebuggeeErr err ->

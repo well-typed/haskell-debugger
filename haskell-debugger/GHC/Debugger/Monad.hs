@@ -631,7 +631,7 @@ deepseqTerm hsc_env t = case t of
 -- | A debugger log. May include debuggee ouput.
 data DebuggerLog
   = DebuggerLog !Logger.Severity !DebuggerMessage
-  | GHCLog !GHC.LogFlags !SDoc
+  | GHCLog !GHC.LogFlags !MessageClass !SrcSpan !SDoc
   | LogDebuggeeOut !Text
   | LogDebuggeeErr !Text
 
@@ -657,8 +657,8 @@ logSDoc sev doc = do
   l <& DebuggerLog sev (LogSDoc dflags doc)
 
 ghcLogAction :: LogAction IO DebuggerLog -> GHC.LogAction
-ghcLogAction l = \logflags _ _ sdoc -> do
-    liftLogIO l <& GHCLog logflags sdoc
+ghcLogAction l = \logflags mclass srcSpan sdoc -> do
+    liftLogIO l <& GHCLog logflags mclass srcSpan sdoc
 
 msgClassSeverity :: MessageClass -> Logger.Severity
 msgClassSeverity = \case

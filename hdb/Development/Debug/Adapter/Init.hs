@@ -39,7 +39,7 @@ import Development.Debug.Adapter.Exit
 import Colog.Core as Logger
 import qualified Development.Debug.Adapter.Output as Output
 
-import GHC.Utils.Logger (defaultLogActionHPrintDoc)
+import GHC.Utils.Logger (defaultLogActionWithHandles)
 import GHC.Debugger.Utils (forwardHandleToLogger)
 import qualified GHC.Debugger as Debugger
 import qualified GHC.Debugger.Monad as Debugger
@@ -327,8 +327,8 @@ createDebuggerLogger l writeDAPOutput (supportsRunInTerminal, syncProxyOut, sync
         Debugger.DebuggerLog sev msg
           | sev >= Info -> do
             dapLogger <& T.pack (show msg)
-        Debugger.GHCLog logflags sdoc ->
-          defaultLogActionHPrintDoc logflags False writeDAPOutput sdoc
+        Debugger.GHCLog logflags msg_class srcSpan msg ->
+          defaultLogActionWithHandles writeDAPOutput writeDAPOutput logflags msg_class srcSpan msg
         Debugger.LogDebuggeeOut txt -> debuggeeOut dapLogger syncProxyOut txt
         Debugger.LogDebuggeeErr txt -> debuggeeOut dapLogger syncProxyErr txt
         _ -> pure () -- don't log other messages, already logged to (1)

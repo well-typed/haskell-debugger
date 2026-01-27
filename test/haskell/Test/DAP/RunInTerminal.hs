@@ -60,7 +60,8 @@ runInTerminal1 = do
               then return ()
               else do
                 _l <- hGetLine hout
-                -- putStrLn ("[server] " ++ l)
+                -- UNCOMMENT ME TO DEBUG
+                -- putStrLn ("[server] " ++ _l)
                 loop
       loop
 

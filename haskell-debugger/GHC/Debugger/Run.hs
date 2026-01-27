@@ -60,7 +60,7 @@ debugExecution entryFile entry args = do
     evalModule = mkModule (RealUnit (Definite unitIdOfEntryFile))
                                          (moduleName modOfEntryFile)
 
-  logSDoc Logger.Info $ "Eval Module Context:" <+> ppr evalModule
+  logSDoc Logger.Debug $ "Eval Module Context:" <+> ppr evalModule
   old_context <- GHC.getContext
   GHC.setContext [GHC.IIModule evalModule]
 
