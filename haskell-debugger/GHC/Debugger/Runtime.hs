@@ -2,11 +2,9 @@
 module GHC.Debugger.Runtime where
 
 import Control.Monad.Reader
-import qualified Data.List as L
 
 import GHC
 import GHC.Utils.Outputable
-import GHC.Types.FieldLabel
 import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 
@@ -27,12 +25,9 @@ obtainTerm key = do
      FromPath k pf -> do
        term <- obtainTerm k
        liftIO $ expandTerm hsc_env $ case term of
-         Term{dc=Right dc, subTerms} -> case pf of
+         Term{dc=Right _, subTerms} -> case pf of
            PositionalIndex ix -> subTerms !! (ix-1)
-           LabeledField fl    ->
-             case L.findIndex (== fl) (map flSelector $ dataConFieldLabels dc) of
-               Just ix -> subTerms !! ix
-               Nothing -> error "Couldn't find labeled field in dataConFieldLabels"
+           LabeledField n _ -> subTerms !! (n-1)
          NewtypeWrap{wrapped_term} ->
            wrapped_term -- regardless of PathFragment
          RefWrap{wrapped_term} ->
@@ -58,4 +53,3 @@ expandTerm hsc_env term = case term of
     return term{wrapped_term=wt'}
   Suspension{val, ty} -> cvObtainTerm hsc_env defaultDepth False ty val
   Prim{} -> return term
-

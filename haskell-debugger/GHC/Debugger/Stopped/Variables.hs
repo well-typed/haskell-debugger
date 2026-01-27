@@ -66,12 +66,14 @@ termVarFields top_key top_term = do
           -- Not a record type,
           -- Use indexed fields
           [] -> do
-            let keys = zipWith (\ix _ -> FromPath top_key (PositionalIndex ix)) [1..] (dataConOrigArgTys dc)
+            let keys = zipWith (\ix _ -> FromPath top_key (PositionalIndex ix)) [1..] (dataConRepArgTys dc)
             VarFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
           -- Is a record data con,
           -- Use field labels
           dataConFields -> do
-            let keys = map (FromPath top_key . LabeledField . flSelector) dataConFields
+            let mkPath ix Nothing = FromPath top_key (PositionalIndex ix)
+                mkPath ix (Just fld) = FromPath top_key (LabeledField ix (flSelector fld))
+                keys = zipWith mkPath [1..] ((Nothing <$ dataConOtherTheta dc) ++ (map Just dataConFields))
             VarFields <$> mapM (\k -> obtainTerm k >>= termToVarInfo k) keys
       NewtypeWrap{dc=Right dc, wrapped_term=_{- don't use directly! go through @obtainTerm@ -}} -> do
         case dataConFieldLabels dc of
@@ -80,7 +82,7 @@ termVarFields top_key top_term = do
             wvi <- obtainTerm key >>= termToVarInfo key
             return (VarFields [wvi])
           [fld] -> do
-            let key = FromPath top_key (LabeledField (flSelector fld))
+            let key = FromPath top_key (LabeledField 1 (flSelector fld))
             wvi <- obtainTerm key >>= termToVarInfo key
             return (VarFields [wvi])
           _ -> error "unexpected number of Newtype fields: larger than 1"

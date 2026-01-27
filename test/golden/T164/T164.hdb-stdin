@@ -1,0 +1,4 @@
+break Main.hs 42
+run
+variables
+exit
