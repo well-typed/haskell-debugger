@@ -266,13 +266,13 @@ getScopes threadId frameIx = do
 -- (b) ONLY the variable requested
 -- (c) The fields of the variable requested but NOT the original variable
 
--- | Get variables using a variable/variables reference
+-- | Get variables using a variable/variables reference.
 --
--- If the Variable Request ends up being case (VARR)(b), then we signal the
--- request forced the variable and return @Left varInfo@. Otherwise, @Right vis@.
+-- When the request forces a variable, return 'ForcedVariable'. Otherwise return
+-- the resulting variables/fields.
 --
 -- See Note [Variables Requests]
-getVariables :: RemoteThreadId -> Int{-stack frame index-} -> VariableReference -> Debugger (Either VarInfo [VarInfo])
+getVariables :: RemoteThreadId -> Int{-stack frame index-} -> VariableReference -> Debugger VariableResult
 getVariables threadId frameIx vk = do
   frames <- getStacktrace threadId
   let frame = frames !! frameIx
@@ -296,28 +296,28 @@ getVariables threadId frameIx vk = do
 
           vi <- termToVarInfo key term'
 
-          return (Left vi)
+          return (ForcedVariable vi)
 
         -- (VARR)(c)
-        _ -> Right <$> do
+        _ -> do
 
           -- Original Term was already something other than a Suspension;
           -- Meaning the @SpecificVariable@ request means to inspect the structure.
           -- Return ONLY the fields
 
           termVarFields key term >>= \case
-            VarFields vfs -> return vfs
+            VarFields vfs -> pure (VariableFields vfs)
 
     -- (VARR)(a) from here onwards
 
-    LocalVariables -> fmap Right $ do
+    LocalVariables -> fmap VariableFields $ do
       -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
       mapM tyThingToVarInfo =<< GHC.getBindings
 
     ModuleVariables
       | frameIx < length frames
       , Just ibi <- DbgStackFrame.breakId frame
-      -> Right <$> do
+      -> fmap VariableFields $ do
         curr_modl <- liftIO $ getBreakSourceMod ibi <$>
                       readIModBreaks (hsc_HUG hsc_env) ibi
         things <- typeEnvElts <$> getTopEnv curr_modl
@@ -329,7 +329,7 @@ getVariables threadId frameIx vk = do
     GlobalVariables
       | frameIx < length frames
       , Just ibi <- DbgStackFrame.breakId frame
-      -> Right <$> do
+      -> fmap VariableFields $ do
         curr_modl <- liftIO $ getBreakSourceMod ibi <$>
                       readIModBreaks (hsc_HUG hsc_env) ibi
         names <- map greName . globalRdrEnvElts <$> getTopImported curr_modl
@@ -349,12 +349,10 @@ getVariables threadId frameIx vk = do
               return vi{varName = nameStr}
           ) names
 
-    NoVariables -> Right <$> do
-      return []
+    NoVariables -> pure (VariableFields [])
 
     -- Couldn't find ibi or frame
-    _otherwise -> Right <$> do
-      return []
+    _otherwise -> pure (VariableFields [])
 
 --------------------------------------------------------------------------------
 -- Inspect

@@ -124,6 +124,22 @@ data VarInfo = VarInfo
       --  memory reference using ghc-debug.
       }
 
+-- | Result of requesting variables.
+--
+-- If the variable you requested is a thunk then `ForcedVariable` is returned, which
+-- is the variable you requested but forced.
+--
+-- If the variable you requested is not a thunk, then 'VariableFields` is returned which
+-- contains the subfields of the variable.
+data VariableResult
+  = ForcedVariable VarInfo
+  | VariableFields [VarInfo]
+
+variableResultToList :: VariableResult -> [VarInfo]
+variableResultToList = \case
+  ForcedVariable vi -> [vi]
+  VariableFields vis -> vis
+
 -- | What kind of breakpoint are we referring to, module or function breakpoints?
 -- Used e.g. in the 'ClearBreakpoints' request
 data BreakpointKind
@@ -212,7 +228,7 @@ data Response
   | GotThreads [DebuggeeThread]
   | GotStacktrace [DbgStackFrame]
   | GotScopes [ScopeInfo]
-  | GotVariables (Either VarInfo [VarInfo])
+  | GotVariables VariableResult
   | GotExceptionInfo ExceptionInfo
   | Aborted String
   | Initialised

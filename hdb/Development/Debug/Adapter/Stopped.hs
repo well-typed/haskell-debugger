@@ -132,7 +132,7 @@ commandVariables = do
     Just (VariablesIx six@(StackFrameIx threadId frameIx) varRef) -> do
       GotVariables vars <- sendSync (GetVariables threadId frameIx varRef)
       sendVariablesResponse . VariablesResponse =<<
-        mapM (varInfoToVariables six) (either (:[]) id vars)
+        mapM (varInfoToVariables six) (variableResultToList vars)
       case vars of
         -- If the reply indicates this was an "inspect lazy variable" request
         -- (because the requested variable was forced instead of returning an
@@ -143,12 +143,12 @@ commandVariables = do
         -- In any case, we might have to pessimistically redo all variable
         -- responses because any value may be changed by an updated thunk, not only
         -- the parent variables.
-        Left _
+        ForcedVariable _
           -> sendInvalidatedEvent defaultInvalidatedEvent
               { invalidatedEventAreas = [InvalidatedAreasVariables]
               , invalidatedEventStackFrameId = Just 0 -- TODO: REVERSE LOOKUP OF (StackFrameIx threadId frameIx)
               }
-        _ -> return ()
+        VariableFields _ -> return ()
 
 -- | 'VarInfo' to 'Variable's.
 varInfoToVariables :: StackFrameIx -> VarInfo -> DebugAdaptor Variable
@@ -178,4 +178,3 @@ freshVarIx six vr = do
   varId <- getFreshId
   updateDebugSession (\s -> s { variablesMap = IM.insert varId (VariablesIx six vr) s.variablesMap })
   return varId
-

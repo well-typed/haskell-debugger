@@ -173,8 +173,8 @@ printResponse recd = \case
         EvalStopped{breakThread} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Just breakThread } )
         EvalAbortedWith{} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Nothing } )
 
-    outputVariables (Left var) = outputVariables (Right [var])
-    outputVariables (Right vars) = do
+    outputVariables (ForcedVariable var) = outputVariables (VariableFields [var])
+    outputVariables (VariableFields vars) = do
        ctx <- lift get
        case runCurrentThread ctx of
          Just threadId ->
@@ -190,8 +190,7 @@ printResponse recd = \case
     fetchFields threadId frameIx VarInfo{varRef = ref@(SpecificVariable _), ..} = do
       resp <- lift . lift $ execute recd (GetVariables threadId frameIx ref)
       case resp of
-        GotVariables (Right vars) -> pure vars
-        GotVariables (Left vi) -> pure [vi]
+        GotVariables res -> pure (variableResultToList res)
         Aborted err -> outputStrLn ("Failed to fetch fields for " ++ varName ++ ": " ++ err) >> pure []
         _ -> outputStrLn ("Unexpected response when fetching fields for " ++ varName) >> pure []
     fetchFields _ _ _ = pure []
@@ -210,9 +209,9 @@ showEvalResult (EvalException{..}) = resultVal
 showEvalResult (EvalStopped{}) = "Stopped at breakpoint"
 showEvalResult (EvalAbortedWith err) = "Aborted: " ++ err
 
-showVarInfoEither :: Either VarInfo [VarInfo] -> String
-showVarInfoEither (Left vi) = showVarInfo vi
-showVarInfoEither (Right vis) = unlines $ map showVarInfo vis
+showVarInfoResult :: VariableResult -> String
+showVarInfoResult (ForcedVariable vi) = showVarInfo vi
+showVarInfoResult (VariableFields vis) = unlines $ map showVarInfo vis
 
 showVarInfo :: VarInfo -> String
 showVarInfo VarInfo{..} = unwords [varName, ":", varType, "=", varValue]
