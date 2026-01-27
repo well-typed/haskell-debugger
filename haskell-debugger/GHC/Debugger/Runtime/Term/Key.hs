@@ -27,7 +27,9 @@ data PathFragment (b :: Bool {- whether allow custom field -}) where
   -- | A positional index is an index from 1 to inf
   PositionalIndex :: Int -> PathFragment b
   -- | A labeled field indexes a datacon fields by name
-  LabeledField    :: Name -> PathFragment b
+  -- The position is given by the 'Int'
+  -- The name is cosmetic.
+  LabeledField    :: Int -> Name -> PathFragment b
 deriving instance Eq (PathFragment b)
 deriving instance Ord (PathFragment b)
 
@@ -38,5 +40,5 @@ instance Outputable TermKey where
 
 instance Outputable (PathFragment b) where
   ppr (PositionalIndex i) = text "_" <> ppr i
-  ppr (LabeledField n)    = ppr n
+  ppr (LabeledField _ n)    = ppr n
 
