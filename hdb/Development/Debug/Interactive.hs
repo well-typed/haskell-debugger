@@ -152,7 +152,7 @@ printResponse recd = \case
   GotThreads threads -> outputStrLn $ show threads
   GotStacktrace stackframes -> outputStrLn $ show stackframes
   GotScopes scopeinfos -> outputStrLn $ show scopeinfos
-  GotVariables vis -> outputStrLn $ showVarInfoEither vis
+  GotVariables vis -> outputVariables vis
   GotExceptionInfo exc_info -> outputStrLn $ renderExceptionInfo exc_info
   Aborted err_str -> outputStrLn ("Aborted: " ++ err_str)
   Initialised -> pure ()
@@ -172,6 +172,29 @@ printResponse recd = \case
         EvalException{} -> pure () -- TODO: why does this not have a thread associated?
         EvalStopped{breakThread} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Just breakThread } )
         EvalAbortedWith{} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Nothing } )
+
+    outputVariables (Left var) = outputVariables (Right [var])
+    outputVariables (Right vars) = do
+       ctx <- lift get
+       case runCurrentThread ctx of
+         Just threadId ->
+          mapM_ (outputVarWithFields  threadId 0) vars
+         Nothing -> error "no thread id"
+
+    outputVarWithFields threadId frameIx var = do
+      outputStrLn (showVarInfo var)
+      fields <- fetchFields threadId frameIx var
+      mapM_ (outputStrLn . ("  " ++) . showVarInfo) fields
+
+    fetchFields _ _ VarInfo{varRef = NoVariables} = pure []
+    fetchFields threadId frameIx VarInfo{varRef = ref@(SpecificVariable _), ..} = do
+      resp <- lift . lift $ execute recd (GetVariables threadId frameIx ref)
+      case resp of
+        GotVariables (Right vars) -> pure vars
+        GotVariables (Left vi) -> pure [vi]
+        Aborted err -> outputStrLn ("Failed to fetch fields for " ++ varName ++ ": " ++ err) >> pure []
+        _ -> outputStrLn ("Unexpected response when fetching fields for " ++ varName) >> pure []
+    fetchFields _ _ _ = pure []
 
 printEvalResult :: Recorder (WithSeverity DebuggerLog) -> EvalResult -> InteractiveDM ()
 printEvalResult recd EvalStopped{..} = do
@@ -336,14 +359,27 @@ cmdParser opts ctx = hsubparser
     Options.Applicative.command "backtrace"
     ( info (stackTraceParser ctx <**> helper)
       ( progDesc "Print stack trace" ) )
+  <>
+    Options.Applicative.command "variables"
+    ( info (variablesParser ctx <**> helper)
+      ( progDesc "Print local variables" ) )
   )
 
 stackTraceParser :: RunContext -> Parser Command
 stackTraceParser ctx =
-  GetStacktrace <$>
-     (  RemoteThreadId <$> argument auto (metavar "THREAD_ID" <> help "Print backtrace of THREAD_ID. Defaults to current Thread at breakpoint.")
-    <|> Maybe.maybe (empty <**> abortOption (ErrorMsg "Not stopped at a Breakpoint") mempty) pure (runCurrentThread ctx)
-     )
+  GetStacktrace <$> threadIdParser ctx "Print backtrace of THREAD_ID. Defaults to current thread at breakpoint."
+
+variablesParser :: RunContext -> Parser Command
+variablesParser ctx =
+  GetVariables
+    <$> threadIdParser ctx "Show variables of THREAD_ID. Defaults to current thread at breakpoint."
+    <*> pure 0
+    <*> pure LocalVariables
+
+threadIdParser :: RunContext -> String -> Parser RemoteThreadId
+threadIdParser ctx helpMsg =
+     RemoteThreadId <$> argument auto (metavar "THREAD_ID" <> help helpMsg)
+ <|> Maybe.maybe (empty <**> abortOption (ErrorMsg "Not stopped at a Breakpoint") mempty) pure (runCurrentThread ctx)
 
 -- | Main parser info
 cmdParserInfo :: RunOptions -> RunContext -> ParserInfo Command
