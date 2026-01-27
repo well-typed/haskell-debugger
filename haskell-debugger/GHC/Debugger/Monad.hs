@@ -199,7 +199,7 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
 
           -- Enable the external interpreter by default! See #169
           -- And use the custom-for-debugger external interpreter
-          `GHC.gopt_set` GHC.Opt_ExternalInterpreter
+          -- `GHC.gopt_set` GHC.Opt_ExternalInterpreter
           -- See Note [Custom external interpreter]
           -- Ext interp is the same program as this, with "--external-interpreter"
           & setPgmI thisProg
