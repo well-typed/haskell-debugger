@@ -12,6 +12,7 @@ import System.FilePath
 import System.IO.Temp
 import System.Exit
 import System.IO
+import System.Environment
 import Control.Exception
 
 import Test.Tasty
@@ -24,13 +25,18 @@ import Test.Utils
 
 main :: IO ()
 main = do
-  goldens <- mapM (mkGoldenTest False) =<< findByExtension [".hdb-test"] "test/golden"
+  env <- getEnvironment
+  let mkTest = mkGoldenTest False env
+  golden_tests      <- findByExtension [".hdb-test"] "test/golden"
+  default_goldens   <- mapM (mkTest "") golden_tests
+  intinterp_goldens <- mapM (mkTest "--internal-interpreter") golden_tests
   defaultMain $
 #ifdef mingw32_HOST_OS
     ignoreTestBecause "Testsuite is not enabled on Windows (#149)" $
 #endif
     testGroup "Tests"
-      [ testGroup "Golden tests" goldens
+      [ testGroup "Golden tests" default_goldens
+      , testGroup "Golden tests (--internal-interpreter)" intinterp_goldens
       , testGroup "Unit tests" unitTests
       ]
 
@@ -41,24 +47,21 @@ unitTests =
 
 -- | Receives as an argument the path to the @*.hdb-test@ which contains the
 -- shell invocation for running
-mkGoldenTest :: Bool -> FilePath -> IO TestTree
-mkGoldenTest keepTmpDirs path = do
+mkGoldenTest :: Bool -> [(String, String)] -> FilePath -> String -> IO TestTree
+mkGoldenTest keepTmpDirs inheritedEnv flags path = do
   let testName   = takeBaseName     path
   let goldenPath = replaceExtension path ".hdb-stdout"
-  return $
-    testGroup testName
-      [ goldenVsStringComparing "(default)" goldenPath (action "")
-      , goldenVsStringComparing "with --internal-interpreter" goldenPath (action "--internal-interpreter")
-      ]
+  return $ goldenVsStringComparing testName goldenPath action
   where
-    action :: String -> IO LBS.ByteString
-    action flags = do
+    action :: IO LBS.ByteString
+    action = do
       script <- readFile path
       withHermeticDir keepTmpDirs (takeDirectory path) $ \test_dir -> do
         (_, Just hout, _, p)
           <- P.createProcess (P.shell script)
             { P.cwd = Just test_dir, P.std_out = P.CreatePipe
-            , P.env = Just
+            , P.env = Just $
+              inheritedEnv ++
               [ ("HDB", "hdb " ++ flags)
               ]
             }
