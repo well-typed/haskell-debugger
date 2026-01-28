@@ -27,6 +27,7 @@ serverParser = HdbDAPServer
      <> metavar "PORT"
      <> help "DAP server port" )
   <*> verbosityParser Debug
+  <*> internalInterpreterParser
 
 -- | Parser for 'HdbCLI' options
 cliParser :: Parser HdbOptions
@@ -52,6 +53,7 @@ cliParser = HdbCLI
      <> value []
      <> help "Additional flags to pass to the ghc invocation that loads the program for debugging" )
   <*> verbosityParser Warning
+  <*> internalInterpreterParser
 
 -- | Parser for 'HdbProxy' options
 proxyParser :: Parser HdbOptions
@@ -117,6 +119,17 @@ verbosityParser vdef = option verb
       2 -> pure Info
       3 -> pure Debug
       _ -> readerAbort (ErrorMsg "Verbosity must be a value in [0..3]")
+
+-- | Parser for --internal-interpreter
+--
+-- Prefer running the debuggee on the debugger's internal interpreter rather
+-- than using an external interpreter by default.
+internalInterpreterParser :: Parser Bool
+internalInterpreterParser =
+  switch
+    ( long "internal-interpreter"
+   <> help "Prefer running the debuggee on the debugger's internal interpreter rather than on a separate (external-interpreter) process"
+    )
 
 -- | Main parser info
 hdbParserInfo :: ParserInfo HdbOptions

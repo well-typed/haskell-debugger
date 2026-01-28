@@ -8,18 +8,20 @@ import Colog.Core (Severity)
 
 -- | The options `hdb` is invoked in the command line with
 data HdbOptions
-  -- | @server --port <port>@
+  -- | @server [--internal-interpreter] --port <port>@
   = HdbDAPServer
     { port :: Int
     , verbosity :: Severity
+    , internalInterpreter :: Bool
     }
-  -- | @cli [--entry-point=<entryPoint>] [--extra-ghc-args="<args>"] [<entryFile>] -- [<entryArgs>]@
+  -- | @cli [--internal-interpreter] [--entry-point=<entryPoint>] [--extra-ghc-args="<args>"] [<entryFile>] -- [<entryArgs>]@
   | HdbCLI
     { entryPoint :: String
     , entryFile :: FilePath
     , entryArgs :: [String]
     , extraGhcArgs :: [String]
     , verbosity :: Severity
+    , internalInterpreter :: Bool
     }
 
   -- | @proxy --port <port>@
