@@ -92,8 +92,9 @@ newtype InitFailed = InitFailed String deriving Show
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
-initDebugger :: LogAction IO DAPLog -> Bool -> LaunchArgs -> ExceptT InitFailed DebugAdaptor ()
-initDebugger l supportsRunInTerminal
+initDebugger :: LogAction IO DAPLog -> Bool -> Bool
+             -> LaunchArgs -> ExceptT InitFailed DebugAdaptor ()
+initDebugger l supportsRunInTerminal preferInternalInterpreter
                LaunchArgs{ __sessionId
                          , projectRoot = givenRoot
                          , entryFile = entryFileMaybe
@@ -125,6 +126,7 @@ initDebugger l supportsRunInTerminal
           defaultRunConf = Debugger.RunDebuggerSettings
             { supportsANSIStyling = True     -- TODO: Initialize Request sends supportsANSIStyling; this is False for nvim-dap
             , supportsANSIHyperlinks = False -- VSCode does not support this
+            , preferInternalInterpreter
             }
 
       -- Create a pipe to which messages to send to the DAP console are written and read.

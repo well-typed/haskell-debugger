@@ -37,7 +37,7 @@ import Data.Functor.Contravariant
 import qualified GHCi.Server as GHCi
 
 import GHC.Utils.Logger (defaultLogActionWithHandles)
-import GHC.Debugger.Monad (DebuggerLog(..))
+import GHC.Debugger.Monad (DebuggerLog(..), RunDebuggerSettings(..))
 import Development.Debug.Options (HdbOptions(..))
 import Development.Debug.Options.Parser (parseHdbOptions)
 import Development.Debug.Adapter
@@ -65,7 +65,7 @@ main = do
          pure (HdbExternalInterpreter (read writeFd) (read readFd))
     _ -> parseHdbOptions
   case hdbOpts of
-    HdbDAPServer{port} -> do
+    HdbDAPServer{port, internalInterpreter} -> do
       config <- getConfig port
       withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
         hSetBuffering realStdout LineBuffering
@@ -74,12 +74,17 @@ main = do
         pid_var  <- liftIO (newIORef Nothing)
         ccon_var <- liftIO newEmptyMVar
         runDAPServerWithLogger (contramap DAPLibraryLog l) config
-          (talk l init_var pid_var ccon_var)
+          (talk l init_var pid_var ccon_var internalInterpreter)
           (ack l pid_var)
     HdbCLI{..} -> do
         l <- mainLogger hdbOpts.verbosity stdout
+        let defaultRunConf = RunDebuggerSettings
+              { supportsANSIStyling = True -- todo: check!!
+              , supportsANSIHyperlinks = False
+              , preferInternalInterpreter = internalInterpreter
+              }
         runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs
-          debugInteractive
+          defaultRunConf debugInteractive
     HdbProxy{port} -> do
         l <- mainLogger hdbOpts.verbosity stdout
         runInTerminalHdbProxy (contramap RunProxyClientLog l) port
@@ -171,9 +176,11 @@ talk :: LogAction IO MainLog
      -> MVar ()
      -- ^ A var to block on waiting for the proxy client to connect, if a proxy
      -- connection is expected. See #95.
+     -> Bool
+     -- ^ Prefer internal interpreter
      -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l support_rit_var _pid_var client_proxy_signal = \ case
+talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter = \ case
   CommandInitialize -> do
     InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
     let runInTerminal = fromMaybe False supportsRunInTerminalRequest
@@ -189,7 +196,10 @@ talk l support_rit_var _pid_var client_proxy_signal = \ case
 
     supportsRunInTerminalRequest <- liftIO $ readIORef support_rit_var
 
-    merror <- runExceptT $ initDebugger (contramap DAPLog l) supportsRunInTerminalRequest launch_args
+    merror <- runExceptT $
+      initDebugger (contramap DAPLog l)
+        supportsRunInTerminalRequest prefer_internal_interpreter
+        launch_args
     case merror of
       Right () -> do
         sendLaunchResponse   -- ack

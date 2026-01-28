@@ -49,9 +49,10 @@ runIDM :: LogAction IO InteractiveLog
        -> FilePath -- ^ entryFile
        -> [String] -- ^ entryArgs
        -> [String] -- ^ extraGhcArgs
+       -> RunDebuggerSettings
        -> InteractiveDM a
        -> IO a
-runIDM logger entryPoint entryFile entryArgs extraGhcArgs act = do
+runIDM logger entryPoint entryFile entryArgs extraGhcArgs runConf act = do
   projectRoot <- getCurrentDirectory
 
   let hieBiosLogger = contramap ISessionSetupLog logger
@@ -62,15 +63,10 @@ runIDM logger entryPoint entryFile entryArgs extraGhcArgs act = do
       | HieBiosFlags{..} <- flags
                          -> do
 
-      let defaultRunConf = RunDebuggerSettings
-            { supportsANSIStyling = True -- todo: check!!
-            , supportsANSIHyperlinks = False
-            }
-
       let absEntryFile = normalise $ projectRoot </> entryFile
       let debugRec = contramap IDebuggerLog logger
 
-      runDebugger debugRec rootDir componentDir libdir units ghcInvocation extraGhcArgs absEntryFile defaultRunConf $
+      runDebugger debugRec rootDir componentDir libdir units ghcInvocation extraGhcArgs absEntryFile runConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
                    (RunOptions { runEntryFile = entryFile, runEntryPoint = entryPoint, runEntryArgs = entryArgs })

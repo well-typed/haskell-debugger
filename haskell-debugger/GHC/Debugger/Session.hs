@@ -22,6 +22,7 @@ module GHC.Debugger.Session (
   setCacheDirs,
   setBytecodeBackend,
   enableByteCodeGeneration,
+  enableExternalInterpreter,
   setPgmI, addOptI,
   setDynFlagWays
   )
@@ -420,6 +421,15 @@ setBytecodeBackend dflags = dflags
   backend = GHC.interpreterBackend
 #endif
   }
+
+-- | Enable the external interpreter by default unless the user sets
+-- @preferInternalInterpreter=True@ (with @--internal-interpreter@)
+enableExternalInterpreter :: Bool -> DynFlags -> DynFlags
+enableExternalInterpreter preferInternalInterpreter dflags
+  | preferInternalInterpreter
+  = dflags `GHC.gopt_unset` GHC.Opt_ExternalInterpreter
+  | otherwise
+  = dflags `GHC.gopt_set` GHC.Opt_ExternalInterpreter
 
 setPgmI, addOptI :: String -> DynFlags -> DynFlags
 setPgmI f = alterToolSettings $ \s -> s { toolSettings_pgm_i = f }
