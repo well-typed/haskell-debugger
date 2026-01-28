@@ -1,0 +1,10 @@
+[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/T169b.hs, interpreted )[main]
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Main 4], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/T169b.hs", startLine = 6, endLine = 8, startCol = 8, endCol = 58}}
+(hdb) Stopped at breakpoint
+(hdb) [ScopeInfo {kind = LocalVariablesScope, sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/T169b.hs", startLine = 7, endLine = 7, startCol = 3, endCol = 58}, numVars = Nothing, expensive = False},ScopeInfo {kind = ModuleVariablesScope, sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/T169b.hs", startLine = 7, endLine = 7, startCol = 3, endCol = 58}, numVars = Just 2, expensive = True},ScopeInfo {kind = GlobalVariablesScope, sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/T169b.hs", startLine = 7, endLine = 7, startCol = 3, endCol = 58}, numVars = Just 353, expensive = True}]
+(hdb) Debuggee writing something to stdout
+[ScopeInfo {kind = LocalVariablesScope, sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/T169b.hs", startLine = 8, endLine = 8, startCol = 3, endCol = 58}, numVars = Nothing, expensive = False},ScopeInfo {kind = ModuleVariablesScope, sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/T169b.hs", startLine = 8, endLine = 8, startCol = 3, endCol = 58}, numVars = Just 2, expensive = True},ScopeInfo {kind = GlobalVariablesScope, sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/T169b.hs", startLine = 8, endLine = 8, startCol = 3, endCol = 58}, numVars = Just 353, expensive = True}]
+(hdb) Debuggee writing something to stderr
+()
+(hdb) Exiting...
