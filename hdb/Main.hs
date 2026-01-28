@@ -316,9 +316,10 @@ mainLogger threshold h = do
       GHCLog logflags msg_class srcSpan msg ->
         defaultLogActionWithHandles h h logflags msg_class srcSpan msg
       LogDebuggeeOut out ->
-        cmapM renderWithTimestamp l <& ("[DEBUGGEE STDOUT] " <> out)
-      LogDebuggeeErr err ->
-        cmapM renderWithTimestamp l <& ("[DEBUGGEE STDERR] " <> err)
+        -- If we wanted, we could log the debuggee output differently if we are
+        -- on the DAP debug mode vs, say, hdb.
+        l <& out
+      LogDebuggeeErr err -> l <& err
       _ -> pure ()
 
     defaultLog (WithSeverity msg sev)

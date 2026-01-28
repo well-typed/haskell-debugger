@@ -34,7 +34,8 @@ import GHC.Debugger.Interface.Messages
 -- | Read output from the given handle and write it to the given
 -- log action (forever).
 forwardHandleToLogger :: Handle -> LogAction IO T.Text -> IO ()
-forwardHandleToLogger read_h logger =
+forwardHandleToLogger read_h logger = do
+  hSetBuffering read_h LineBuffering
   forwarding `catch` -- handles read EOF
     \(_e::SomeException) ->
       -- Cleanly exit on exception
@@ -44,7 +45,9 @@ forwardHandleToLogger read_h logger =
       -- Mask exceptions to avoid being killed between reading
       -- a line and outputting it.
       mask_ $ do
+        putStrLn $ "WAITING TO READ LINE"
         out_line <- T.hGetLine read_h
+        putStrLn $ "GOT IT " ++ show out_line
         logger <& out_line
 
 --------------------------------------------------------------------------------
