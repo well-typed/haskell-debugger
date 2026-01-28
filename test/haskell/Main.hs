@@ -45,14 +45,23 @@ mkGoldenTest :: Bool -> FilePath -> IO TestTree
 mkGoldenTest keepTmpDirs path = do
   let testName   = takeBaseName     path
   let goldenPath = replaceExtension path ".hdb-stdout"
-  return (goldenVsStringComparing testName goldenPath action)
+  return $
+    testGroup testName
+      [ goldenVsStringComparing "(default)" goldenPath (action "")
+      , goldenVsStringComparing "with --internal-interpreter" goldenPath (action "--internal-interpreter")
+      ]
   where
-    action :: IO LBS.ByteString
-    action = do
+    action :: String -> IO LBS.ByteString
+    action flags = do
       script <- readFile path
       withHermeticDir keepTmpDirs (takeDirectory path) $ \test_dir -> do
         (_, Just hout, _, p)
-          <- P.createProcess (P.shell script){P.cwd = Just test_dir, P.std_out = P.CreatePipe}
+          <- P.createProcess (P.shell script)
+            { P.cwd = Just test_dir, P.std_out = P.CreatePipe
+            , P.env = Just
+              [ ("HDB", "hdb " ++ flags)
+              ]
+            }
         P.waitForProcess p >>= \case
           ExitSuccess   -> LBS.hGetContents hout
           ExitFailure c -> error $ "Test script in " ++ test_dir ++ " failed with exit code: " ++ show c
