@@ -22,6 +22,8 @@ module GHC.Debugger.Session (
   setCacheDirs,
   setBytecodeBackend,
   enableByteCodeGeneration,
+  enableExternalInterpreter,
+  setPgmI, addOptI,
   setDynFlagWays
   )
   where
@@ -55,6 +57,7 @@ import GHC.Unit.Types
 import qualified GHC.Unit.State                        as State
 import GHC.Driver.Env
 import GHC.Types.SrcLoc
+import GHC.Settings (ToolSettings(..))
 import Language.Haskell.Syntax.Module.Name
 import qualified Data.Foldable as Foldable
 import qualified GHC.Unit.Home.Graph as HUG
@@ -418,6 +421,22 @@ setBytecodeBackend dflags = dflags
   backend = GHC.interpreterBackend
 #endif
   }
+
+-- | Enable the external interpreter by default unless the user sets
+-- @preferInternalInterpreter=True@ (with @--internal-interpreter@)
+enableExternalInterpreter :: Bool -> DynFlags -> DynFlags
+enableExternalInterpreter preferInternalInterpreter dflags
+  | preferInternalInterpreter
+  = dflags `GHC.gopt_unset` GHC.Opt_ExternalInterpreter
+  | otherwise
+  = dflags `GHC.gopt_set` GHC.Opt_ExternalInterpreter
+
+setPgmI, addOptI :: String -> DynFlags -> DynFlags
+setPgmI f = alterToolSettings $ \s -> s { toolSettings_pgm_i = f }
+addOptI f = alterToolSettings $ \s -> s { toolSettings_opt_i = f : toolSettings_opt_i s }
+
+alterToolSettings :: (ToolSettings -> ToolSettings) -> DynFlags -> DynFlags
+alterToolSettings f dynFlags = dynFlags { toolSettings = f (toolSettings dynFlags) }
 
 setDynFlagWays :: Ways -> DynFlags -> DynFlags
 setDynFlagWays ws dyn = dyn { targetWays_ = ws }

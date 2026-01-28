@@ -42,7 +42,7 @@ import GHCi.Message
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Session.Builtin
-import GHC.Debugger.Logger as Logger
+import Colog.Core as Logger
 
 --------------------------------------------------------------------------------
 -- * The Cache-level interface for runtime 'DebugView' instances

@@ -32,13 +32,16 @@ runInTerminalTests =
 #ifdef mingw32_HOST_OS
       ignoreTestBecause "Needs to be fixed for Windows" $
 #endif
-      testCase "runInTerminal: proxy forwards stdin correctly" runInTerminal1
+      testGroup "runInTerminal: proxy forwards stdin correctly"
+        [ testCase "(default)" (runInTerminal1 "")
+        , testCase "(--internal-interpreter)" (runInTerminal1 "--internal-interpreter")
+        ]
     ]
 
 rit_keep_tmp_dirs :: Bool
 rit_keep_tmp_dirs = False
 
-runInTerminal1 = do
+runInTerminal1 flags = do
   withHermeticDir rit_keep_tmp_dirs "test/unit/T44" $ \test_dir -> do
 
     -- Come up with a random port
@@ -46,7 +49,7 @@ runInTerminal1 = do
 
     -- Launch server process
     (Just hin, Just hout, _, p)
-      <- P.createProcess (P.shell $ "hdb server --port " ++ show testPort)
+      <- P.createProcess (P.shell $ "hdb server " ++ flags ++ " --port " ++ show testPort)
           {P.cwd = Just test_dir, P.std_out = P.CreatePipe, P.std_in = P.CreatePipe}
 
     -- Fork thread to print out output of server process
@@ -60,7 +63,8 @@ runInTerminal1 = do
               then return ()
               else do
                 _l <- hGetLine hout
-                -- putStrLn ("[server] " ++ l)
+                -- UNCOMMENT ME TO DEBUG
+                -- putStrLn ("[server] " ++ _l)
                 loop
       loop
 

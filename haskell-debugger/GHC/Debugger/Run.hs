@@ -20,7 +20,6 @@ import qualified Data.List as List
 import Data.Maybe
 import System.FilePath
 import System.Directory
-import qualified Prettyprinter as Pretty
 
 import GHC
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
@@ -33,7 +32,6 @@ import GHC.Runtime.Debugger.Breakpoints as GHC
 import qualified GHC.Unit.Module.ModSummary as GHC
 import GHC.Types.Name.Occurrence (mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig)
-import GHC.Utils.Outputable as GHC
 import qualified GHCi.Message as GHCi
 import qualified GHC.Data.Strict as Strict
 
@@ -41,24 +39,17 @@ import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Monad
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
-import GHC.Debugger.Logger as Logger
+import Colog.Core as Logger
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import GHC.Debugger.Runtime.Thread
-
-data EvalLog
-  = LogEvalModule GHC.Module
-
-instance Pretty EvalLog where
-  pretty = \ case
-    LogEvalModule modl -> "Eval Module Context:" Pretty.<+> pretty (GHC.showSDocUnsafe (ppr modl))
 
 --------------------------------------------------------------------------------
 -- * Evaluation
 --------------------------------------------------------------------------------
 
 -- | Run a program with debugging enabled
-debugExecution :: Recorder (WithSeverity EvalLog) -> FilePath -> EntryPoint -> [String] {-^ Args -} -> Debugger EvalResult
-debugExecution recorder entryFile entry args = do
+debugExecution :: FilePath -> EntryPoint -> [String] {-^ Args -} -> Debugger EvalResult
+debugExecution entryFile entry args = do
   -- consider always using :trace like ghci-dap to always have a stacktrace?
   -- better solution could involve profiling stack traces or from IPE info?
   modSummaryOfEntryFile <- findUnitIdOfEntryFile entryFile
@@ -69,7 +60,7 @@ debugExecution recorder entryFile entry args = do
     evalModule = mkModule (RealUnit (Definite unitIdOfEntryFile))
                                          (moduleName modOfEntryFile)
 
-  logWith recorder Info $ LogEvalModule evalModule
+  logSDoc Logger.Debug $ "Eval Module Context:" <+> ppr evalModule
   old_context <- GHC.getContext
   GHC.setContext [GHC.IIModule evalModule]
 

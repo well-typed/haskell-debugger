@@ -4,4 +4,4 @@
 # hie-bios already handles setting up its own pkgdb I think
 # (cd mylib && cabal -v0 --store-dir="$STORE" install --lib --package-env .)
 # MYPKGDB=$(echo "$STORE"/ghc-*/package.db)
-hdb -v0 myapp/app/Main.hs < T135.hdb-stdin # the pkgdb is filled in by hie-bios (--extra-ghc-args -package-db="$MYPKGDB")
+$HDB -v0 myapp/app/Main.hs < T135.hdb-stdin # the pkgdb is filled in by hie-bios (--extra-ghc-args -package-db="$MYPKGDB")

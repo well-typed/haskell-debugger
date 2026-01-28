@@ -11,7 +11,7 @@ import Data.Version
 import qualified Options.Applicative
 import qualified Paths_haskell_debugger as P
 
-import GHC.Debugger.Logger
+import Colog.Core
 import Development.Debug.Options
 
 --------------------------------------------------------------------------------
@@ -26,7 +26,8 @@ serverParser = HdbDAPServer
      <> short 'p'
      <> metavar "PORT"
      <> help "DAP server port" )
-  <*> verbosityParser (Verbosity Debug)
+  <*> verbosityParser Debug
+  <*> internalInterpreterParser
 
 -- | Parser for 'HdbCLI' options
 cliParser :: Parser HdbOptions
@@ -51,7 +52,8 @@ cliParser = HdbCLI
      <> metavar "GHC_ARGS"
      <> value []
      <> help "Additional flags to pass to the ghc invocation that loads the program for debugging" )
-  <*> verbosityParser (Verbosity Warning)
+  <*> verbosityParser Warning
+  <*> internalInterpreterParser
 
 -- | Parser for 'HdbProxy' options
 proxyParser :: Parser HdbOptions
@@ -61,7 +63,18 @@ proxyParser = HdbProxy
      <> short 'p'
      <> metavar "PORT"
      <> help "proxy port to which the debugger connects" )
-  <*> verbosityParser (Verbosity Warning)
+  <*> verbosityParser Warning
+
+-- | Parser for @hdb external-interpreter <write-fd> <read-fd>@
+-- See Note [Custom external interpreter]
+extInterpParser :: Parser HdbOptions
+extInterpParser = HdbExternalInterpreter
+  <$> argument auto
+    ( metavar "WRITE_FD"
+   <> help "external interpreter write file descriptor" )
+  <*> argument auto
+    ( metavar "READ_FD"
+   <> help "external interpreter read file descriptor" )
 
 -- | Combined parser for HdbOptions
 hdbOptionsParser :: Parser HdbOptions
@@ -75,8 +88,11 @@ hdbOptionsParser = hsubparser
  <> Options.Applicative.command "proxy"
     ( info proxyParser
       ( progDesc "Internal mode used by the DAP server to proxy the stdin/stdout to the DAP client's terminal" ) )
+ <> Options.Applicative.command "external-interpreter"
+    ( info extInterpParser
+      ( progDesc "Start the custom-for-debugger external interpreter" ) )
   )
-  <|> cliParser  -- Default to CLI mode if no subcommand
+  <|> cliParser -- Default to CLI mode if no subcommand
 
 -- | Parser for --version flag
 versioner :: Parser (a -> a)
@@ -87,7 +103,7 @@ versioner = simpleVersioner $ "Haskell Debugger, version " ++ showVersion P.vers
 -- The default verbosity differs by mode (#86):
 -- - DAP server mode: DEBUG
 -- - CLI mode: WARNING
-verbosityParser :: Verbosity -> Parser Verbosity
+verbosityParser :: Severity -> Parser Severity
 verbosityParser vdef = option verb
     ( long "verbosity"
    <> short 'v'
@@ -96,13 +112,24 @@ verbosityParser vdef = option verb
    <> help "Logger verbosity in [0..3] interval, where 0 is silent and 3 is debug"
     )
   where
-    verb = Verbosity <$> (verbNum =<< auto)
+    verb = verbNum =<< auto
     verbNum n = case n :: Int of
       0 -> pure Error
       1 -> pure Warning
       2 -> pure Info
       3 -> pure Debug
       _ -> readerAbort (ErrorMsg "Verbosity must be a value in [0..3]")
+
+-- | Parser for --internal-interpreter
+--
+-- Prefer running the debuggee on the debugger's internal interpreter rather
+-- than using an external interpreter by default.
+internalInterpreterParser :: Parser Bool
+internalInterpreterParser =
+  switch
+    ( long "internal-interpreter"
+   <> help "Prefer running the debuggee on the debugger's internal interpreter rather than on a separate (external-interpreter) process"
+    )
 
 -- | Main parser info
 hdbParserInfo :: ParserInfo HdbOptions

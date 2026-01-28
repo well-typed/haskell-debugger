@@ -5,7 +5,7 @@
 # which is not supported by this debugger version.
 # (Note: drop the output because the callstack is hard to normalize)
 
-if (hdb app/Main.hs 2>&1 | grep "Cannot use unsupported") < T130.hdb-stdin; then
+if ($HDB app/Main.hs 2>&1 | grep "Cannot use unsupported") < T130.hdb-stdin; then
     exit 0
 fi
 

@@ -1,1 +1,1 @@
-hdb cli Main.hs -v 0 < T83.hdb-stdin
+$HDB Main.hs -v 0 < T83.hdb-stdin

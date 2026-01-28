@@ -1,3 +1,3 @@
 #!/bin/sh
 
-hdb -v0 T159.hs < T159.hdb-stdin
+$HDB -v0 T159.hs < T159.hdb-stdin
