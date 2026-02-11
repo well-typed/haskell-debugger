@@ -25,6 +25,8 @@ import Test.Tasty.Golden.Advanced as G
 import Test.DAP.RunInTerminal
 import Test.Utils
 
+import Debug.Trace
+
 main :: IO ()
 main = do
   env <- getEnvironment
@@ -47,12 +49,13 @@ main = do
   intinterp_goldens <- mapM (mkTest "--internal-interpreter") testsForInternal
 
   defaultMain $
-#ifdef mingw32_HOST_OS
-    ignoreTestBecause "Testsuite is not enabled on Windows (#149)" $
-#endif
     testGroup "Tests"
       [ testGroup "Golden tests" default_goldens
-      , testGroup "Golden tests (--internal-interpreter)" intinterp_goldens
+      ,
+#ifdef mingw32_HOST_OS
+        ignoreTestBecause "Internal interpreter is not supported on Windows (#149 / ghc#22146)" $
+#endif
+        testGroup "Golden tests (--internal-interpreter)" intinterp_goldens
       , testGroup "Unit tests" unitTests
       ]
 
@@ -71,10 +74,9 @@ mkGoldenTest keepTmpDirs inheritedEnv flags path = do
   where
     action :: IO LBS.ByteString
     action = do
-      script <- readFile path
       withHermeticDir keepTmpDirs (takeDirectory path) $ \test_dir -> do
         (_, Just hout, _, p)
-          <- P.createProcess (P.shell script)
+          <- P.createProcess (P.proc "sh" [takeFileName path])
             { P.cwd = Just test_dir, P.std_out = P.CreatePipe
             , P.env = Just $
               inheritedEnv ++
@@ -123,7 +125,9 @@ goldenVsStringComparing name ref act = do
         , "<TEMPORARY-DIRECTORY>" )
       , ( "Using cabal specification: .*"
         , "Using cabal specification: <VERSION>" )
-      ]
+      , ( "\\\\\\\\", "/" ) -- Use forward slash
+      , ( "\\\\", "/" )     -- Use forward slash
+     ]
 
     let normalising (LT.decodeUtf8 -> txt) = foldl' (*=~/) txt replaceREs
 
@@ -161,5 +165,6 @@ goldenVsStringComparing name ref act = do
             hFlush yH
             hClose xH
             hClose yH
-            (_exitCode, out, err) <- P.readProcessWithExitCode "diff" ["-u", xf, yf] ""
+            (_exitCode, out, err) <- P.readProcessWithExitCode "diff"
+              ["--ignore-space-change", "--strip-trailing-cr", "-u", xf, yf] ""
             return $ Just $ msg ++ "\nDiff output:\n" ++ out ++ err
