@@ -47,6 +47,9 @@ Namely:
 
 Change them accordingly.
 
+You can also run the debugger as a server on a specific port by executing `hdb server --port 12345`.
+To connect VSCode to this server, add the field `"debugServer": 12345` to your `launch.json` configuration.
+
 To run the debugger, simply hit the green run button.
 See the Features section below for what is currently supported.
 
