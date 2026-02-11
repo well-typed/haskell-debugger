@@ -51,10 +51,6 @@ import Development.Debug.Interactive
 
 --------------------------------------------------------------------------------
 
-defaultStdoutForwardingAction :: T.Text -> IO ()
-defaultStdoutForwardingAction l = do
-  T.hPutStrLn stderr ("[INTERCEPTED STDOUT] " <> l)
-
 main :: IO ()
 main = do
   setBacktraceMechanismState CostCentreBacktrace False
@@ -72,7 +68,7 @@ main = do
   case hdbOpts of
     HdbDAPServer{port, internalInterpreter} -> do
       config <- getConfig port
-      withInterceptedStdoutForwarding defaultStdoutForwardingAction $ \realStdout -> do
+      redirectRealStdout internalInterpreter $ \realStdout -> do
         hSetBuffering realStdout LineBuffering
         l <- mainLogger hdbOpts.verbosity realStdout
         init_var <- liftIO (newIORef False{-not supported by default-})
@@ -107,6 +103,24 @@ main = do
       where hook = return -- empty hook
         -- we cannot allow any async exceptions while communicating, because
         -- we will lose sync in the protocol, hence uninterruptibleMask.
+  where
+    -- When using the internal interpreter in DAP mode, we can't write to
+    -- stdout directly because there will also be a thread forwarding the
+    -- debuggee stdout by capturing it from stdout (and we'd get into a loop
+    -- trying to forward what we're writing).
+    --
+    -- The redirection we use requires hDuplicateTo which isn't supported on
+    -- Windows (ghc#22146), so using the internal interpreter on Windows
+    -- currently unsupported.
+    --
+    -- When using the external interpreter, the debuggee output is read from
+    -- its process handle directly, so this is unnecessary.
+    redirectRealStdout internalInterpreter k
+      | internalInterpreter =
+        withInterceptedStdoutForwarding
+          (\interceptedOut -> T.hPutStrLn stderr ("[INTERCEPTED STDOUT] " <> interceptedOut))
+          (\realStdout -> k realStdout)
+      | otherwise = k stdout
 
 
 -- | Fetch config from environment, fallback to sane defaults
