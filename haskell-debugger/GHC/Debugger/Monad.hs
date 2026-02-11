@@ -16,6 +16,7 @@ module GHC.Debugger.Monad where
 import System.Environment
 import System.Process
 import Control.Concurrent
+import Control.Concurrent.Async
 import Control.Exception
 import Control.Monad
 import Control.Monad.Catch
@@ -271,10 +272,11 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
       -- The external interpreter is spawned lazily, so we block waiting for
       -- the handles to be available in a new thread.
       forkIO $ do
-        (serv_out, serv_err) <- takeMVar iserv_handles
-        _ <- forkIO $
-          forwardHandleToLogger serv_err (contramap LogDebuggeeErr l)
-        forwardHandleToLogger serv_out (contramap LogDebuggeeOut l)
+        withAsync (takeMVar iserv_handles) $ \async_handles -> do
+          (serv_out, serv_err) <- wait async_handles
+          concurrently_
+            (forwardHandleToLogger serv_err (contramap LogDebuggeeErr l))
+            (forwardHandleToLogger serv_out (contramap LogDebuggeeOut l))
 
     -- Initializes interpreter!
     _ <- GHC.setSessionDynFlags dflags2
