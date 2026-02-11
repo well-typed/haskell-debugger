@@ -1,5 +1,21 @@
 # Revision history for haskell-debugger
 
+## 0.12.0.0 -- 2026-02-11
+
+* Improved exceptions support!
+    * Break-on-exception breakpoints now provide source locations
+    * And exception callstacks based on the ExceptionAnnotation mechanism.
+* Introduced stacktraces support!
+    * Stack frames decoded from interpreter frames with breakpoints are displayed
+    * Stack frames decoded from IPE information available for compiled code frames too
+    * Custom stack annotations will also be displayed
+* Use the external interpreter by default!
+    * Paves the way for separating debugger threads vs debuggee threads in multi-threaded debugging
+    * Allows debuggee vs debugger output to be separated by construction
+* Windows is now supported when using the external interpreter (default)
+* Fixed bug where existential constraints weren't displayed in the variables pane
+* Plus more bug fixes, refactors, test improvements, and documentation updates.
+
 ## 0.11.0.0 -- 2026-01-05
 
 * Introduce but don't yet expose infrastructure for debugging multi-threaded
