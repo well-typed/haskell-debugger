@@ -50,6 +50,8 @@ jobs:
           path: dist-newstyle/haskell-debugger*docs.tar.gz
 
   release:
+    # only release from a tag pointing to master!
+    if: github.ref == 'refs/heads/master'
     name: Release
     runs-on: ubuntu-latest
     needs: [build-haskell-debugger, docs-haskell-debugger]
