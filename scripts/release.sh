@@ -17,7 +17,7 @@
 #   * before running the release script, to the desired release version
 #   * after the release commit, to the intermediate unreleased version
 #
-# Pushing is manual to be deliberate. Pushing will trigger a release!
+# Pushing the tag is manual to be deliberate. Pushing will trigger a release!
 
 set -e
 
