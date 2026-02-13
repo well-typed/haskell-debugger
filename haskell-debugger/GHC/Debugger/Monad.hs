@@ -582,6 +582,7 @@ findHsDebuggerViewUnitId mod_graph = do
         | UnitNode _deps uid <- mg_mss mod_graph
         , "haskell-debugger-view" `L.isPrefixOf` unitIdString uid
             || "hskll-dbggr-vw" `L.isPrefixOf` unitIdString uid
+            || "haskell-debug_" `L.isPrefixOf` unitIdString uid
         ]
 
       -- If the haskell-debugger-view is in the dependency graph, it must have
