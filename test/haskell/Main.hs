@@ -11,6 +11,7 @@ import qualified Data.Text.Lazy.IO as LT
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified System.Process as P
 import System.FilePath
+import qualified System.FilePath.Posix as Posix
 import System.IO.Temp
 import System.Exit
 import System.IO
@@ -24,8 +25,6 @@ import Test.Tasty.Golden.Advanced as G
 
 import Test.DAP.RunInTerminal
 import Test.Utils
-
-import Debug.Trace
 
 main :: IO ()
 main = do
@@ -114,22 +113,39 @@ goldenVsStringComparing name ref act = do
       then "\\" ++ [c]
       else [c]
 
+  useForwardSlashes =
+    fmap useForwardSlash
+
+  useForwardSlash c =
+    if c == '\\'
+      then '/'
+      else c
+
   escapeRegex :: String -> String
   escapeRegex = concatMap escapePathSeparators
 
   -- Normalise the action producing the output
   normalisingAct = do
     tmpDir <- getCanonicalTemporaryDirectory
+    let
+      winTempDirWithForwardSlashes = useForwardSlashes tmpDir
+    let posixTempDirRegex =
+          escapeRegex $
+            Posix.joinPath $
+              [ winTempDirWithForwardSlashes
+              , "[^/\\]+"
+              , takeBaseName (takeDirectory ref)
+              ]
     replaceREs <- traverse (uncurry compileSearchReplace)
-      [ ( escapeRegex $ tmpDir </> "[^/\\]+" </> takeBaseName (takeDirectory ref) {- the folder in which the test is run, inside the canonical temp dir-}
-        , "<TEMPORARY-DIRECTORY>" )
-      , ( "Using cabal specification: .*"
+      [ ( "Using cabal specification: .*"
         , "Using cabal specification: <VERSION>" )
       , ( "\\\\\\\\", "/" ) -- Use forward slash
       , ( "\\\\", "/" )     -- Use forward slash
+      , ( posixTempDirRegex {- the folder in which the test is run, inside the canonical temp dir-}
+        , "<TEMPORARY-DIRECTORY>" )
      ]
 
-    let normalising (LT.decodeUtf8 -> txt) = foldl' (*=~/) txt replaceREs
+    let normalising (LT.decodeUtf8 -> txt) = LT.filter (/= '\r') $ foldl' (*=~/) txt replaceREs
 
     normalising <$> act
 
@@ -166,5 +182,5 @@ goldenVsStringComparing name ref act = do
             hClose xH
             hClose yH
             (_exitCode, out, err) <- P.readProcessWithExitCode "diff"
-              ["--ignore-space-change", "--strip-trailing-cr", "-u", xf, yf] ""
+              ["-u", xf, yf] ""
             return $ Just $ msg ++ "\nDiff output:\n" ++ out ++ err
