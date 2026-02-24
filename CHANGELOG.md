@@ -1,6 +1,10 @@
 # Revision history for haskell-debugger
 
-## 0.12.0.0 -- 2026-02-11
+## 0.12.1.0 -- 2026-02-24
+
+* Update range of supported runtime `haskell-debugger-view` versions to `0.2.*`
+
+## 0.12.0.0 -- 2026-02-24
 
 * Improved exceptions support!
     * Break-on-exception breakpoints now provide source locations
