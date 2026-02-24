@@ -1,5 +1,10 @@
 # Revision history for haskell-debugger-view
 
+## 0.2.1.0 -- 2026-02-24
+
+* Add `DebugView` instance for `SomeException`
+* Documentation fixes
+
 ## 0.2.0.0 -- 2026-01-05
 
 * Add support for more complex debug visualizations using the Program abstraction
