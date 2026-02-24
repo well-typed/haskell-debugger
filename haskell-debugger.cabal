@@ -1,6 +1,6 @@
 cabal-version:      3.12
 name:               haskell-debugger
-version:            0.12.0.0
+version:            0.12.1.0
 synopsis:
     A step-through debugger for GHC Haskell
 
