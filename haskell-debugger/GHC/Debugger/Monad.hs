@@ -587,8 +587,8 @@ findHsDebuggerViewUnitId mod_graph = do
 
       -- If the haskell-debugger-view is in the dependency graph, it must have
       -- one of the versions the debugger is known to support:
-      supported_versions
-        = [ makeVersion [0, 2, 0, 0] ]
+      supported_ranges -- [min, max(
+        = [ (makeVersion [0, 2], makeVersion [0, 3]) ]
 
   case hskl_dbgr_vws of
     [hdv_uid] -> do
@@ -597,9 +597,9 @@ findHsDebuggerViewUnitId mod_graph = do
       case lookupUnit unitState (RealUnit (Definite hdv_uid)) of
         Just unitInfo -> do
           let version = unitPackageVersion unitInfo
-          if version `elem` supported_versions
+          if any (\(l,h) -> l <= version && version < h) supported_ranges
             then return (Just hdv_uid)
-            else throwM UnsupportedHsDbgViewVersion{supportedVersions=supported_versions, actualVersion=version}
+            else throwM UnsupportedHsDbgViewVersion{supportedVersions=supported_ranges, actualVersion=version}
         Nothing ->
           error "Could not find unit info for haskell-debugger-view"
     [] -> do
@@ -631,14 +631,14 @@ instance Show DebuggerFailedToLoad where
   show DebuggerFailedToLoad = "Failed to compile and load user project."
 
 data UnsupportedHsDbgViewVersion = UnsupportedHsDbgViewVersion
-  { supportedVersions :: [ Version ]
+  { supportedVersions :: [ (Version, Version) ]
   , actualVersion :: Version
   }
 instance Exception UnsupportedHsDbgViewVersion
 instance Show UnsupportedHsDbgViewVersion where
   show (UnsupportedHsDbgViewVersion supported actual) =
     "Cannot use unsupported haskell-debugger-view version found in the transitive closure: " ++ showVersion actual ++
-    " (supported: " ++ L.intercalate ", " (map showVersion supported) ++ ")"
+    " (supported: " ++ L.intercalate ", " (map (\(l,h) -> showVersion l ++ " <= && < " ++ showVersion h) supported) ++ ")"
 
 expectRight :: Exception e => Either e a -> Debugger a
 expectRight s = case s of
