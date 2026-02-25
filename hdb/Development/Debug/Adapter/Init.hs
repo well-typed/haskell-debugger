@@ -126,12 +126,6 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
         hSetBuffering writeExternalIntStdin NoBuffering
         hSetEncoding readExternalIntStdin utf8
         hSetEncoding writeExternalIntStdin utf8
-      when (not preferInternalInterpreter) $ liftIO $ void $ do
-        -- forward proxy in to external interpreter stdin
-        forkIO $ forever $ do
-          i <- readChan syncProxyIn
-          -- 3. Write to write-end of the pipe
-          BS.hPut writeExternalIntStdin i >> hFlush writeExternalIntStdin
 
       let nextFreshId = 0
           breakpointMap = mempty
@@ -173,6 +167,14 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
         , if preferInternalInterpreter then stdinForwardThread  supportsRunInTerminal syncProxyIn  else mempty
         , if preferInternalInterpreter then stdoutCaptureThread supportsRunInTerminal syncProxyOut else mempty
         , if preferInternalInterpreter then stderrCaptureThread supportsRunInTerminal syncProxyErr else mempty
+        , if preferInternalInterpreter
+            then mempty
+            else const $ do
+              -- forward proxy in to external interpreter stdin
+              forever $ do
+                i <- readChan syncProxyIn
+                -- 3. Write to write-end of the pipe
+                BS.hPut writeExternalIntStdin i >> hFlush writeExternalIntStdin
         ]
 
       -- Do not return until the initialization is finished

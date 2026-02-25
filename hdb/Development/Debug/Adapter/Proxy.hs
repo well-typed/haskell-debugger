@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, DerivingStrategies #-}
+{-# LANGUAGE BlockArguments, OverloadedStrings, DerivingStrategies #-}
 -- | Run the proxy mode, which forwards stdin/stdout to/from the DAP server and
 -- is displayed in a terminal in the DAP client using 'runInTerminal'
 module Development.Debug.Adapter.Proxy
@@ -8,6 +8,7 @@ module Development.Debug.Adapter.Proxy
 
 import DAP
 
+import Control.Concurrent.Async
 import System.IO
 import System.Exit (exitSuccess)
 import System.Environment
@@ -55,33 +56,34 @@ serverSideHdbProxy l client_conn_signal = do
 
   port <- liftIO $ socketPort sock
 
-  _ <- liftIO $ forkIO $ ignoreIOException $ do
+  fwd_thr <- liftIO $ async $ ignoreIOException $ do
     myThreadId >>= \tid -> labelThread tid "Debug/Adapter/Proxy: TCP Server"
     runTCPServerWithSocket sock $ \scket -> do
 
       infoMsg (T.pack $ "Connected to client on port " ++ show port ++ "...!")
       putMVar client_conn_signal () -- signal ready (see #95)
 
-      -- -- Read stdout from chan and write to socket
-      _ <- forkIO $ ignoreIOException $ do
-        tid <- myThreadId
-        labelThread tid "Debug/Adapter/Proxy: Forward stdout"
-        forever $ do
-          bs <- readChan dbOut
-          debugMsg (T.pack $ "Writing to socket: " ++ BS8.unpack bs)
-          NBS.sendAll scket bs
-
-      -- Read stderr from chan and write to socket
-      _ <- forkIO $ ignoreIOException $ do
-        tid <- myThreadId
-        labelThread tid "Debug/Adapter/Proxy: Forward stderr"
-        forever $ do
-          bs <- readChan dbErr
-          debugMsg (T.pack $ "Writing to socket (from stderr): " ++ BS8.unpack bs)
-          NBS.sendAll scket bs
-
-      -- Read stdin from socket and write to chan
-      let loop = do
+      race_
+        (race_
+          (-- Read stdout from chan and write to socket
+           ignoreIOException $ do
+             tid <- myThreadId
+             labelThread tid "Debug/Adapter/Proxy: Forward stdout"
+             forever $ do
+               bs <- readChan dbOut
+               debugMsg (T.pack $ "Writing to socket: " ++ BS8.unpack bs)
+               NBS.sendAll scket bs)
+          (-- Read stderr from chan and write to socket
+           ignoreIOException $ do
+             tid <- myThreadId
+             labelThread tid "Debug/Adapter/Proxy: Forward stderr"
+             forever $ do
+               bs <- readChan dbErr
+               debugMsg (T.pack $ "Writing to socket (from stderr): " ++ BS8.unpack bs)
+               NBS.sendAll scket bs))
+        (-- Read stdin from socket and write to chan
+         let
+          loop = do
             bs <- NBS.recv scket 4096
             if BS8.null bs
               then do
@@ -90,8 +92,9 @@ serverSideHdbProxy l client_conn_signal = do
               else do
                 debugMsg (T.pack $ "Read from socket: " ++ BS8.unpack bs)
                 writeChan dbIn bs >> loop
-       in ignoreIOException loop
+          in ignoreIOException loop)
 
+  liftIO $ link fwd_thr
   sendRunProxyInTerminal port
 
   where
@@ -120,22 +123,22 @@ runInTerminalHdbProxy l port = do
   catch (
     runTCPClient "127.0.0.1" (show port) $ \sock -> do
       -- Forward stdin to sock
-      _ <- forkIO $
-        catch (forever $ do
+      race_
+        (catch (forever $ do
           str <- BS8.hGetLine stdin
           NBS.sendAll sock (str <> BS8.pack "\n")
-          ) $ \(_e::IOException) -> return () -- connection dropped, just exit.
+          ) $ \(_e::IOException) -> return ()) -- connection dropped, just exit.
 
-      -- Forward stdout from sock
-      catch (forever $ do
-        msg <- NBS.recv sock 4096
-        if BS8.null msg
-          then do
-            l <& WithSeverity (T.pack "Exiting...") Info
-            close sock
-            exitSuccess
-          else BS8.hPut stdout msg >> hFlush stdout
-        ) $ \(_e::IOException) -> return () -- connection dropped, just exit.
+        (-- Forward stdout from sock
+        catch (forever $ do
+          msg <- NBS.recv sock 4096
+          if BS8.null msg
+            then do
+              l <& WithSeverity (T.pack "Exiting...") Info
+              close sock
+              exitSuccess
+            else BS8.hPut stdout msg >> hFlush stdout
+          ) $ \(_e::IOException) -> return ()) -- connection dropped, just exit.
 
     ) $ \(_e::IOException) -> do
       hPutStrLn stderr "Failed to connect to debugger server proxy -- did the debuggee compile and start running successfully?"
