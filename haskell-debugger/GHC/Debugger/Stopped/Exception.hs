@@ -75,21 +75,23 @@ exceptionLocationTupleParser =
 -- | This helper looks at the exception context for an exception, and retrieves
 -- the last entry of the HasCallStack backtrace.
 exceptionLocationExpr :: String
-exceptionLocationExpr ="""
+exceptionLocationExpr = """
   let
     fromCallStack cs = case Data.Maybe.listToMaybe (GHC.Exception.getCallStack cs) of
-      Just (_, loc) -> Just ( GHC.Exception.srcLocFile loc
-                            , GHC.Exception.srcLocStartLine loc
-                            , GHC.Exception.srcLocStartCol loc)
+      Data.Maybe.Just (_, loc)
+        -> Data.Maybe.Just
+          ( GHC.Exception.srcLocFile loc
+          , GHC.Exception.srcLocStartLine loc
+          , GHC.Exception.srcLocStartCol loc)
     go exc =
       let ctx = Control.Exception.someExceptionContext exc
           bts :: [Control.Exception.Backtrace.Backtraces]
           bts = Control.Exception.Context.getExceptionAnnotations ctx
       in case bts of
            bt : _ -> case GHC.Internal.Exception.Backtrace.btrHasCallStack bt of
-             Just cs -> fromCallStack cs
-             Nothing -> Nothing
-           [] -> Nothing
+             Data.Maybe.Just cs -> fromCallStack cs
+             Data.Maybe.Nothing -> Data.Maybe.Nothing
+           [] -> Data.Maybe.Nothing
   in go
 """
 
@@ -147,7 +149,7 @@ exceptionInfoParser = do
 -- We need a specific datatype because ExceptionInfoNode is recursive.
 exceptionInfoData :: String
 exceptionInfoData =
-  "data ExceptionInfoNode = ExceptionInfoNode String String String (Maybe String) [ExceptionInfoNode]"
+  "data ExceptionInfoNode = ExceptionInfoNode String String String (Data.Maybe.Maybe String) [ExceptionInfoNode]"
 
 -- | Helper expression run in the debuggee that walks the exception context and
 -- populates the 'ExceptionInfoNode' structure.
@@ -160,18 +162,18 @@ exceptionInfoExpr = """
             let ctx = Control.Exception.someExceptionContext se'
                 rendered = Control.Exception.Context.displayExceptionContext ctx
                 whileHandling = Control.Exception.Context.getExceptionAnnotations ctx
-                innerNodes = map (collectExceptionInfo . unwrap) whileHandling
+                innerNodes = Prelude.map (collectExceptionInfo Prelude.. unwrap) whileHandling
                 simpleTypeName = Data.Typeable.tyConName tc
                 modulePrefix = case Data.Typeable.tyConModule tc of
-                  mdl | null mdl -> \"\"
-                      | otherwise -> mdl ++ \".\"
+                  mdl | Prelude.null mdl -> \"\"
+                      | otherwise -> mdl Prelude.++ \".\"
                 packagePrefix = case Data.Typeable.tyConPackage tc of
-                  pkg | null pkg -> \"\"
-                      | otherwise -> pkg ++ \":\"
+                  pkg | Prelude.null pkg -> \"\"
+                      | otherwise -> pkg Prelude.++ \":\"
                 tc = Data.Typeable.typeRepTyCon (Data.Typeable.typeOf exc)
-                fullTypeName = packagePrefix ++ modulePrefix ++ simpleTypeName
+                fullTypeName = packagePrefix Prelude.++ modulePrefix Prelude.++ simpleTypeName
                 unwrap (Control.Exception.WhileHandling inner) = inner
-                contextText = if null rendered then Nothing else Just rendered
+                contextText = if Prelude.null rendered then Data.Maybe.Nothing else Data.Maybe.Just rendered
             in ExceptionInfoNode
                  simpleTypeName
                  fullTypeName
