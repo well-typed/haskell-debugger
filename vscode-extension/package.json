@@ -160,6 +160,11 @@
                 "type": "array",
                 "description": "Additional arguments to pass to the GHC invocation inferred by hie-bios for this project",
                 "default": []
+              },
+              "internalInterpreter": {
+                "type": "boolean",
+                "description": "Whether to use the internal GHCi interpreter for debugging.",
+                "default": false
               }
             }
           }
