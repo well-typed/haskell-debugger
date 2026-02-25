@@ -155,10 +155,10 @@ exceptionInfoData =
 -- populates the 'ExceptionInfoNode' structure.
 exceptionInfoExpr :: String
 exceptionInfoExpr = """
-  let collectExceptionInfo :: SomeException -> ExceptionInfoNode
+  let collectExceptionInfo :: Control.Exception.SomeException -> ExceptionInfoNode
       collectExceptionInfo se' =
         case se' of
-          SomeException exc ->
+          Control.Exception.SomeException exc ->
             let ctx = Control.Exception.someExceptionContext se'
                 rendered = Control.Exception.Context.displayExceptionContext ctx
                 whileHandling = Control.Exception.Context.getExceptionAnnotations ctx
