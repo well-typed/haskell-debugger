@@ -286,6 +286,20 @@ describe("Debug Adapter Tests", function () {
                 const expected = { path: config.projectRoot + "/" + config.entryFile, line: 2 }
                 return dc.hitBreakpoint(config, { path: config.entryFile, line: 2 }, expected, expected)
             })
+
+            it('accepts internalInterpreter launch option', async () => {
+                const config = mkConfig({
+                    projectRoot: "/data/simple",
+                    entryFile: "Main.hs",
+                    entryPoint: "main",
+                    entryArgs: [],
+                    extraGhcArgs: [],
+                    internalInterpreter: true
+                });
+
+                const expected = { path: config.projectRoot + "/" + config.entryFile, line: 6 };
+                return dc.hitBreakpoint(config, { path: config.entryFile, line: 6 }, expected, expected);
+            })
         })
 
     })

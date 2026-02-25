@@ -186,7 +186,11 @@ class GHCDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDescr
 		const serverExecutable = vscode.workspace.getConfiguration('haskell-debugger').get<string>('serverExecutable') || 'hdb';
 		this.logger.appendLine(`[Factory] Using server executable: ${serverExecutable}`);
 
-		const debuggerProcess = cp.spawn(serverExecutable, ['server', '--port', port.toString()]);
+		const debuggerProcess = cp.spawn(serverExecutable, [
+			'server',
+			'--port', port.toString(),
+			...(session.configuration.internalInterpreter ? ['--internal-interpreter'] : [])
+		]);
 
         debuggerProcess.on('spawn', () => {
             this.logger.appendLine('[Factory] haskell-debugger spawned...');
