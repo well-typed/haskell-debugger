@@ -109,7 +109,7 @@ handleEvalResult stepping er = case er of
   EvalStopped {breakId = Nothing, breakThread} ->
     sendStoppedEvent
       defaultStoppedEvent {
-        stoppedEventAllThreadsStopped = True
+        stoppedEventAllThreadsStopped = False
       , stoppedEventReason = StoppedEventReasonException
       , stoppedEventHitBreakpointIds = []
       , stoppedEventThreadId = Just $ remoteThreadIntRef breakThread
@@ -118,7 +118,7 @@ handleEvalResult stepping er = case er of
     DAS{breakpointMap} <- getDebugSession
     sendStoppedEvent
       defaultStoppedEvent {
-        stoppedEventAllThreadsStopped = True
+        stoppedEventAllThreadsStopped = False
          -- could be more precise here by saying "function breakpoint" rather than always "breakpoint"
       , stoppedEventReason
           = if stepping then StoppedEventReasonStep
