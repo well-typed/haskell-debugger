@@ -112,6 +112,16 @@
         "language": "haskell"
       }
     ],
+    "configuration": {
+      "properties": {
+        "haskell-debugger.serverExecutable": {
+          "scope": "machine-overridable",
+          "type": "string",
+          "default": "hdb",
+          "description": "Path to the hdb executable. Can be an absolute path or a command available on PATH."
+        }
+      }
+    },
     "debuggers": [
       {
         "type": "haskell-debugger",
