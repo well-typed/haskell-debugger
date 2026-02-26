@@ -159,6 +159,7 @@ executable hdb
 
         haskell-debugger,
         hie-bios,
+        prettyprinter ^>= 1.7.0,
         co-log-core >= 0.3.2.5 && < 0.4,
         implicit-hie ^>=0.1.4.0,
         transformers >= 0.6 && < 0.7,

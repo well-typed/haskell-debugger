@@ -114,7 +114,26 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
 
   projectRoot <- maybe (liftIO getCurrentDirectory) pure givenRoot
 
-  let hieBiosLogger = contramap DAPSessionSetupLog l
+  -- Create a pipe to which messages to send to the DAP console are written and read.
+  -- todo: This could just be a Haskell channel now...
+  (readDAPOutput, writeDAPOutput) <- liftIO P.createPipe
+  liftIO $ do
+    hSetBuffering readDAPOutput LineBuffering
+    hSetBuffering writeDAPOutput NoBuffering
+    -- GHC output uses utf8
+    hSetEncoding readDAPOutput utf8
+    hSetEncoding writeDAPOutput utf8
+    setLocaleEncoding utf8
+
+  dapLogger <- liftIO $ handleLogger writeDAPOutput
+
+  let hieBiosLogger = contramap DAPSessionSetupLog l <> logHieBiosToDAP
+
+      logHieBiosToDAP = LogAction $ \case
+        WithSeverity msg sev
+          | sev >= Info -> dapLogger <& renderSessionSetupLog msg
+          | otherwise -> mempty
+
   liftIO (runExceptT (hieBiosSetup hieBiosLogger projectRoot entryFile)) >>= \case
     Left e              -> throwError $ InitFailed e
     Right (Left e)      -> lift       $ exitWithMsg e
@@ -138,21 +157,10 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
             , externalInterpreterStdinStream = UseHandle readExternalIntStdin
             }
 
-      -- Create a pipe to which messages to send to the DAP console are written and read.
-      -- todo: This could just be a Haskell channel now...
-      (readDAPOutput, writeDAPOutput) <- liftIO P.createPipe
-      liftIO $ do
-        hSetBuffering readDAPOutput LineBuffering
-        hSetBuffering writeDAPOutput NoBuffering
-        -- GHC output uses utf8
-        hSetEncoding readDAPOutput utf8
-        hSetEncoding writeDAPOutput utf8
-        setLocaleEncoding utf8
-
       finished_init <- liftIO $ newEmptyMVar
 
       dbgLog <- liftIO $
-        createDebuggerLogger l writeDAPOutput (supportsRunInTerminal, syncProxyOut, syncProxyErr)
+        createDebuggerLogger l dapLogger writeDAPOutput (supportsRunInTerminal, syncProxyOut, syncProxyErr)
 
       let absEntryFile = normalise $ projectRoot </> entryFile
       lift $ registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{entryFile=absEntryFile,..}
@@ -277,11 +285,11 @@ Specification for the logger given to `Debugger`:
 -- See Note [Debugger, debuggee, and DAP logs]
 createDebuggerLogger
   :: LogAction IO DAPLog
-  -> Handle -- ^ Handle to write to DAP output
+  -> LogAction IO T.Text -- ^ Logger that writes to to DAP output
+  -> Handle              -- ^ Handle to DAP output
   -> (Bool, Chan BS.ByteString, Chan BS.ByteString) -- ^ Proxy channels, and whether is supported
   -> IO (LogAction IO Debugger.DebuggerLog)
-createDebuggerLogger l writeDAPOutput (supportsRunInTerminal, syncProxyOut, syncProxyErr) = do
-  dapLogger <- handleLogger writeDAPOutput
+createDebuggerLogger l dapLogger writeDAPOutput (supportsRunInTerminal, syncProxyOut, syncProxyErr) = do
   return $
     -- (1) (all output is logged to normal logger)
     contramap DAPDebuggerLog l <>

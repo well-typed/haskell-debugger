@@ -6,6 +6,7 @@
 {-# LANGUAGE CPP #-}
 module Test.DAP.RunInTerminal (runInTerminalTests) where
 
+import Control.Monad
 import Control.Concurrent
 import DAP.Types
 import DAP.Utils
@@ -112,12 +113,10 @@ runInTerminal1 flags = do
             ]
         ]
 
-      _ <- shouldReceive handle
-            ["type" .= ("event" :: String), "event" .= ("output" :: String)]
-      _ <- shouldReceive handle
-            ["type" .= ("event" :: String), "event" .= ("output" :: String)]
-      _ <- shouldReceive handle
-            ["type" .= ("event" :: String), "event" .= ("output" :: String)]
+      -- Receive output events
+      forM_ [1..9] $ \_ ->
+        shouldReceive handle
+          ["type" .= ("event" :: String), "event" .= ("output" :: String)]
       _ <- shouldReceive handle
             [ "command" .= ("launch" :: String)
             , "success" .= True]

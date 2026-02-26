@@ -11,6 +11,7 @@ module Development.Debug.Session.Setup
 
   -- * Logging
   , SessionSetupLog(..)
+  , renderSessionSetupLog
   ) where
 
 import Control.Applicative ((<|>))
@@ -43,12 +44,20 @@ import qualified Hie.Locate as Implicit
 import qualified Hie.Yaml as Implicit
 
 import Colog.Core
+import Prettyprinter
+import Prettyprinter.Render.Text
 
 data SessionSetupLog
   = HieBiosLog HIE.Log
   | LogCradle (HIE.Cradle Void)
   | LogSetupMsg T.Text
   deriving Show
+
+renderSessionSetupLog :: SessionSetupLog -> T.Text
+renderSessionSetupLog = \case
+  HieBiosLog l -> renderStrict $ layoutPretty defaultLayoutOptions $ pretty l
+  LogCradle c -> T.pack $ "Using cradle: " ++ show c
+  LogSetupMsg m -> m
 
 -- | Flags inferred by @hie-bios@ to invoke GHC
 data HieBiosFlags = HieBiosFlags
