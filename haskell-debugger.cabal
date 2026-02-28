@@ -9,17 +9,17 @@ description:        This package provides a standalone executable
                     programs and can act as a Debug Adapter Protocol (DAP)
                     server in the @server@ mode for debugging Haskell
                     programs.
-                    .
+                    
                     The Debug Adapter is implemented on top of the
                     @haskell-debugger@ library which defines the primitive
                     debugging capabilities. These debugger features are
                     implemented by managing a GHC session and debugging it
                     through the GHC API.
-                    .
+                    
                     The @hdb@ is transparently compatible with most projects
                     because it uses @hie-bios@ to figure out the right flags to
                     invoke GHC with.
-                    .
+                    
                     Additional information can be found [in the README](https://github.com/well-typed/haskell-debugger).
 
 license:            BSD-3-Clause
