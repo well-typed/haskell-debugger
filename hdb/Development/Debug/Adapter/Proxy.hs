@@ -153,12 +153,13 @@ sendRunProxyInTerminal port = do
       , projectRoot } <- getDebugSession
   let debuggee_inv = T.pack $ makeRelative projectRoot entryFile ++ ":" ++ entryPoint ++
                               (if null entryArgs then "" else " ") ++ unwords entryArgs
+  thisProg <- liftIO getExecutablePath -- run the same `hdb` executable in `proxy` mode
   sendRunInTerminalReverseRequest
     RunInTerminalRequestArguments
       { runInTerminalRequestArgumentsKind = Just RunInTerminalRequestArgumentsKindIntegrated
       , runInTerminalRequestArgumentsTitle = Just debuggee_inv
       , runInTerminalRequestArgumentsCwd = ""
-      , runInTerminalRequestArgumentsArgs = ["hdb", "proxy", "--port", T.pack (show port)]
+      , runInTerminalRequestArgumentsArgs = [T.pack thisProg, "proxy", "--port", T.pack (show port)]
       , runInTerminalRequestArgumentsEnv = Just (H.singleton "DEBUGGEE_INVOCATION" debuggee_inv)
       , runInTerminalRequestArgumentsArgsCanBeInterpretedByShell = False
       }
