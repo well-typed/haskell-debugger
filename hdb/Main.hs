@@ -213,7 +213,13 @@ talk :: LogAction IO MainLog
 talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter = \ case
   CommandInitialize -> do
     InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
+#ifdef mingw32_HOST_OS
+    -- On Windows, runInTerminal is currently unsupported
+    -- See #199
+    let runInTerminal = False
+#else
     let runInTerminal = fromMaybe False supportsRunInTerminalRequest
+#endif
     liftIO $ writeIORef support_rit_var runInTerminal
     sendInitializeResponse
 
