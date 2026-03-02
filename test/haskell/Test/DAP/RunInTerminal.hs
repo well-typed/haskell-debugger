@@ -31,7 +31,7 @@ runInTerminalTests =
   testGroup "DAP.RunInTerminal"
     [
 #ifdef mingw32_HOST_OS
-      ignoreTestBecause "Needs to be fixed for Windows" $
+      ignoreTestBecause "Needs to be fixed for Windows (#199)" $
 #endif
       testGroup "runInTerminal: proxy forwards stdin correctly"
         [ testCase "(default)" (runInTerminal1 "")
