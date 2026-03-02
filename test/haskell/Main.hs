@@ -44,8 +44,14 @@ main = do
   let testsForInternal = Set.toList $ internalOnlySet `Set.union` defaultTestsSet
   let testsForExternal = Set.toList $ externalOnlySet `Set.union` defaultTestsSet
 
-  default_goldens   <- mapM (mkTest "") testsForExternal
-  intinterp_goldens <- mapM (mkTest "--internal-interpreter") testsForInternal
+  -- Disable IPE backtraces in tests to ensure consistent output between
+  -- internal and external interpreter modes. When using the internal interpreter,
+  -- IPE backtraces appear in debugger output but not with the external interpreter
+  -- (since they run as separate processes). To use a single golden test file for
+  -- both modes, we disable IPE backtraces by default in tests.
+  let baseFlags = "--disable-ipe-backtraces"
+  default_goldens   <- mapM (mkTest baseFlags) testsForExternal
+  intinterp_goldens <- mapM (mkTest ("--internal-interpreter " ++ baseFlags)) testsForInternal
 
   defaultMain $
     testGroup "Tests"

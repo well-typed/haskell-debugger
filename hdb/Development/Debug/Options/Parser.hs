@@ -29,6 +29,7 @@ serverParser = HdbDAPServer
      <> help "DAP server port" )
   <*> verbosityParser Debug
   <*> internalInterpreterParser
+  <*> disableIpeBacktracesParser
 
 -- | Parser for 'HdbCLI' options
 cliParser :: Parser HdbOptions
@@ -55,6 +56,7 @@ cliParser = HdbCLI
      <> help "Additional flags to pass to the ghc invocation that loads the program for debugging" )
   <*> verbosityParser Warning
   <*> internalInterpreterParser
+  <*> disableIpeBacktracesParser
   <*> (optional $ strOption
       ( long "debuggee-stdin"
      <> metavar "FILE"
@@ -151,6 +153,22 @@ internalInterpreterParser =
   switch
     ( long "internal-interpreter"
    <> help "Prefer running the debuggee on the debugger's internal interpreter rather than on a separate (external-interpreter) process"
+    )
+
+-- | Parser for --disable-ipe-backtraces
+--
+-- Disable IPE backtrace information in the debugger. By default, IPE backtraces
+-- are enabled to provide better crash diagnostics when debugging Haskell programs.
+-- However, when using the internal interpreter, IPE backtraces appear in the
+-- debugger output but not with the external interpreter (since they run as
+-- separate processes). Use this flag only if you need consistent test output
+-- between internal and external interpreter modes, or when testing behavior that
+-- should not include IPE backtrace information.
+disableIpeBacktracesParser :: Parser Bool
+disableIpeBacktracesParser =
+  switch
+    ( long "disable-ipe-backtraces"
+   <> help "Disable IPE backtrace info for consistent output between internal/external interpreter modes"
     )
 
 -- | Main parser info
