@@ -55,7 +55,6 @@ main :: IO ()
 main = do
   setBacktraceMechanismState CostCentreBacktrace False
   setBacktraceMechanismState HasCallStackBacktrace True
-  setBacktraceMechanismState IPEBacktrace False -- TODO: True, see #181
 
   allArgs <- getArgs
   hdbOpts <- case allArgs of
@@ -66,7 +65,8 @@ main = do
          pure (HdbExternalInterpreter (read writeFd) (read readFd))
     _ -> parseHdbOptions
   case hdbOpts of
-    HdbDAPServer{port, internalInterpreter} -> do
+    HdbDAPServer{port, internalInterpreter, disableIpeBacktraces} -> do
+      setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
       config <- getConfig port
       redirectRealStdout internalInterpreter $ \realStdout -> do
         hSetBuffering realStdout LineBuffering
@@ -78,6 +78,7 @@ main = do
           (talk l init_var pid_var ccon_var internalInterpreter)
           (ack l pid_var)
     HdbCLI{..} -> do
+        setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
         l <- mainLogger hdbOpts.verbosity stdout
         stdinStream <- case debuggeeStdin of
           Just fp -> UseHandle <$> System.IO.openFile fp ReadMode
@@ -91,6 +92,7 @@ main = do
         runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs
           runConf debugInteractive
     HdbProxy{port} -> do
+        setBacktraceMechanismState IPEBacktrace True
         l <- mainLogger hdbOpts.verbosity stdout
         runInTerminalHdbProxy (contramap RunProxyClientLog l) port
     HdbExternalInterpreter{writeFd, readFd} -> do
