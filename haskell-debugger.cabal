@@ -38,6 +38,13 @@ extra-source-files: haskell-debugger-view/src/GHC/Debugger/View/Class.hs
                     haskell-debugger-view/src/GHC/Debugger/View/Text.hs
                     haskell-debugger-view/src/GHC/Debugger/View/ByteString.hs
 
+                    -- Should probably be extra extra-files but that requires cabal 3.14
+                    test/golden/**/*.hs
+                    test/golden/**/*.hdb-stdin
+                    test/golden/**/*.hdb-stdout
+                    test/golden/**/*.hdb-test
+                    test/golden/**/*.debuggee-stdin
+
 homepage:           https://github.com/well-typed/haskell-debugger
 bug-reports:        https://github.com/well-typed/haskell-debugger/issues
 
