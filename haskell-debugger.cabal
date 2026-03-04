@@ -109,7 +109,7 @@ library
                       cryptohash-sha1 >= 0.11.101.0 && < 0.12,
                       base16-bytestring >= 1.0.2.0 && < 1.1,
                       aeson >= 2.2.3 && < 2.3,
-                      hie-bios >= 0.15 && < 0.18,
+                      hie-bios >= 0.15 && < 0.19,
                       file-embed >= 0.0.16 && < 0.1,
                       attoparsec >= 0.13 && < 0.15,
                       time >= 1.14 && < 2,
