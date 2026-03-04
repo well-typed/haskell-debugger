@@ -215,5 +215,7 @@ test-suite haskell-debugger-test
         tasty-hunit >= 0.10.2,
         tasty-expected-failure >= 0.12.3,
         regex >= 1.1
-    build-tool-depends: haskell-debugger:hdb
+    build-tool-depends:
+          cabal-install:cabal
+        , haskell-debugger:hdb
     ghc-options: -threaded
