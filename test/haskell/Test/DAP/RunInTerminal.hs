@@ -6,6 +6,8 @@
 {-# LANGUAGE CPP #-}
 module Test.DAP.RunInTerminal (runInTerminalTests) where
 
+import System.Exit
+import Control.Exception
 import Control.Monad
 import Control.Concurrent
 import DAP.Types
@@ -53,10 +55,12 @@ runInTerminal1 flags = do
       <- P.createProcess (P.shell $ "hdb server " ++ flags ++ " --port " ++ show testPort)
           {P.cwd = Just test_dir, P.std_out = P.CreatePipe, P.std_in = P.CreatePipe}
 
+    serverOutputRef <- newIORef []
+
     -- Fork thread to print out output of server process
     -- This is surprisingly needed, otherwise the server process
     -- will be broken, perhaps because it blocks trying to write to stdout/stderr if the buffer is full?
-    forkIO $ do
+    forkIO $ flip catch (\(e :: IOException) -> print ("server process forwarding", e)) $ do
       hSetBuffering hout LineBuffering
       let loop = do
             eof <- hIsEOF hout
@@ -64,14 +68,18 @@ runInTerminal1 flags = do
               then return ()
               else do
                 _l <- hGetLine hout
-                -- UNCOMMENT ME TO DEBUG
-                -- putStrLn ("[server] " ++ _l)
+                modifyIORef' serverOutputRef (_l :)
                 loop
       loop
 
+    let flushServerOutput = do
+          putStrLn "\n--- SERVER OUTPUT ---"
+          readIORef serverOutputRef >>= mapM_ putStrLn . reverse
+          putStrLn "---------------------\n"
+
     retryVar <- newIORef True
     -- Connect to the DAP server
-    withNewClient testPort retryVar $ \handle -> do
+    flip onException flushServerOutput $ withNewClient testPort retryVar $ \handle -> do
       -- As soon as we get a connection, stop retrying
       writeIORef retryVar False
 
@@ -213,9 +221,9 @@ runInTerminal1 flags = do
       -- The contents of the rit_output should contain "hello" plus printing of what we wrote
       out <- LBS.hGetContents rit_out
       let out_str = LB8.unpack out
-      assertBool ("Expected output to contain 'hello', got: " ++ out_str)
+      assertBool ("Expected output to contain 'hello', got: " ++ show out_str)
                  ("hello" `isInfixOf` out_str)
-      assertBool ("Expected output to contain '" ++ secret_in ++ "' , got: " ++ out_str)
+      assertBool ("Expected output to contain '" ++ secret_in ++ "' , got: " ++ show out_str)
                  (secret_in `isInfixOf` out_str)
 
       -- Send disconnect

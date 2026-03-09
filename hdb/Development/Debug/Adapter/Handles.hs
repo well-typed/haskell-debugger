@@ -18,7 +18,6 @@ import GHC.IO.Handle.FD
 import GHC.IO.Handle
 import System.Process
 import Control.Exception
-import Control.Monad
 import Control.Concurrent.Async
 
 handleLogger :: Handle -> IO (LogAction IO T.Text)
@@ -117,10 +116,16 @@ withHandleBypass originalHandle interceptWriteHandle action =
 
 -- | Thread to read from the intercepted stdout pipe and forward onwards
 forwardingThread :: (T.Text -> IO ()) -> Handle -> IO ()
-forwardingThread write_action fromPipe = forever $ do
-  line <- T.hGetLine fromPipe
-  write_action line
-
+forwardingThread write_action fromPipe = loop
+  where
+    loop = do
+      eof <- hIsEOF fromPipe
+      if eof
+        then return ()
+        else do
+          line <- T.hGetLine fromPipe
+          write_action line
+          loop
 
 withPipe :: (Handle -> Handle -> IO r) -> IO r
 withPipe action = bracket createPipe closeBoth (uncurry action)
