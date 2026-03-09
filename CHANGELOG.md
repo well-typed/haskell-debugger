@@ -1,5 +1,14 @@
 # Revision history for haskell-debugger
 
+## 0.12.2.0 -- 2026-03-09
+
+* Bug fixes and improved progress reporting
+* It's now possible interactively debug GHC itself! This works by simply:
+    1. Using GHC 9.14 as the boot compiler
+    2. Creating .vscode/launch.json in the GHC tree root with
+        * `entryFile: "ghc/Main.hs"`
+        * `entryArgs: "["-B${workspaceFolder}/_build/stage0/lib/", "Test.hs"]"`
+
 ## 0.12.1.0 -- 2026-02-24
 
 * Update range of supported runtime `haskell-debugger-view` versions to `0.2.*`
