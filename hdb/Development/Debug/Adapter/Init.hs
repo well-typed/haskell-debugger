@@ -24,7 +24,7 @@ import Data.Maybe
 import System.IO
 import GHC.IO.Encoding
 import Control.Monad.Catch
-import Control.Exception (SomeAsyncException, throwIO)
+import Control.Exception (SomeAsyncException, throwIO, IOException)
 import Control.Concurrent
 import GHC.Conc.Sync (labelThread)
 import Control.Monad
@@ -352,7 +352,10 @@ stdoutCaptureThread runInTerminal syncOut withAdaptor = do
         writeChan syncOut $ T.encodeUtf8 (line <> T.pack "\n")
 
       -- Always output to Debug Console
-      withAdaptor $ Output.stdout line
+      catch
+        (withAdaptor $ Output.stdout line)
+        (\(_ :: IOException) ->
+          throwIO (FailedToWriteToAdaptor line))
 
 -- | Like 'stdoutCaptureThread' but for stderr
 stderrCaptureThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
@@ -368,7 +371,7 @@ stderrCaptureThread runInTerminal syncErr withAdaptor = do
       -- Always output to Debug Console
       catch
         (withAdaptor $ Output.stderr line)
-        (\(_ :: SomeException) ->
+        (\(_ :: IOException) ->
           throwIO (FailedToWriteToAdaptor line))
 
 newtype FailedToWriteToAdaptor = FailedToWriteToAdaptor T.Text

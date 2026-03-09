@@ -123,7 +123,7 @@ runInTerminalHdbProxy l port = do
   catch (
     runTCPClient "127.0.0.1" (show port) $ \sock -> do
       -- Forward stdin to sock
-      race_
+      concurrently_
         (catch (forever $ do
           str <- BS8.hGetLine stdin
           NBS.sendAll sock (str <> BS8.pack "\n")
