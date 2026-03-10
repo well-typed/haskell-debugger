@@ -6,7 +6,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@100..900&display=swap" rel="stylesheet">
-  <title>GHC Debugger</title>
+  <title>Haskell Debugger</title>
 
   <style>
     .roboto-slab {
@@ -183,6 +183,7 @@
     <nav>
         <p><a href="#installation">Installation</a></p>
         <p><a href="#configuration">Configuration</a></p>
+        <p><a href="#debugging-ghc">Debugging GHC</a></p>
         <p><a href="#talks">Talks</a></p>
         <p><a href="https://github.com/well-typed/haskell-debugger">Source</a></p>
     </nav>
@@ -325,6 +326,55 @@
         </tr>
         </tbody>
         </table>
+    </section>
+
+    <section>
+        <h2 id="debugging-ghc">
+            GHC Developers: Debugging GHC itself
+        </h2>
+        <p style="max-width: 50em">
+            You can debug GHC with the debugger now! The debugger version must be at least <strong>v0.12.2</strong>.
+            Assuming you have installed <code>hdb</code> and the DAP plugin for
+            your editor, here are the steps to run GHC under the
+            debugger (s.t. you can set breakpoints in the editor):
+        </p>
+        <div style="max-width: 50em; width: 100%;">
+            <ol>
+                <li>Make sure you're using GHC 9.14 as the boot compiler and available in PATH</li>
+                <li>Build the compiler normally with the desired build flavour in hadrian</li>
+                <li>Configure the debugger launch arguments as follows</li>
+            </ol>
+        </div>
+        <table style="max-width: 50em">
+        <colgroup>
+        <col style="width: 20%" />
+        <col style="width: 80%" />
+        </colgroup>
+        <thead>
+        <tr>
+        <th>Setting</th>
+        <th>Value</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>entryFile</code></td>
+        <td><code>"ghc/Main.hs"</code></td>
+        </tr>
+        <tr>
+        <td><code>entryArgs</code></td>
+        <td><code>["-B/path/to/ghc/_build/stage0/lib/", "Test.hs"]</code></td>
+        </tr>
+        </tbody>
+        </table>
+        <p style="max-width: 50em">
+        Where <code>Test.hs</code> is the program which the GHC you are
+        debugging will compile. You can also pass whatever additional arguments you desire
+        to the GHC being debugged in <code>entryArgs</code>.
+        </p>
+        <p>
+            Please try it out and send me an e-mail if you can't!
+        </p>
     </section>
 
     <section style="background:#453a62; color:#fffff9">
