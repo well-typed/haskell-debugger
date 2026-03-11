@@ -1,5 +1,9 @@
 # Revision history for haskell-debugger
 
+## 0.12.3.0 -- 2026-03-11
+
+* Updated extension logo to be Haskell's logo
+
 ## 0.12.2.0 -- 2026-03-09
 
 * Bug fixes and improved progress reporting
