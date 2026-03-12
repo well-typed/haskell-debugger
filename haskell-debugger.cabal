@@ -196,6 +196,7 @@ test-suite haskell-debugger-test
     hs-source-dirs:   test/haskell/
     main-is:          Main.hs
     other-modules:    Test.DAP.RunInTerminal,
+                      Test.DAP.Scopes,
 
                       Test.DAP,
                       Test.DAP.Init,
