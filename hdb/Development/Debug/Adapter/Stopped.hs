@@ -99,7 +99,7 @@ scopeInfoToScope six ScopeInfo{..} = do
   varId <- freshVarIx six (scopeToVarRef kind)
 
   source <- fileToSource sourceSpan.file
-  return defaultScope
+  return Scope
     { scopeName = case kind of
         LocalVariablesScope -> "Locals"
         ModuleVariablesScope -> "Module"
@@ -109,12 +109,14 @@ scopeInfoToScope six ScopeInfo{..} = do
         ModuleVariablesScope -> ScopePresentationHint "module"
         GlobalVariablesScope -> ScopePresentationHint "globals"
     , scopeNamedVariables = numVars
+    , scopeIndexedVariables = Nothing
     , scopeSource = Just source
     , scopeLine = Just sourceSpan.startLine
     , scopeColumn = Just sourceSpan.startCol
     , scopeEndLine = Just sourceSpan.endLine
     , scopeEndColumn = Just sourceSpan.endCol
     , scopeVariablesReference = varId
+    , scopeExpensive = expensive
     }
 
 --------------------------------------------------------------------------------
