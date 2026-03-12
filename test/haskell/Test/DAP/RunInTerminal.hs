@@ -9,15 +9,12 @@ module Test.DAP.RunInTerminal (runInTerminalTests) where
 import System.Exit
 import Control.Exception
 import Control.Monad
-import Control.Concurrent
 import DAP.Types
 import DAP.Utils
 import Data.Aeson
-import Data.IORef
 import Data.List (isInfixOf)
 import System.FilePath
 import System.IO
-import System.Random
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -47,41 +44,9 @@ rit_keep_tmp_dirs = False
 runInTerminal1 flags = do
   withHermeticDir rit_keep_tmp_dirs "test/unit/T44" $ \test_dir -> do
 
-    -- Come up with a random port
-    testPort <- randomRIO (49152, 65534) :: IO Int
+    server <- startTestDAPServer test_dir flags
 
-    -- Launch server process
-    (Just hin, Just hout, _, p)
-      <- P.createProcess (P.shell $ "hdb server " ++ flags ++ " --port " ++ show testPort)
-          {P.cwd = Just test_dir, P.std_out = P.CreatePipe, P.std_in = P.CreatePipe}
-
-    serverOutputRef <- newIORef []
-
-    -- Fork thread to print out output of server process
-    -- This is surprisingly needed, otherwise the server process
-    -- will be broken, perhaps because it blocks trying to write to stdout/stderr if the buffer is full?
-    forkIO $ flip catch (\(e :: IOException) -> print ("server process forwarding", e)) $ do
-      hSetBuffering hout LineBuffering
-      let loop = do
-            eof <- hIsEOF hout
-            if eof
-              then return ()
-              else do
-                _l <- hGetLine hout
-                modifyIORef' serverOutputRef (_l :)
-                loop
-      loop
-
-    let flushServerOutput = do
-          putStrLn "\n--- SERVER OUTPUT ---"
-          readIORef serverOutputRef >>= mapM_ putStrLn . reverse
-          putStrLn "---------------------\n"
-
-    retryVar <- newIORef True
-    -- Connect to the DAP server
-    flip onException flushServerOutput $ withNewClient testPort retryVar $ \handle -> do
-      -- As soon as we get a connection, stop retrying
-      writeIORef retryVar False
+    withTestDAPServerClient server $ \handle -> do
 
       -- Initialize
       sendDAPRequest handle CommandInitialize InitializeRequestArguments
@@ -239,7 +204,6 @@ runInTerminal1 flags = do
             ]
       -- Kill the processes if they're still running
       P.terminateProcess rit_p
-      P.terminateProcess p
 
   where
     goToNextLine handle = do
@@ -295,4 +259,3 @@ instance FromJSON bps => FromJSON (Breakpoints bps) where
     Breakpoints <$> o .: "breakpoints"
 instance FromJSON Breakpoint where
   parseJSON = genericParseJSONWithModifier
-

@@ -12,6 +12,7 @@ import           Data.Aeson.Encode.Pretty
 import           Data.Aeson.Types
 import           Data.Aeson.KeyMap
 import           Control.Exception hiding (handle)
+import qualified Control.Exception as E
 import qualified Data.ByteString.Lazy.Char8 as BL8 ( hPutStrLn )
 import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.ByteString            as BS
@@ -22,6 +23,8 @@ import           Network.Socket             (socketToHandle)
 import           System.IO
 import           System.Exit
 import           Data.IORef
+import           System.Random (randomRIO)
+import qualified System.Process as P
 ----------------------------------------------------------------------------
 import           DAP.Utils
 import           DAP.Server
@@ -120,3 +123,60 @@ shouldReceive h expected = do
           | toHashMapText ex `H.isSubmapOf` toHashMapText actual -> pure ()
           | otherwise -> encodePretty ex @=? encodePretty actual
     _ -> fail "Invalid JSON"
+
+data TestDAPServer = TestDAPServer
+  { testDAPServerPort :: Int
+  , testDAPServerProcess :: P.ProcessHandle
+  , testDAPServerFlushOutput :: IO ()
+  }
+
+-- | Connect a test client to a running 'TestDAPServer', with retry semantics
+-- and server log flushing on failure.
+withTestDAPServerClient :: TestDAPServer -> (Handle -> IO ()) -> IO ()
+withTestDAPServerClient server continue = do
+  retryVar <- newIORef True
+  (flip E.onException (testDAPServerFlushOutput server) $
+    withNewClient (testDAPServerPort server) retryVar $ \h -> do
+      -- As soon as we get a connection, stop retrying
+      writeIORef retryVar False
+      continue h
+    ) `E.finally` P.terminateProcess (testDAPServerProcess server)
+
+-- | Launch an @hdb server@ for tests on a random local port and capture stdout.
+startTestDAPServer :: FilePath -> String -> IO TestDAPServer
+startTestDAPServer testDir flags = do
+  testPort <- randomRIO (49152, 65534) :: IO Int
+
+  (Just _hin, Just hout, _, p)
+    <- P.createProcess (P.shell $ "hdb server " ++ flags ++ " --port " ++ show testPort)
+        { P.cwd = Just testDir
+        , P.std_out = P.CreatePipe
+        , P.std_in = P.CreatePipe
+        }
+
+  serverOutputRef <- newIORef []
+
+  -- Fork thread to read output of server process. If we don't, the server
+  -- blocks trying to write to stdout/stderr?
+  _ <- forkIO $ flip catch (\(e :: IOException) -> print ("server process forwarding", e)) $ do
+    hSetBuffering hout LineBuffering
+    let loop = do
+          eof <- hIsEOF hout
+          if eof
+            then return ()
+            else do
+              l <- hGetLine hout
+              modifyIORef' serverOutputRef (l :)
+              loop
+    loop
+
+  let flushServerOutput = do
+        putStrLn "\n--- SERVER OUTPUT ---"
+        readIORef serverOutputRef >>= mapM_ putStrLn . reverse
+        putStrLn "---------------------\n"
+
+  pure TestDAPServer
+    { testDAPServerPort = testPort
+    , testDAPServerProcess = p
+    , testDAPServerFlushOutput = flushServerOutput
+    }
