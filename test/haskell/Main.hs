@@ -24,6 +24,7 @@ import Test.Tasty.Golden as G
 import Test.Tasty.Golden.Advanced as G
 
 import Test.DAP.RunInTerminal
+import Test.DAP.Scopes
 import Test.Utils
 
 main :: IO ()
@@ -67,6 +68,7 @@ main = do
 unitTests :: [TestTree]
 unitTests =
   [ runInTerminalTests
+  , scopesTests
   ]
 
 -- | Receives as an argument the path to the @*.hdb-test@ which contains the
