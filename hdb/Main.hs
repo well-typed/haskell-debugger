@@ -185,7 +185,7 @@ getConfig port = do
       , supportsSteppingGranularity           = False
       , supportsInstructionBreakpoints        = False
       , supportsExceptionFilterOptions        = False
-      , supportsSingleThreadExecutionRequests = False
+      , supportsSingleThreadExecutionRequests = True
       }
   ServerConfig
     <$> do fromMaybe hostDefault <$> lookupEnv "DAP_HOST"
