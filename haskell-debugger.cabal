@@ -89,6 +89,9 @@ library
                       GHC.Debugger.Runtime.Thread.Stack,
                       GHC.Debugger.Runtime.Thread.Map,
 
+                      GHC.Debugger.Runtime.Interpreter,
+                      GHC.Debugger.Runtime.Interpreter.Custom,
+
                       GHC.Debugger.Monad,
                       GHC.Debugger.Utils,
 
