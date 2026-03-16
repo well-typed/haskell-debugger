@@ -14,6 +14,7 @@ import qualified GHC
 import qualified GHC.Utils.Outputable as GHC
 
 import GHC.Debugger.Runtime.Term.Key
+import Data.Binary (Binary)
 
 --------------------------------------------------------------------------------
 -- Commands
@@ -263,7 +264,7 @@ newtype RemoteThreadId = RemoteThreadId
     -- find the proper remote 'ThreadId' corresponding to this numeric
     -- identifier, lookup the 'remoteThreadIntRef' in the 'ThreadMap'
     }
-    deriving (Show, Eq, Ord)
+    deriving (Show, Eq, Ord, Binary)
 
 data SourceKind = IsExpr | IsStmt
 

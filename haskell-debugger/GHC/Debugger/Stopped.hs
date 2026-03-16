@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
-   TypeApplications, ScopedTypeVariables, BangPatterns, MultiWayIf #-}
+   TypeApplications, ScopedTypeVariables, BangPatterns, MultiWayIf, OverloadedRecordDot #-}
 module GHC.Debugger.Stopped where
 
 import Control.Monad
@@ -78,16 +78,15 @@ getThreads = do
   -- let (t_ids, remote_refs) = unzip (threadMapToList tmap)
   --
   -- Oh, try the listThreads just for fun.
-  (t_ids, remote_refs) <- unzip <$> listAllLiveRemoteThreads
-  t_labels             <- getRemoteThreadsLabels remote_refs
+  (t_ids, t_infos) <- unzip <$> listAllLiveRemoteThreads
   let
-    _mkDebuggeeThread tid tlbl
+    _mkDebuggeeThread tid tinfo
       = DebuggeeThread
         { tId = tid
-        , tName = tlbl
+        , tName = tinfo.threadInfoLabel
         }
     _all_threads
-      = zipWith _mkDebuggeeThread t_ids t_labels
+      = zipWith _mkDebuggeeThread t_ids t_infos
 
   -- TODO: We ignore _all_threads and report only the main execution thread for now.
   -- See #138 for progress on Multi-threaded debugging.
