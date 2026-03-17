@@ -14,6 +14,6 @@ executable sampleWorkspace
     import:           warnings
     main-is:          Main.hs
     other-modules:    Hi
-    build-depends:    base ^>=4.21.0.0, text
+    build-depends:    base ^>=4.22.0.0, text
     hs-source-dirs:   app
     default-language: Haskell2010
