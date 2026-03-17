@@ -202,37 +202,51 @@ handleExecResult = \case
       return EvalStopped{ breakId = Nothing
                         , breakThread = rt_id }
     ExecBreak {breakNames = _, breakPointId = Just bid} -> do
+
+      let performAction BreakpointStop = do
+                rt_id <- getRemoteThreadIdFromContext
+                return EvalStopped{ breakId = Just bid
+                                  , breakThread = rt_id }
+          performAction (BreakpointLogAndResume logExpr) = do
+            let evalFailedMsg e = text $ "Evaluation of log message expression failed with " ++ e ++ "\nIgnoring..."
+            doEval' logExpr evalFailedMsg $ \ _ _ -> resume
+
       bm <- liftIO . readIORef =<< asks activeBreakpoints
       case BM.lookup bid bm of
-        -- todo: BreakpointAfterCountCond is not handled yet.
-        Just (BreakpointWhenCond cond, _) -> do
-          let evalFailedMsg e = text $ "Evaluation of conditional breakpoint expression failed with " ++ e ++ "\nIgnoring..."
-          let resume = GHC.resumeExec GHC.RunToCompletion Nothing >>= handleExecResult
-          doEval cond >>= \case
+        -- When stepping (`GHC.resumeExec SingleStep` or similar), we will typically stop at locations not explicitly enabled by the user (i.e. not registered in `activeBreakpoints`).
+        Nothing -> performAction BreakpointStop
+        Just BreakpointInfo{bpInfoStatus = status, bpInfoAction = action} -> do
+          case status of
+           -- todo: BreakpointAfterCountCond is not handled yet.
+            BreakpointAfterCountCond{} -> performAction action
+            BreakpointWhenCond cond -> do
+              let evalFailedMsg e = text $ "Evaluation of conditional breakpoint expression failed with " ++ e ++ "\nIgnoring..."
+
+              doEval' cond evalFailedMsg $ \ resultVal resultType -> do
+                if resultType == "Bool" then do
+                  if resultVal == "True" then do
+                    performAction action
+                  else
+                    resume
+                else do
+                  logSDoc Logger.Warning (evalFailedMsg "\"expression resultType is != Bool\"")
+                  resume
+            BreakpointDisabled -> resume
+            -- The counting is handled by @GHC.setupBreakpoint@
+            BreakpointAfterCount _ -> performAction action
+            BreakpointEnabled -> performAction action
+  where
+    doEval' expr evalFailedMsg k = doEval expr >>= \case
             EvalStopped{} -> error "impossible for doEval"
             EvalCompleted { resultVal, resultType } ->
-              if resultType == "Bool" then do
-                if resultVal == "True" then do
-                  rt_id <- getRemoteThreadIdFromContext
-                  return EvalStopped{ breakId = Just bid
-                                    , breakThread = rt_id }
-                else
-                  resume
-              else do
-                logSDoc Logger.Warning (evalFailedMsg "\"expression resultType is != Bool\"")
-                resume
+              k resultVal resultType
             EvalException { resultVal } -> do
               logSDoc Logger.Warning (evalFailedMsg resultVal)
               resume
             EvalAbortedWith e -> do
               logSDoc Logger.Warning (evalFailedMsg e)
               resume
-
-        -- Unconditionally 'EvalStopped' in all other cases
-        _ -> do
-          rt_id <- getRemoteThreadIdFromContext
-          return EvalStopped{ breakId = Just bid
-                            , breakThread = rt_id }
+    resume = GHC.resumeExec GHC.RunToCompletion Nothing >>= handleExecResult
 
 -- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
 inspectName :: Name -> Debugger (Maybe VarInfo)

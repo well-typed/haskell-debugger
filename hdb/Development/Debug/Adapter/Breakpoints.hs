@@ -63,6 +63,7 @@ commandSetBreakpoints = do
                     }
         (readMaybe @Int =<< (T.unpack <$> DAP.sourceBreakpointHitCondition bp))
         (T.unpack <$> DAP.sourceBreakpointCondition bp)
+        (T.unpack <$> DAP.sourceBreakpointLogMessage bp)
     registerBreakFound bf
 
   sendSetBreakpointsResponse (concat breaks)
@@ -84,6 +85,7 @@ commandSetFunctionBreakpoints = do
         FunctionBreak { function  = T.unpack $ DAP.functionBreakpointName bp }
         (readMaybe @Int =<< (T.unpack <$> DAP.functionBreakpointHitCondition bp))
         (T.unpack <$> DAP.functionBreakpointCondition bp)
+        Nothing
     registerBreakFound bf
 
   sendSetFunctionBreakpointsResponse (concat breaks)
@@ -101,11 +103,11 @@ commandSetExceptionBreakpoints = do
   let breakOnError      = BREAK_ON_ERROR `elem` setExceptionBreakpointsArgumentsFilters
 
   when breakOnExceptions $ do
-    DidSetBreakpoint _ <- sendSync (SetBreakpoint OnExceptionsBreak Nothing Nothing)
+    DidSetBreakpoint _ <- sendSync (SetBreakpoint OnExceptionsBreak Nothing Nothing Nothing)
     pure ()
 
   when breakOnError $ do
-    DidSetBreakpoint _ <- sendSync (SetBreakpoint OnUncaughtExceptionsBreak Nothing Nothing)
+    DidSetBreakpoint _ <- sendSync (SetBreakpoint OnUncaughtExceptionsBreak Nothing Nothing Nothing)
     pure ()
 
   sendSetExceptionBreakpointsResponse

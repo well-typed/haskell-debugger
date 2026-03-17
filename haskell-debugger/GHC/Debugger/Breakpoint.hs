@@ -9,6 +9,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.Bits (xor)
+import Data.List (intercalate)
 import Data.IORef
 import System.Directory
 import System.FilePath
@@ -66,12 +67,12 @@ getBreakpointsAt ModuleBreak{path, lineNum, columnNum} = do
 getBreakpointsAt _ = error "unexpected getbreakpoints without ModuleBreak"
 
 -- | Set a breakpoint in this session
-setBreakpoint :: Breakpoint -> BreakpointStatus -> Debugger BreakFound
-setBreakpoint bp BreakpointAfterCountCond{} = do
+setBreakpoint :: Breakpoint -> BreakpointStatus -> BreakpointAction -> Debugger BreakFound
+setBreakpoint bp BreakpointAfterCountCond{} _action = do
   logSDoc Logger.Warning $
     text $ "Setting a hit count condition on a conditional breakpoint is not yet supported. Ignoring breakpoint " ++ show bp
   return BreakNotFound
-setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
+setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status action = do
   mmodl <- getModuleByPath path
   case mmodl of
     Left e -> do
@@ -83,13 +84,17 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status = do
         Just (bix, spn) -> do
           let bid = BreakpointId { bi_tick_mod = ms_mod modl
                                  , bi_tick_index = bix }
-          (changed, ibis) <- registerBreakpoint bid bp_status ModuleBreakpointKind
+              binfo = BreakpointInfo
+                        { bpInfoStatus = bp_status
+                        , bpInfoKind = ModuleBreakpointKind
+                        , bpInfoAction = action}
+          (changed, ibis) <- registerBreakpoint bid binfo
           return $ BreakFound
             { changed = changed
             , sourceSpan = realSrcSpanToSourceSpan spn
             , breakId = ibis
             }
-setBreakpoint FunctionBreak{function} bp_status = do
+setBreakpoint FunctionBreak{function} bp_status action = do
   logger <- getLogger
   resolveFunctionBreakpoint function >>= \case
     Left e -> do
@@ -101,7 +106,11 @@ setBreakpoint FunctionBreak{function} bp_status = do
           applyBreak (bix, spn) = do
             let bid = BreakpointId { bi_tick_mod = modl
                                    , bi_tick_index = bix }
-            (changed, ibis) <- registerBreakpoint bid bp_status FunctionBreakpointKind
+                binfo = BreakpointInfo
+                        { bpInfoStatus = bp_status
+                        , bpInfoKind = FunctionBreakpointKind
+                        , bpInfoAction = action}
+            (changed, ibis) <- registerBreakpoint bid binfo
             return $ BreakFound
               { changed = changed
               , sourceSpan = realSrcSpanToSourceSpan spn
@@ -115,7 +124,8 @@ setBreakpoint FunctionBreak{function} bp_status = do
         bs  -> do
           liftIO $ logOutput logger (text $ "Ambiguous breakpoint found by name " ++ function ++ ": " ++ show bs ++ ". Setting breakpoints in all...")
           ManyBreaksFound <$> mapM applyBreak bs
-setBreakpoint exception_bp bp_status = do
+-- The assert can be removed once we have a way to register actions for exception breakpoints.
+setBreakpoint exception_bp bp_status action = assert (action == BreakpointStop) $ do
   let ch_opt | BreakpointDisabled <- bp_status
              = gopt_unset
              | otherwise
@@ -142,8 +152,8 @@ setBreakpoint exception_bp bp_status = do
 -- 'BreakpointStatus' being set.
 --
 -- Returns @True@ when the breakpoint status is changed.
-registerBreakpoint :: GHC.BreakpointId -> BreakpointStatus -> BreakpointKind -> Debugger (Bool, [GHC.InternalBreakpointId])
-registerBreakpoint bp status kind = do
+registerBreakpoint :: GHC.BreakpointId -> BreakpointInfo -> Debugger (Bool, [GHC.InternalBreakpointId])
+registerBreakpoint bp info@BreakpointInfo{bpInfoStatus = status} = do
 
   -- Set breakpoint in GHC session
   let breakpoint_count = breakpointStatusInt status
@@ -162,12 +172,12 @@ registerBreakpoint bp status kind = do
 
         -- Enabling the breakpoint:
         _ -> case BM.lookup ibi brksMap of
-          Just (status', _kind)
-            | status' == status
+          Just info'
+            | info' == info
             -> -- Nothing changed, OK
                (brksMap, False)
           _ -> -- Else, insert
-            (BM.insert ibi (status, kind) brksMap, True)
+            (BM.insert ibi info brksMap, True)
 
   return (any id changed, internal_break_ids)
 
@@ -196,7 +206,7 @@ getActiveBreakpoints mfile = do
     Nothing -> do
       return
         [ ibi
-        | (ibi, (status, kind)) <- BM.toList bm
+        | (ibi, BreakpointInfo{bpInfoStatus=status, bpInfoKind=kind}) <- BM.toList bm
         -- Keep only function breakpoints in this case
         , FunctionBreakpointKind == kind
         , assert (status > BreakpointDisabled) True
@@ -231,6 +241,39 @@ condBreakEnableStatus hitCount condition = do
     (Just i,  Nothing) -> BreakpointAfterCount i
     (Nothing, Just c)  -> BreakpointWhenCond c
     (Just i,  Just c)  -> BreakpointAfterCountCond i c
+
+
+-- | @logMessageExpression "foo = {show foo}" = "putStrLn (concat [\"foo = \", show foo])"@
+--
+--   Braces are preserved if escaped with a backslash. Some unescaped braces are
+--   fine: opening braces in antiquotations and closing braces outside of them.
+logMessageExpression :: String -> String
+logMessageExpression tmpl = apply "Prelude.putStrLn" $ apply "Prelude.concat" $ parts
+  where
+    apply f x = f ++ " ( " ++ x ++ " ) "
+    parts = listOf $ map renderPart (parseQC [] tmpl)
+    listOf xs = "[ " ++  intercalate ", " xs ++ " ]"
+    renderPart (Literal s) = show s
+    renderPart (AntiQuote e) = apply "" e
+
+-- Taken from interpolatedstring-perl6 package
+data StringPart = Literal String | AntiQuote String deriving Show
+
+unQC :: String -> String -> [StringPart]
+unQC a []          = [Literal (reverse a)]
+unQC a ('\\':x:xs) = unQC (x:a) xs
+unQC a ('\\':[])   = unQC ('\\':a) []
+unQC a ('}':xs)    = AntiQuote (reverse a) : parseQC [] xs
+unQC a (x:xs)      = unQC (x:a) xs
+
+parseQC :: String -> String -> [StringPart]
+parseQC a []           = [Literal (reverse a)]
+parseQC a ('\\':'\\':xs) = parseQC ('\\':a) xs
+parseQC a ('\\':'{':xs) = parseQC ('{':a) xs
+parseQC a ('\\':[])    = parseQC ('\\':a) []
+parseQC a ('{':xs)     = Literal (reverse a) : unQC [] xs
+parseQC a (x:xs)       = parseQC (x:a) xs
+
 
 -- | Get a 'ModSummary' of a loaded module given its 'FilePath'
 getModuleByPath :: FilePath -> Debugger (Either SDoc ModSummary)

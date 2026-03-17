@@ -28,6 +28,8 @@ data Command
                   -- ^ Stop after N hits (if @isJust condition@, count down only when @eval condition == True@)
                   , condition :: Maybe String
                   -- ^ Stop if condition evalutes to True
+                  , logMessage :: Maybe String
+                  -- ^ Log only if @condition@ (and @hitCondition@ when supported) are @True@.
                   }
 
   -- | Delete a breakpoint on a given function, or module by line number

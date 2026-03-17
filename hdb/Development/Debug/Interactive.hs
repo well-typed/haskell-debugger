@@ -349,9 +349,13 @@ cmdParser opts ctx = hsubparser
     ( info (variablesParser ctx <**> helper)
       ( progDesc "Print local variables" ) )
   <> Options.Applicative.command "break"
-    ( info (SetBreakpoint <$> breakpointParser <*> hitCountBreakParser <*> conditionalBreakParser)
+    ( info (SetBreakpoint <$> breakpointParser <*> hitCountBreakParser <*> conditionalBreakParser <*> logMessageParser)
       ( progDesc "Set a breakpoint" ) )
   )
+
+-- | TODO: handle this as part of issue #144
+logMessageParser :: Parser (Maybe String)
+logMessageParser = pure Nothing
 
 stackTraceParser :: RunContext -> Parser Command
 stackTraceParser ctx =

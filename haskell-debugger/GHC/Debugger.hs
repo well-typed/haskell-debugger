@@ -22,9 +22,9 @@ execute :: Command -> Debugger Response
 execute = \case
   ClearFunctionBreakpoints -> DidClearBreakpoints <$ clearBreakpoints Nothing
   ClearModBreakpoints fp -> DidClearBreakpoints <$ clearBreakpoints (Just fp)
-  SetBreakpoint{brk, hitCount, condition} ->
-    DidSetBreakpoint <$> setBreakpoint brk (condBreakEnableStatus hitCount condition)
-  DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled
+  SetBreakpoint{brk, hitCount, condition, logMessage} ->
+    DidSetBreakpoint <$> setBreakpoint brk (condBreakEnableStatus hitCount condition) (maybe BreakpointStop (BreakpointLogAndResume . logMessageExpression) logMessage)
+  DelBreakpoint bp -> DidRemoveBreakpoint <$> setBreakpoint bp BreakpointDisabled BreakpointStop
   GetBreakpointsAt bp -> DidGetBreakpoints <$> getBreakpointsAt bp
   GetThreads -> GotThreads <$> getThreads
   GetStacktrace i -> GotStacktrace <$> getStacktrace i

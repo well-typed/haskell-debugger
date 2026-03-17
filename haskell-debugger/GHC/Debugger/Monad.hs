@@ -83,11 +83,18 @@ newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
            , MonadThrow, MonadCatch, MonadMask
            , GHC.HasDynFlags, MonadReader DebuggerState )
 
+data BreakpointInfo = BreakpointInfo
+  { bpInfoStatus :: !BreakpointStatus
+  , bpInfoKind   :: !BreakpointKind
+  , bpInfoAction :: !BreakpointAction
+  }
+  deriving (Eq,Show)
+
 -- | State required to run the debugger.
 --
 -- - Keep track of active breakpoints to easily unset them all.
 data DebuggerState = DebuggerState
-      { activeBreakpoints :: IORef (BM.BreakpointMap (BreakpointStatus, BreakpointKind))
+      { activeBreakpoints :: IORef (BM.BreakpointMap BreakpointInfo)
         -- ^ Maps a 'InternalBreakpointId' in Trie representation (map of Module to map of Int) to the
         -- 'BreakpointStatus' it was activated with.
 
@@ -149,6 +156,18 @@ data BreakpointStatus
       deriving (Eq, Ord, Show)
 
 instance Outputable BreakpointStatus where ppr = text . show
+
+-- | What to do when a breakpoint is enabled
+data BreakpointAction
+      -- | Evaluation is stopped, typical behaviour
+      = BreakpointStop
+      {- | A log message is printed and then evaluation resumes.
+        The @String@ is an expression that takes care of interpolation and printing the log message.
+      -}
+      | BreakpointLogAndResume String
+      deriving (Eq, Ord, Show)
+
+instance Outputable BreakpointAction where ppr = text . show
 
 --------------------------------------------------------------------------------
 -- Operations
