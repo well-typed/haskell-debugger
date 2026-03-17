@@ -1,0 +1,8 @@
+cradle:
+  cabal:
+    - path: "./haskell-debugger/"
+      component: "lib:haskell-debugger"
+    - path: "./hdb/"
+      component: "exe:hdb"
+    - path: "./test/haskell/"
+      component: "test:haskell-debugger-test"
