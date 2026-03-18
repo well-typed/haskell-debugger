@@ -241,7 +241,10 @@ sendConfigurationDone =
     ]
 
 sendSetBreakpoints :: FilePath -> Int -> TestDAP ()
-sendSetBreakpoints testDir line =
+sendSetBreakpoints testDir line = sendSetBreakpoints' testDir [(line, Nothing,Nothing)]
+
+sendSetBreakpoints' :: FilePath -> [(Int, Maybe String, Maybe String)] -> TestDAP ()
+sendSetBreakpoints' testDir bps =
   send
     [ "type" .= ("request" :: String)
     , "command" .= ("setBreakpoints" :: String)
@@ -253,9 +256,12 @@ sendSetBreakpoints testDir line =
       , "breakpoints" .=
         [ object
           [ "line" .= line
+          , "logMessage" .= logMessage
+          , "condition" .= condition
           ]
+        | (line,condition, logMessage) <- bps
         ]
-      , "lines" .= [line]
+      , "lines" .= [line | (line,_,_) <- bps ]
       , "sourceModified" .= False
       ]
     ]
