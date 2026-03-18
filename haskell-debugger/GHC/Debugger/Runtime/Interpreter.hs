@@ -18,7 +18,8 @@
 -- fallback to an implementation which uses more primitive functions on the
 -- external interpreter, decode the heap values directly into 'Term', and use
 -- 'GHC.Debugger.Runtime.Term.Parser' to parse the heap 'Term's into structured
--- data.
+-- data. That implementation doesn't live in this module, which is meant only
+-- to be the interface to the custom commands supported by GHC > 9.14.
 --
 -- When using the internal interpreter, we can execute the custom command
 -- handler directly in this process -- regardless of whether using GHC 9.14 or GHC 10.0.
@@ -52,27 +53,11 @@ import GHC.Debugger.Monad
 
 import GHC.Debugger.Runtime.Interpreter.Custom
 
-#if MIN_VERSION_ghc(9,15,0)
 import Data.Binary
 import GHCi.Message
 import GHC.Driver.Env (hscInterp)
 import GHC.Driver.Monad (getSession)
 import GHC.Runtime.Interpreter
-#else
-import Control.Applicative
-import Control.Concurrent
-import Data.Functor
-import GHC.Conc.Sync (ThreadStatus(..), BlockReason(..))
-
-import GHC.Builtin.Types
-import GHC.Utils.Outputable
-
-import Colog.Core as Logger
-
-import GHC.Debugger.Runtime.Term.Parser
-import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
-import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
-#endif
 
 --------------------------------------------------------------------------------
 -- * Debugger abstraction
@@ -83,11 +68,6 @@ import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
 -- functions without 'liftIO' everywhere.
 --------------------------------------------------------------------------------
 
-#if MIN_VERSION_ghc(9,15,0)
---------------------------------------------------------------------------------
--- ** GHC 9.15/10.0 and above: use custom commands
---------------------------------------------------------------------------------
-
 listThreads :: Debugger [ThreadInfo ForeignRef]
 listThreads = do
   interp  <- hscInterp <$> getSession
@@ -96,75 +76,6 @@ listThreads = do
     threadInfoForeignRef <- liftIO $ mkFinalizedHValue interp threadInfoRef
     pure ti{threadInfoRef = threadInfoForeignRef}
 
-#else
---------------------------------------------------------------------------------
--- ** GHC 9.14: use @evalX@ and @TermParser@ to do it without custom commands
---------------------------------------------------------------------------------
-
-listThreads :: Debugger [ThreadInfo ForeignRef]
-listThreads = do
-  threads_fvs <- expectRight =<< Remote.evalIOList Remote.listThreads
-  labels      <- getRemoteThreadsLabels threads_fvs
-  forM (zip threads_fvs labels) $ \(castForeignRef -> thread_fv, label) -> do
-    status <- getRemoteThreadStatus thread_fv
-    pure ThreadInfo
-      { threadInfoStatus = status
-      , threadInfoLabel  = label
-      , threadInfoRef    = thread_fv
-      }
-
--- | Is the remote thread running or blocked (NOT finished NOR dead)?
-getRemoteThreadStatus :: ForeignRef ThreadId -> Debugger ThreadStatus
-getRemoteThreadStatus threadIdRef = do
-  status_fv  <- expectRight =<< Remote.evalIO
-    (Remote.threadStatus (Remote.ref threadIdRef))
-  status_parsed <-
-    obtainParsedTerm "ThreadStatus" 2 True anyTy{-..no..-} (castForeignRef status_fv) threadStatusParser
-
-  case status_parsed of
-    Left errs -> do
-      logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
-      liftIO $ fail "Failed to parse ThreadStatus"
-    Right thrdStatus ->
-      return thrdStatus
-
-getRemoteThreadsLabels :: [ForeignRef ThreadId] -> Debugger [Maybe String]
-getRemoteThreadsLabels threadIdRefs = do
-
-  forM threadIdRefs $ \threadIdRef -> do
-
-    r <- Remote.evalIOList $ Remote.do
-      mb_str <- Remote.threadLabel (Remote.ref threadIdRef)
-      Remote.return (Remote.maybeToList mb_str)
-
-    expectRight r >>= \case
-      []          -> pure Nothing
-      [io_lbl_fv] -> Just <$> (expectRight =<< Remote.evalString (Remote.ref io_lbl_fv))
-      _ -> liftIO $ fail "Unexpected result from evaluating \"threadLabel\""
-
---------------------------------------------------------------------------------
--- *** TermParsers
---------------------------------------------------------------------------------
-
-threadStatusParser :: TermParser ThreadStatus
-threadStatusParser = do
-        (matchConstructorTerm "ThreadRunning"  $> ThreadRunning)
-    <|> (matchConstructorTerm "ThreadFinished" $> ThreadFinished)
-    <|> (matchConstructorTerm "ThreadDied"     $> ThreadDied)
-    <|> (matchConstructorTerm "ThreadBlocked"  *> (ThreadBlocked <$> subtermWith 0 blockedReasonParser))
-
-blockedReasonParser :: TermParser BlockReason
-blockedReasonParser = do
-        (matchConstructorTerm "BlockedOnMVar"        $> BlockedOnMVar)
-    <|> (matchConstructorTerm "BlockedOnBlackHole"   $> BlockedOnBlackHole)
-    <|> (matchConstructorTerm "BlockedOnException"   $> BlockedOnException)
-    <|> (matchConstructorTerm "BlockedOnSTM"         $> BlockedOnSTM)
-    <|> (matchConstructorTerm "BlockedOnForeignCall" $> BlockedOnForeignCall)
-    <|> (matchConstructorTerm "BlockedOnOther"       $> BlockedOnOther)
-
-
-#endif
-
 --------------------------------------------------------------------------------
 -- * IO+interpreter abstraction
 --
@@ -172,8 +83,6 @@ blockedReasonParser = do
 -- internal interpreter using custom commands. Note that 'CustomMessage' is not
 -- available in GHC 9.14 so we don't make these functions available in GHC 9.14
 --------------------------------------------------------------------------------
-
-#if MIN_VERSION_ghc(9,15,0)
 
 -- | Run a 'DbgInterpCmd' in the interpreter's context. By default, the command is
 -- serialized and sent to an external iserv process, and the response is
@@ -195,5 +104,3 @@ interpDbgCmd interp command = case interpInstance interp of
       case decodePayload respBytes of
         Left err -> fail err
         Right r  -> pure r
-
-#endif
