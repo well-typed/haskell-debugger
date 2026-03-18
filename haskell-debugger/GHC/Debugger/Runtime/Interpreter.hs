@@ -40,6 +40,7 @@
 -- debugger/host side
 module GHC.Debugger.Runtime.Interpreter
   ( listThreads
+  , decodeThreadStack
 
   -- * Re-exports
   , ThreadInfo(..)
@@ -54,10 +55,10 @@ import GHC.Debugger.Monad
 import GHC.Debugger.Runtime.Interpreter.Custom
 
 import Data.Binary
-import GHCi.Message
 import GHC.Driver.Env (hscInterp)
 import GHC.Driver.Monad (getSession)
 import GHC.Runtime.Interpreter
+import Control.Concurrent
 
 --------------------------------------------------------------------------------
 -- * Debugger abstraction
@@ -75,6 +76,12 @@ listThreads = do
   forM ts_info $ \ti@ThreadInfo{threadInfoRef} -> do
     threadInfoForeignRef <- liftIO $ mkFinalizedHValue interp threadInfoRef
     pure ti{threadInfoRef = threadInfoForeignRef}
+
+decodeThreadStack :: ForeignRef ThreadId -> Debugger [StackFrameInfo]
+decodeThreadStack ftid = do
+  interp  <- hscInterp <$> getSession
+  liftIO $ withForeignRef ftid $
+    interpDbgCmd interp . DecodeThreadStack
 
 --------------------------------------------------------------------------------
 -- * IO+interpreter abstraction
