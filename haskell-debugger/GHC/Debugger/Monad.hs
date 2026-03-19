@@ -52,6 +52,7 @@ import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Loader as GHC
+import GHC.Runtime.Context as GHCi
 import GHC.Types.Error
 import GHC.Types.PkgQual
 import GHC.Types.SourceError
@@ -68,6 +69,7 @@ import qualified GHC.LanguageExtensions as LangExt
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Session
 import GHC.Debugger.Session.Builtin
+import GHC.Debugger.Session.Interactive
 import GHC.Debugger.Runtime.Compile.Cache
 import GHC.Debugger.Utils
 import qualified GHC.Debugger.Breakpoint.Map as BM
@@ -415,6 +417,9 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
         hscInterp <$> GHC.getSession >>= \interp ->
           liftIO $ evalIO interp setBufferings
 
+        noPrint <- defineNoPrint
+        modifySession (\hsc_env -> hsc_env {hsc_IC = GHCi.setInteractivePrintName (hsc_IC hsc_env) noPrint})
+
         runReaderT action
           =<< initialDebuggerState dbgLog
               (if loadedBuiltinModNames == []
@@ -727,6 +732,7 @@ deepseqTerm hsc_env t = case t of
                  -> do wrapped_term' <- deepseqTerm hsc_env wrapped_term
                        return t{wrapped_term = wrapped_term'}
   _              -> do seqTerm hsc_env t
+
 
 --------------------------------------------------------------------------------
 -- * Logging

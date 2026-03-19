@@ -94,6 +94,7 @@ library
 
                       GHC.Debugger.Session,
                       GHC.Debugger.Session.Builtin,
+                      GHC.Debugger.Session.Interactive,
                       GHC.Debugger.Interface.Messages
     -- other-modules:
     default-extensions: CPP
