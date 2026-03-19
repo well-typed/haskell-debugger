@@ -57,7 +57,7 @@ commandEvaluate = do
       sendEvaluateResponse (simpleEvalResp (T.pack e) (T.pack ""))
     EvalException {resultVal, resultType} ->
       sendEvaluateResponse (simpleEvalResp (T.pack resultVal) (T.pack resultType))
-    EvalCompleted{resultVal, resultType, resultStructureRef} -> do
+    EvalCompleted{resultVal, resultType, resultSourceKind, resultStructureRef} -> do
       varIx <- case resultStructureRef of
         NoVariables     -> pure 0
         LocalVariables  -> error "Impossible! Eval result ref should always be NoVariables or SpecificVariable"
@@ -73,11 +73,16 @@ commandEvaluate = do
               }
           pure varId
 
+      let orIfNoResult !x !y
+            | Just IsStmt <- resultSourceKind = y
+            | resultType == "()" = y
+            | otherwise = x
+
       sendEvaluateResponse EvaluateResponse
-        { evaluateResponseResult             = T.pack resultVal
-        , evaluateResponseType               = T.pack resultType
+        { evaluateResponseResult             = T.pack resultVal `orIfNoResult` T.empty
+        , evaluateResponseType               = T.pack resultType `orIfNoResult` T.empty
         , evaluateResponsePresentationHint   = Nothing
-        , evaluateResponseVariablesReference = varIx
+        , evaluateResponseVariablesReference = varIx `orIfNoResult` 0
         , evaluateResponseNamedVariables     = Nothing
         , evaluateResponseIndexedVariables   = Nothing
         , evaluateResponseMemoryReference    = Nothing
@@ -127,4 +132,3 @@ handleEvalResult stepping er = case er of
           = maybe [] IS.toList (M.lookup bid breakpointMap)
       , stoppedEventThreadId = Just $ remoteThreadIntRef breakThread
       }
-

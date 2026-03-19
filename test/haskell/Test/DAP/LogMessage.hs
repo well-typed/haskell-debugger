@@ -54,8 +54,6 @@ simpleTest tmpl expected =
 
 conditionTest :: IO ()
 conditionTest = logMessageTestSetup "" bps $ do
-  -- conditions are printed when they are evaluated.
-  expectMessagesUnordered $ replicate 2 $ eventMatch "output"
   [v] <- receiveMessagesUnordered [eventMatch "output"]
   Just output <- pure $ getOutput v
   liftIO $ assertBool "logged when False" $

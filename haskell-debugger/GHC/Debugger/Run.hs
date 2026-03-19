@@ -26,6 +26,7 @@ import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Unit.Types
 import GHC.Data.FastString
 import GHC.Driver.DynFlags as GHC
+import GHC.Driver.Main (hscParseStmtWithLocation)
 import GHC.Driver.Monad as GHC
 import GHC.Driver.Env as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
@@ -168,12 +169,33 @@ doLocalStep = do
 -- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
 doEval :: String -> Debugger EvalResult
 doEval expr = do
-  excr <- (Right <$> GHC.execStmt expr GHC.execOptions) `catch` \(e::SomeException) -> pure (Left (displayException e))
+  excr <- (Right <$> exec expr GHC.execOptions) `catch` \(e::SomeException) -> pure (Left (displayException e))
   case excr of
     Left err -> pure $ EvalAbortedWith err
-    Right ExecBreak{} -> continueToCompletion >>= handleExecResult
-    Right r@ExecComplete{} -> handleExecResult r
+    Right (k, ExecBreak{}) -> fmap (addSourceKind k) $ continueToCompletion >>= handleExecResult
+    Right (k, r@ExecComplete{}) -> fmap (addSourceKind k) $ handleExecResult r
+  where
+    exec input exec_opts@ExecOptions{..} = do
+      hsc_env <- getSession
 
+      mb_stmt <-
+        liftIO $
+        runInteractiveHsc hsc_env $
+        hscParseStmtWithLocation execSourceFile execLineNumber input
+
+      case mb_stmt of
+        -- empty statement / comment
+        Nothing -> return (IsStmt, ExecComplete (Right []) 0)
+        Just stmt -> (,) <$> stmtKind stmt <*> execStmt' stmt input exec_opts
+
+    stmtKind (stmt :: GhciLStmt GhcPs) = do
+      pure $ case unLoc stmt of
+        BodyStmt{} -> IsExpr
+        _ -> IsStmt
+
+    addSourceKind :: SourceKind -> EvalResult -> EvalResult
+    addSourceKind k EvalCompleted{..} = EvalCompleted{resultSourceKind = Just k, ..}
+    addSourceKind _ r = r
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
 --
 -- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
@@ -190,10 +212,10 @@ handleExecResult = \case
     ExecComplete {execResult} -> do
       case execResult of
         Left e -> return (EvalException (show e) "SomeException")
-        Right [] -> return (EvalCompleted "" "" NoVariables) -- Evaluation completed without binding any result.
+        Right [] -> return (EvalCompleted "" "" Nothing NoVariables) -- Evaluation completed without binding any result.
         Right (n:_ns) -> inspectName n >>= \case
           Just VarInfo{varValue, varType, varRef} -> do
-            return (EvalCompleted varValue varType varRef)
+            return (EvalCompleted varValue varType Nothing varRef)
           Nothing     -> liftIO $ fail "doEval failed"
     ExecBreak {breakNames = _, breakPointId = Nothing} -> do
       -- Stopped at an exception

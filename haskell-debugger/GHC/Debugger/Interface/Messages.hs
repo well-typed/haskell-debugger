@@ -265,9 +265,12 @@ newtype RemoteThreadId = RemoteThreadId
     }
     deriving (Show, Eq, Ord)
 
+data SourceKind = IsExpr | IsStmt
+
 data EvalResult
   = EvalCompleted { resultVal :: String
                   , resultType :: String
+                  , resultSourceKind :: Maybe SourceKind
                   , resultStructureRef :: VariableReference
                   -- ^ A structured representation of the result of evaluating
                   -- the expression given as a "virtual" 'VariableReference'
