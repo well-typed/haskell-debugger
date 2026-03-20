@@ -1,0 +1,2 @@
+run
+print show ([1] :: List 1)

@@ -31,6 +31,7 @@ import GHC.Driver.Main (hscParseStmtWithLocation)
 import GHC.Driver.Monad as GHC
 import GHC.Driver.Env as GHC
 import qualified GHC.Driver.Config.Parser as GHC
+import GHC.Runtime.Context (InteractiveContext(..))
 import GHC.Runtime.Debugger.Breakpoints as GHC
 import qualified GHC.Unit.Module.ModSummary as GHC
 import GHC.Types.Name.Occurrence (mkVarOccFS)
@@ -64,6 +65,11 @@ debugExecution entryFile entry args = do
                                          (moduleName modOfEntryFile)
 
   logSDoc Logger.Debug $ "Eval Module Context:" <+> ppr evalModule
+
+  -- we set the extensions for interactive evaluation to match those from
+  -- `evalModule`, this applies to evaluations from later commands too.
+  copyExtensions evalModule
+
   old_context <- GHC.getContext
   GHC.setContext [GHC.IIModule evalModule]
 
@@ -120,6 +126,13 @@ debugExecution entryFile entry args = do
       case List.find ((Just afp ==) . normalisedModLoc) modSums of
         Nothing -> error $ "findUnitIdOfEntryFile: no unit id found for: " ++ fp ++ "\nCandidates were:\n" ++ unlines (map (show . normalisedModLoc) modSums)
         Just summary -> pure summary
+
+    copyExtensions evalModule = do
+      DynFlags{extensions = mod_exts, extensionFlags = mod_ext_flags} <- ms_hspp_opts <$> GHC.getModSummary evalModule
+      modifySession $ \HscEnv{hsc_IC = InteractiveContext{ic_dflags = DynFlags{..},..},..} ->
+        HscEnv{hsc_IC = InteractiveContext{ic_dflags = DynFlags
+          { extensions = mod_exts
+          , extensionFlags = mod_ext_flags,..},..},..}
 
 -- | Resume execution of the stopped debuggee program
 doContinue :: Debugger EvalResult
