@@ -41,6 +41,7 @@
 module GHC.Debugger.Runtime.Interpreter
   ( listThreads
   , decodeThreadStack
+  , collectExceptionInfo
 
   -- * Re-exports
   , ThreadInfo(..)
@@ -52,6 +53,7 @@ import Control.Monad.IO.Class
 import GHCi.RemoteTypes
 import GHC.Debugger.Monad
 
+import GHC.Debugger.Interface.Messages (ExceptionInfo)
 import GHC.Debugger.Runtime.Interpreter.Custom
 
 import Data.Binary
@@ -59,6 +61,7 @@ import GHC.Driver.Env (hscInterp)
 import GHC.Driver.Monad (getSession)
 import GHC.Runtime.Interpreter
 import Control.Concurrent
+import Control.Exception
 
 --------------------------------------------------------------------------------
 -- * Debugger abstraction
@@ -82,6 +85,12 @@ decodeThreadStack ftid = do
   interp  <- hscInterp <$> getSession
   liftIO $ withForeignRef ftid $
     interpDbgCmd interp . DecodeThreadStack
+
+collectExceptionInfo :: ForeignRef SomeException -> Debugger ExceptionInfo
+collectExceptionInfo excRef = do
+  interp <- hscInterp <$> getSession
+  liftIO $ withForeignRef excRef $
+    interpDbgCmd interp . CollectExceptionInfo
 
 --------------------------------------------------------------------------------
 -- * IO+interpreter abstraction

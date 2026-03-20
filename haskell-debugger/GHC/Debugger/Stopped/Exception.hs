@@ -7,28 +7,30 @@
 module GHC.Debugger.Stopped.Exception
   ( getExceptionInfo
   , defaultExceptionInfo
-  , currentlyStoppedOnException
   ) where
 
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe
 
 import GHC
-import GHC.Types.SrcLoc
-import GHC.Data.FastString (unpackFS)
-import GHC.Utils.Outputable as Ppr
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
-  ( SourceSpan(..)
-  , ExceptionInfo(..)
+  ( ExceptionInfo(..)
   , RemoteThreadId(..)
   )
-import qualified Colog.Core as Logger
 import GHC.Debugger.Runtime.Thread
+import GHCi.RemoteTypes
+#if MIN_VERSION_ghc(9,15,0)
+import qualified GHC.Debugger.Runtime.Interpreter as Debuggee
+#else
+import GHC.Builtin.Types (anyTy)
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import GHC.Debugger.Runtime.Term.Parser
-import GHCi.RemoteTypes (castForeignRef)
-import GHC.Builtin.Types (anyTy)
+import GHC.Debugger.Interface.Messages (SourceSpan(..))
+import GHC.Utils.Outputable as Ppr
+import qualified Colog.Core as Logger
+#endif
+import Control.Exception (SomeException)
 
 -- | Retrieve structured exception information for the requested thread when
 -- the debugger is currently stopped on an exception.
@@ -40,18 +42,21 @@ getExceptionInfo req_tid = GHC.getResumeContext >>= \case
     case (r_tid == req_tid, GHC.resumeBreakpointId r) of
       (True, Nothing) -> do
         let excRef = resumeApStack r
-        fromMaybe defaultExceptionInfo <$> exceptionInfoFromContext excRef
+        fromMaybe defaultExceptionInfo <$> exceptionInfoFromContext (castForeignRef excRef)
       _ -> return defaultExceptionInfo
 
 -- | Evaluate helper code inside the debuggee that turns the exception context
 -- into our 'ExceptionInfo' structure.
-exceptionInfoFromContext :: ForeignHValue -> Debugger (Maybe ExceptionInfo)
+exceptionInfoFromContext :: ForeignRef SomeException -> Debugger (Maybe ExceptionInfo)
 exceptionInfoFromContext excRef = do
+#if MIN_VERSION_ghc(9,15,0)
+  Just <$> Debuggee.collectExceptionInfo excRef
+#else
   -- 1. Add a "data" declaration for the datatype the expression will return
   _ <- runDecls exceptionInfoData
   -- 2. Gather information about the exception.
   evalRes <- Remote.eval
-    (Remote.raw exceptionInfoExpr `Remote.app` Remote.untypedRef excRef)
+    (Remote.raw exceptionInfoExpr `Remote.app` Remote.ref excRef)
   case evalRes of
     Left err -> do
       logSDoc Logger.Debug $
@@ -159,6 +164,7 @@ exceptionInfoExpr = """
              [] -> Data.Maybe.Nothing
   in collectExceptionInfo
   """
+#endif
 
 -- | Placeholder exception info returned when the context could not be
 -- inspected.
@@ -171,12 +177,3 @@ defaultExceptionInfo = ExceptionInfo
   , exceptionInfoSourceSpan = Nothing
   , exceptionInfoInner = []
   }
-
--- | Determine whether the debugger is currently stopped because of an
--- exception (as opposed to a breakpoint).
-currentlyStoppedOnException :: Debugger Bool
-currentlyStoppedOnException = do
-  resumes <- GHC.getResumeContext
-  return $ case resumes of
-    [] -> False
-    r:_ -> isNothing (GHC.resumeBreakpointId r)
