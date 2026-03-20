@@ -35,7 +35,6 @@ import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
 import GHC.Debugger.Utils
 import qualified Colog.Core as Logger
-import qualified GHC.Stack.Types as Stack
 
 {-
 Note [Don't crash if not stopped]
@@ -192,16 +191,6 @@ getStacktrace req_tid = do
                                   }
             Nothing -> return Nothing
   return (maybe id (:) head_frame $ decoded_frames)
-
-srcLocToSourceSpan :: Stack.SrcLoc -> SourceSpan
-srcLocToSourceSpan srcLoc =
-  SourceSpan
-    { file = Stack.srcLocFile srcLoc
-    , startLine = Stack.srcLocStartLine srcLoc
-    , endLine = Stack.srcLocEndLine srcLoc
-    , startCol = Stack.srcLocStartCol srcLoc
-    , endCol = Stack.srcLocEndCol srcLoc
-    }
 
 --------------------------------------------------------------------------------
 -- * Scopes

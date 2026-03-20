@@ -15,7 +15,6 @@ import GHCi.RemoteTypes
 import qualified Data.Binary as Bin
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
-
 import Data.Bits
 import Foreign.C.String
 import GHC.ByteCode.Types
@@ -32,10 +31,18 @@ import qualified GHC.Exts
 import qualified GHC.Exts.Heap as Heap
 import qualified GHC.Stack as Stack
 import GHC.Unit.Module
+import Control.Exception
+import GHC.Debugger.Interface.Messages (SourceSpan (..), ExceptionInfo (..))
+import Control.Exception.Context
+import Data.Typeable
 #if MIN_VERSION_ghc(9,15,0)
+import GHC.Debugger.Interface.Messages (srcLocToSourceSpan)
+import Data.Maybe
+import Control.Exception.Backtrace
+import GHC.Exception
 import qualified GHC.Stack.CloneStack as Stack
 import qualified GHC.Stack.Decode.Experimental as Stack
-import Data.Maybe
+import qualified GHC.Exception.Backtrace.Experimental as Backtrace
 #endif
 
 --------------------------------------------------------------------------------
@@ -62,6 +69,7 @@ data StackFrameInfo
 data DbgInterpCmd a where
   ListThreads :: DbgInterpCmd [ThreadInfo RemoteRef]
   DecodeThreadStack :: RemoteRef ThreadId -> DbgInterpCmd [StackFrameInfo]
+  CollectExceptionInfo :: RemoteRef SomeException -> DbgInterpCmd ExceptionInfo
 
 dbgInterpCmdTag :: Word8
 dbgInterpCmdTag = 0x25
@@ -89,6 +97,10 @@ runDbgInterpCmd = \case
 #else
   DecodeThreadStack _ -> fail "Decoding thread stacks is not supported on GHC versions prior to 9.14.2, which exposes the necessary decodeStackWithIpe functions. Please upgrade to GHC 9.14.2 or later to use this feature."
 #endif
+  CollectExceptionInfo excRef -> do
+    exc  <- localRef excRef
+    let info = exceptionInfo exc
+    return info
 
 
 -- | Run a serialized custom 'DbgInterpCmd'. This is used in conjunction with
@@ -183,6 +195,50 @@ lookupBCOBreakpoint Heap.BCOClosure{..}
     brk_info_ix_lo   = index_at 5#
 lookupBCOBreakpoint _ = pure Nothing
 
+exceptionInfo :: SomeException -> ExceptionInfo
+exceptionInfo se'@(SomeException exc) =
+    ExceptionInfo
+       { exceptionInfoTypeName = simpleTypeName
+       , exceptionInfoFullTypeName = fullTypeName
+       , exceptionInfoMessage = Control.Exception.displayException se'
+       , exceptionInfoContext = contextText
+       , exceptionInfoSourceSpan = exceptionContextLocation
+       , exceptionInfoInner = innerNodes
+       }
+  where
+    ctx = someExceptionContext se'
+    rendered = displayExceptionContext ctx
+    whileHandling = getExceptionAnnotations ctx
+    innerNodes = map (exceptionInfo . unwrap) whileHandling
+    simpleTypeName = tyConName tc
+    modulePrefix = case tyConModule tc of
+      mdl | null mdl -> ""
+          | otherwise -> mdl ++ "."
+    packagePrefix = case tyConPackage tc of
+      pkg | null pkg -> ""
+          | otherwise -> pkg ++ ":"
+    tc = typeRepTyCon (typeOf exc)
+    fullTypeName = packagePrefix ++ modulePrefix ++ simpleTypeName
+    unwrap (WhileHandling inner) = inner
+    contextText | null rendered = Nothing
+                | otherwise     = Just rendered
+
+#if MIN_VERSION_ghc(9,15,0)
+    exceptionContextLocation =
+      let fromCallStack cs = case listToMaybe (getCallStack cs) of
+            Just (_, loc) -> Just (srcLocToSourceSpan loc)
+            Nothing       -> Nothing
+          bts :: [Backtraces]
+          bts = getExceptionAnnotations ctx
+      in case bts of
+           bt : _ -> case Backtrace.btrHasCallStack bt of
+             Just cs -> fromCallStack cs
+             Nothing -> Nothing
+           [] -> Nothing
+#else
+    exceptionContextLocation = Nothing {- btrHasCallstack not available -}
+#endif
+
 --------------------------------------------------------------------------------
 -- * Binary for custom commands
 --------------------------------------------------------------------------------
@@ -205,17 +261,55 @@ instance Bin.Binary (Some Bin.Binary DbgInterpCmd) where
     DecodeThreadStack threadIdRef -> do
       Bin.put (1 :: Word8)
       Bin.put threadIdRef
+    CollectExceptionInfo excRef -> do
+      Bin.put (2 :: Word8)
+      Bin.put excRef
 
   get = do
     (tag :: Word8) <- Bin.get
     case tag of
       0 -> pure (Some ListThreads)
       1 -> Some . DecodeThreadStack <$> Bin.get
+      2 -> Some . CollectExceptionInfo <$> Bin.get
       _ -> fail ("Unknown debugger thread command tag: " ++ show tag)
 
 instance Bin.Binary (ThreadInfo RemoteRef)
 instance Bin.Binary StackFrameInfo
 instance Bin.Binary Stack.SrcLoc
+instance Bin.Binary SourceSpan where
+  put SourceSpan{..} = do
+    Bin.put file
+    Bin.put startLine
+    Bin.put endLine
+    Bin.put startCol
+    Bin.put endCol
+
+  get = do
+    file <- Bin.get
+    startLine <- Bin.get
+    endLine <- Bin.get
+    startCol <- Bin.get
+    endCol <- Bin.get
+    pure SourceSpan{..}
+
+instance Bin.Binary ExceptionInfo where
+  put ExceptionInfo{..} = do
+    Bin.put exceptionInfoTypeName
+    Bin.put exceptionInfoFullTypeName
+    Bin.put exceptionInfoMessage
+    Bin.put exceptionInfoContext
+    Bin.put exceptionInfoSourceSpan
+    Bin.put exceptionInfoInner
+
+  get = do
+    exceptionInfoTypeName <- Bin.get
+    exceptionInfoFullTypeName <- Bin.get
+    exceptionInfoMessage <- Bin.get
+    exceptionInfoContext <- Bin.get
+    exceptionInfoSourceSpan <- Bin.get
+    exceptionInfoInner <- Bin.get
+    pure ExceptionInfo{..}
+
 instance Bin.Binary InternalBreakpointId where
   put (InternalBreakpointId (Module (RealUnit (Definite unit)) name) ix) = do
     Bin.put (unitString unit)

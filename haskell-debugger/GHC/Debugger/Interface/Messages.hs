@@ -15,6 +15,7 @@ import qualified GHC.Utils.Outputable as GHC
 
 import GHC.Debugger.Runtime.Term.Key
 import Data.Binary (Binary)
+import qualified GHC.Stack as Stack
 
 --------------------------------------------------------------------------------
 -- Commands
@@ -213,6 +214,16 @@ unhelpfulSourceSpan = SourceSpan
   , startCol = 0
   , endCol = 0
   }
+
+srcLocToSourceSpan :: Stack.SrcLoc -> SourceSpan
+srcLocToSourceSpan srcLoc =
+  SourceSpan
+    { file = Stack.srcLocFile srcLoc
+    , startLine = Stack.srcLocStartLine srcLoc
+    , endLine = Stack.srcLocEndLine srcLoc
+    , startCol = Stack.srcLocStartCol srcLoc
+    , endCol = Stack.srcLocEndCol srcLoc
+    }
 
 --------------------------------------------------------------------------------
 -- Responses
