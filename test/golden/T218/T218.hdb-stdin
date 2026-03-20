@@ -1,0 +1,6 @@
+print isLetter
+print import Data.Char
+print isLetter
+print isLetter 'a'
+print isLetter '1'
+print import Does.Not.Exist

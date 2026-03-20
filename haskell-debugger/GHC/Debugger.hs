@@ -31,7 +31,7 @@ execute = \case
   GetScopes threadId frameIx -> GotScopes <$> getScopes threadId frameIx
   GetVariables threadId frameIx varRef -> GotVariables <$> getVariables threadId frameIx varRef
   GetExceptionInfo threadId -> GotExceptionInfo <$> getExceptionInfo threadId
-  DoEval exp_s -> DidEval <$> doEval exp_s
+  DoEval exp_s -> DidEval <$> doEvalCommand exp_s
   DoContinue -> DidContinue <$> doContinue
   DoSingleStep -> DidStep <$> doSingleStep
   DoStepOut -> DidStep <$> doStepOut
