@@ -38,9 +38,8 @@ logMessageTests =
         , testCase "escape in antiquote" $
           simpleTest "{ show $ R { field = 1 \\} }"
             "R {field = 1}"
-        -- this fails to compile the log message expression, I guess evaluation context for `doEval` doesn't inherit module LANGUAGE pragmas?
-        -- , testCase "overloaded list" $ logMessageSimpleTest
-        --   "{ show $ ([1,2,3] :: R) }" "R {field = 1}"
+        , testCase "overloaded list" $ simpleTest
+          "{ show $ ([1,2,3] :: R) }" "R {field = 1}"
         , testCase "log only when condition" $
           conditionTest
         ]

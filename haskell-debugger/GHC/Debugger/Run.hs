@@ -45,6 +45,7 @@ import GHC.Debugger.Interface.Messages
 import Colog.Core as Logger
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import GHC.Debugger.Runtime.Thread
+import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags)
 
 --------------------------------------------------------------------------------
 -- * Evaluation
@@ -64,6 +65,7 @@ debugExecution entryFile entry args = do
                                          (moduleName modOfEntryFile)
 
   logSDoc Logger.Debug $ "Eval Module Context:" <+> ppr evalModule
+
   old_context <- GHC.getContext
   GHC.setContext [GHC.IIModule evalModule]
 
@@ -171,7 +173,7 @@ doLocalStep = do
 -- | Generalized `doEval` that also handles `imports`
 doEvalCommand :: String -> Debugger EvalResult
 doEvalCommand expr = do
-  dflags <- GHC.getInteractiveDynFlags
+  dflags <- getInteractiveDebuggerDynFlags
   let pflags = GHC.initParserOpts dflags
   if GHC.isStmt pflags expr
     then doEval expr
@@ -190,7 +192,7 @@ addImport s = handleError $ do
 
 -- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
 doEval :: String -> Debugger EvalResult
-doEval expr = do
+doEval expr = withCurrentBreakExtensions $ do
   excr <- (Right <$> exec expr GHC.execOptions) `catch` \(e::SomeException) -> pure (Left (displayException e))
   case excr of
     Left err -> pure $ EvalAbortedWith err
@@ -218,6 +220,7 @@ doEval expr = do
     addSourceKind :: SourceKind -> EvalResult -> EvalResult
     addSourceKind k EvalCompleted{..} = EvalCompleted{resultSourceKind = Just k, ..}
     addSourceKind _ r = r
+
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
 --
 -- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
@@ -227,6 +230,34 @@ continueToCompletion = do
   case execr of
     GHC.ExecBreak{} -> continueToCompletion
     GHC.ExecComplete{} -> return execr
+
+-- | @withCurrentBreakExtensions m@ executes @m@ with the language and language
+--  extensions of the current breakpoint source module.
+--
+--  If we are not stopped at a breakpoint @m@ is executed with no change.
+withCurrentBreakExtensions :: Debugger a -> Debugger a
+withCurrentBreakExtensions m = do
+  mmodl <- getCurrentBreakModule
+  case mmodl of
+    Nothing          -> m
+    Just breakModule -> do
+      ic_dyn_flags <- getInteractiveDebuggerDynFlags
+      break_dyn_flags <- ms_hspp_opts <$> GHC.getModSummary breakModule
+      setInteractiveDebuggerDynFlags $ adjustFlags ic_dyn_flags break_dyn_flags
+      x <- m
+      setInteractiveDebuggerDynFlags ic_dyn_flags
+      return x
+  where
+    -- Possibly we might want to include more from the module's DynFlags.
+    -- However some are likely to mess with the REPL, e.g. Opt_WarnTypeDefaults,
+    -- Opt_HideAllPackages, Opt_NoIt. See discussion at
+    -- https://github.com/well-typed/haskell-debugger/pull/230#discussion_r2986758826
+    adjustFlags :: DynFlags -> DynFlags -> DynFlags
+    adjustFlags ic modl = ic
+      { extensions = extensions modl
+      , extensionFlags = extensionFlags modl
+      , language = language modl
+      }
 
 -- | Turn a GHC's 'ExecResult' into an 'EvalResult' response
 handleExecResult :: GHC.ExecResult -> Debugger EvalResult
@@ -248,6 +279,7 @@ handleExecResult = \case
     ExecBreak {breakNames = _, breakPointId = Just bid} -> do
 
       let performAction BreakpointStop = do
+
                 rt_id <- getRemoteThreadIdFromContext
                 return EvalStopped{ breakId = Just bid
                                   , breakThread = rt_id }

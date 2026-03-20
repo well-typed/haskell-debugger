@@ -1,0 +1,3 @@
+break Main.hs 11
+run
+print show ([1] :: List Int)
