@@ -12,9 +12,16 @@ module GHC.Debugger.Runtime.Thread.Stack
   , getRemoteThreadStackCopy
   ) where
 
+import Control.Concurrent
+import GHCi.RemoteTypes
+import GHC.Debugger.Monad
+import GHC.Debugger.Runtime.Interpreter.Custom
+
+#if MIN_VERSION_ghc(9,15,0)
+import qualified GHC.Debugger.Runtime.Interpreter as Debuggee
+#else
 import Data.Bits
 import Data.Maybe
-import Control.Concurrent
 import Control.Applicative
 import Control.Monad
 import Control.Monad.IO.Class
@@ -32,32 +39,24 @@ import GHC.Runtime.Interpreter as Interp
 import GHC.Utils.Outputable
 
 import GHCi.Message
-import GHCi.RemoteTypes
 
 import Colog.Core as Logger
-import GHC.Debugger.Monad
 import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Runtime.Eval
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
+#endif
 
 --------------------------------------------------------------------------------
 -- * Thread stack frames
 --------------------------------------------------------------------------------
 
--- | Information about a stack frame
-data StackFrameInfo
-  -- | Information derived from an IPE entry
-  = StackFrameIPEInfo !InfoProv
-  -- | User-defined Stack Frame annotation
-  | StackFrameAnnotation !(Maybe Stack.SrcLoc) !String
-  -- | Information derived from a continuation BCO breakpoint info.
-  | StackFrameBreakpointInfo !InternalBreakpointId
-
 -- | Clone the stack of the given remote thread and get the breakpoint ids of available frames
 getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [StackFrameInfo]
 getRemoteThreadStackCopy threadIdRef = do
-
+#if MIN_VERSION_ghc(9,15,0)
+  Debuggee.decodeThreadStack threadIdRef
+#else
   l <- Remote.evalIOList $ Remote.do
     clonedStack <- Remote.cloneThreadStack (Remote.ref threadIdRef)
     frames      <- Remote.decodeStackWithIpe clonedStack
@@ -79,7 +78,11 @@ getRemoteThreadStackCopy threadIdRef = do
               return Nothing
             Right tm ->
               return tm
+#endif
 
+#if MIN_VERSION_ghc(9,15,0)
+-- Nothing needed in this case :)
+#else
 --------------------------------------------------------------------------------
 -- ** Decoding Stack Frames ----------------------------------------------------
 --------------------------------------------------------------------------------
@@ -225,3 +228,4 @@ bcoBreakPointInfoParser = do
         logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
         liftIO $ fail "Failed to parse BCOClosure's BRK_FUN"
       Right r -> return r
+#endif

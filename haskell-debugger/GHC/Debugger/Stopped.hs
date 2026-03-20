@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
-   TypeApplications, ScopedTypeVariables, BangPatterns, MultiWayIf #-}
+   TypeApplications, ScopedTypeVariables, BangPatterns, MultiWayIf, OverloadedRecordDot #-}
 module GHC.Debugger.Stopped where
 
 import Control.Monad
@@ -35,7 +35,6 @@ import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
 import GHC.Debugger.Utils
 import qualified Colog.Core as Logger
-import qualified GHC.Stack.Types as Stack
 
 {-
 Note [Don't crash if not stopped]
@@ -78,16 +77,15 @@ getThreads = do
   -- let (t_ids, remote_refs) = unzip (threadMapToList tmap)
   --
   -- Oh, try the listThreads just for fun.
-  (t_ids, remote_refs) <- unzip <$> listAllLiveRemoteThreads
-  t_labels             <- getRemoteThreadsLabels remote_refs
+  (t_ids, t_infos) <- unzip <$> listAllLiveRemoteThreads
   let
-    _mkDebuggeeThread tid tlbl
+    _mkDebuggeeThread tid tinfo
       = DebuggeeThread
         { tId = tid
-        , tName = tlbl
+        , tName = tinfo.threadInfoLabel
         }
     _all_threads
-      = zipWith _mkDebuggeeThread t_ids t_labels
+      = zipWith _mkDebuggeeThread t_ids t_infos
 
   -- TODO: We ignore _all_threads and report only the main execution thread for now.
   -- See #138 for progress on Multi-threaded debugging.
@@ -184,7 +182,7 @@ getStacktrace req_tid = do
                   , breakId = Just ibi
                   }
         _ -> do
-          mExcSpan <- exceptionSourceSpanFromContext
+          mExcSpan <- exceptionInfoSourceSpan <$> getExceptionInfo req_tid
           case mExcSpan of
             Just sourceSpan ->  return $ Just DbgStackFrame
                                   { name = GHC.resumeDecl r
@@ -193,16 +191,6 @@ getStacktrace req_tid = do
                                   }
             Nothing -> return Nothing
   return (maybe id (:) head_frame $ decoded_frames)
-
-srcLocToSourceSpan :: Stack.SrcLoc -> SourceSpan
-srcLocToSourceSpan srcLoc =
-  SourceSpan
-    { file = Stack.srcLocFile srcLoc
-    , startLine = Stack.srcLocStartLine srcLoc
-    , endLine = Stack.srcLocEndLine srcLoc
-    , startCol = Stack.srcLocStartCol srcLoc
-    , endCol = Stack.srcLocEndCol srcLoc
-    }
 
 --------------------------------------------------------------------------------
 -- * Scopes

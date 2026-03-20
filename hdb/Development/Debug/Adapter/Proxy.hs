@@ -6,6 +6,11 @@ module Development.Debug.Adapter.Proxy
   , runInTerminalHdbProxy
   ) where
 
+#if !MIN_VERSION_ghc(9,15,0)
+-- no longer needs to be imported in 9.15
+import GHC.Conc.Sync (labelThread)
+#endif
+
 import DAP
 
 import Control.Concurrent.Async
@@ -17,7 +22,6 @@ import Control.Exception.Base
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Concurrent
-import GHC.Conc.Sync (labelThread)
 import qualified Data.List.NonEmpty as NE
 
 import qualified Data.Text as T

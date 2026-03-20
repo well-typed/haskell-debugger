@@ -29,6 +29,9 @@ module GHC.Debugger.Session (
   )
   where
 
+#if MIN_VERSION_ghc(9,14,2)
+import Data.Function ((&))
+#endif
 import Control.Monad
 import Control.Monad.IO.Class
 import qualified Crypto.Hash.SHA1                    as H

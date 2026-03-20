@@ -144,7 +144,7 @@
               "entryFile": {
                 "type": "string",
                 "description": "Path to the file with the entry point, relative to the root",
-                "default": "app/Main.hs"
+                "default": "${relativeFile}"
               },
               "entryPoint": {
                 "type": "string",
@@ -175,7 +175,7 @@
             "request": "launch",
             "name": "Haskell Debugger",
             "projectRoot": "${workspaceFolder}",
-            "entryFile": "app/Main.hs",
+            "entryFile": "${relativeFile}",
             "entryPoint": "main",
             "entryArgs": [],
             "extraGhcArgs": []
@@ -190,7 +190,7 @@
               "request": "launch",
               "name": "Haskell Debugger",
               "projectRoot": "^\"\\${workspaceFolder}\"",
-              "entryFile": "^\"\\${file}\"",
+              "entryFile": "^\"\\${relativeFile}\"",
               "entryPoint": "main",
               "entryArgs": [],
               "extraGhcArgs": []

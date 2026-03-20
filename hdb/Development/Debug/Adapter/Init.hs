@@ -9,6 +9,11 @@
 -- | TODO: This module should be called Launch.
 module Development.Debug.Adapter.Init where
 
+#if !MIN_VERSION_ghc(9,15,0)
+-- no longer needs to be imported from here in 9.15
+import GHC.Conc.Sync (labelThread)
+#endif
+
 import GHC.IO.Handle
 import System.Process
 import qualified Data.ByteString as BS
@@ -26,7 +31,6 @@ import GHC.IO.Encoding
 import Control.Monad.Catch
 import Control.Exception (SomeAsyncException, throwIO, IOException)
 import Control.Concurrent
-import GHC.Conc.Sync (labelThread)
 import Control.Monad
 import Data.Aeson as Aeson
 import GHC.Generics

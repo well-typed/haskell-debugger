@@ -1,4 +1,5 @@
 {-# LANGUAGE QualifiedDo #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OrPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
@@ -9,13 +10,13 @@
 module GHC.Debugger.Runtime.Thread
   ( getRemoteThreadIdFromRemoteContext
   , getRemoteThreadId
-  , getRemoteThreadsLabels
   , listAllLiveRemoteThreads
+
+  -- * Re-exports
+  , ThreadInfo(..)
   ) where
 
 import Data.Maybe
-import Data.Functor
-import Control.Applicative
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
@@ -36,8 +37,16 @@ import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Runtime.Thread.Map
 
+import GHC.Debugger.Runtime.Interpreter.Custom
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
+
+#if MIN_VERSION_ghc(9,15,0)
+import qualified GHC.Debugger.Runtime.Interpreter as Debuggee
+#else
+import Data.Functor
+import Control.Applicative
+#endif
 
 -- | Get a 'RemoteThreadId' from a remote 'ResumeContext' gotten from an 'ExecBreak'
 getRemoteThreadIdFromRemoteContext :: ForeignRef (ResumeContext [HValueRef]) -> Debugger RemoteThreadId
@@ -52,6 +61,23 @@ getRemoteThreadIdFromRemoteContext fctxt = do
     Right Term{val=threadIdVal} -> do
       getRemoteThreadId (castForeignRef threadIdVal)
     _ -> liftIO $ fail "Expected threadIdTerm to be a Term!"
+
+-- | Call 'listThreads' on the (possibly) remote debuggee process to get the
+-- list of threads running on the debuggee. Filter by running threads
+-- This may include the debugger threads if using the internal interpreter.
+listAllLiveRemoteThreads :: Debugger [(RemoteThreadId, ThreadInfo ForeignRef)]
+listAllLiveRemoteThreads = do
+#if MIN_VERSION_ghc(9,15,0)
+  threadInfos <- Debuggee.listThreads
+#else
+  threadInfos <- GHC.Debugger.Runtime.Thread.listThreads
+#endif
+  fmap catMaybes $
+    forM threadInfos $ \ti -> do
+      rti <- getRemoteThreadId ti.threadInfoRef
+      pure $ case ti.threadInfoStatus of
+        (ThreadRunning ; ThreadBlocked{}) -> Just (rti, ti)
+        (ThreadDied    ; ThreadFinished)  -> Nothing
 
 getRemoteThreadId :: ForeignRef ThreadId -> Debugger RemoteThreadId
 getRemoteThreadId threadIdRef = do
@@ -75,6 +101,26 @@ getRemoteThreadId threadIdRef = do
 
       return (RemoteThreadId tid_int)
 
+#if MIN_VERSION_ghc(9,15,0)
+-- The needed functions are imported from GHC.Debugger.Runtime.Interpreter,
+-- which abstracts over the custom interpreter commands.
+#else
+--------------------------------------------------------------------------------
+-- ** GHC 9.14: use @evalX@ and @TermParser@ to do it without custom commands
+--------------------------------------------------------------------------------
+
+listThreads :: Debugger [ThreadInfo ForeignRef]
+listThreads = do
+  threads_fvs <- expectRight =<< Remote.evalIOList Remote.listThreads
+  labels      <- getRemoteThreadsLabels threads_fvs
+  forM (zip threads_fvs labels) $ \(castForeignRef -> thread_fv, label) -> do
+    status <- getRemoteThreadStatus thread_fv
+    pure ThreadInfo
+      { threadInfoStatus = status
+      , threadInfoLabel  = label
+      , threadInfoRef    = thread_fv
+      }
+
 -- | Is the remote thread running or blocked (NOT finished NOR dead)?
 getRemoteThreadStatus :: ForeignRef ThreadId -> Debugger ThreadStatus
 getRemoteThreadStatus threadIdRef = do
@@ -90,33 +136,11 @@ getRemoteThreadStatus threadIdRef = do
     Right thrdStatus ->
       return thrdStatus
 
-isRemoteThreadLive :: ForeignRef ThreadId -> Debugger Bool
-isRemoteThreadLive r = getRemoteThreadStatus r <&> \case
-  (ThreadRunning ; ThreadBlocked{}) -> True
-  (ThreadDied    ; ThreadFinished)  -> False
-
--- | Call 'listThreads' on the (possibly) remote debuggee process to get the
--- list of threads running on the debuggee. Filter by running threads
--- This may include the debugger threads if using the internal interpreter.
-listAllLiveRemoteThreads :: Debugger [(RemoteThreadId, ForeignRef ThreadId)]
-listAllLiveRemoteThreads = do
-  threads_fvs <- expectRight =<< Remote.evalIOList Remote.listThreads
-  catMaybes <$> do
-    forM threads_fvs $ \(castForeignRef -> thread_fv) -> do
-      isLive <- isRemoteThreadLive thread_fv
-      if isLive then do
-        tid <- getRemoteThreadId thread_fv
-        pure $ Just (tid, thread_fv)
-      else do
-        pure Nothing
-
--- | Get the label of a Thread in a remote process. Returns one element per
--- given Thread with @Just string@ if a label was found.
 getRemoteThreadsLabels :: [ForeignRef ThreadId] -> Debugger [Maybe String]
 getRemoteThreadsLabels threadIdRefs = do
 
   forM threadIdRefs $ \threadIdRef -> do
-    
+
     r <- Remote.evalIOList $ Remote.do
       mb_str <- Remote.threadLabel (Remote.ref threadIdRef)
       Remote.return (Remote.maybeToList mb_str)
@@ -127,10 +151,8 @@ getRemoteThreadsLabels threadIdRefs = do
       _ -> liftIO $ fail "Unexpected result from evaluating \"threadLabel\""
 
 --------------------------------------------------------------------------------
--- * TermParsers
+-- *** TermParsers
 --------------------------------------------------------------------------------
-
--- ** Threads ------------------------------------------------------------------
 
 threadStatusParser :: TermParser ThreadStatus
 threadStatusParser = do
@@ -148,3 +170,4 @@ blockedReasonParser = do
     <|> (matchConstructorTerm "BlockedOnForeignCall" $> BlockedOnForeignCall)
     <|> (matchConstructorTerm "BlockedOnOther"       $> BlockedOnOther)
 
+#endif

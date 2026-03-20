@@ -49,6 +49,10 @@ import Development.Debug.Adapter
 import Development.Debug.Adapter.Proxy
 import Development.Debug.Interactive
 
+#if MIN_VERSION_ghc(9,15,0)
+import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
+#endif
+
 --------------------------------------------------------------------------------
 
 main :: IO ()
@@ -101,7 +105,12 @@ main = do
       GHCi.installSignalHandlers
       pipe <- GHCi.mkPipeFromHandles inh outh
       let verbose = False
+#if MIN_VERSION_ghc(9,15,0)
+      uninterruptibleMask $ \restore ->
+        GHCi.servWithCustom verbose hook pipe restore dbgInterpCmdHandler
+#else
       uninterruptibleMask $ GHCi.serv verbose hook pipe
+#endif
       where hook = return -- empty hook
         -- we cannot allow any async exceptions while communicating, because
         -- we will lose sync in the protocol, hence uninterruptibleMask.
