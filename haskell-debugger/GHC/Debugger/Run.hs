@@ -22,6 +22,7 @@ import System.FilePath
 import System.Directory
 
 import GHC
+import GHC.Plugins (SourceError)
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Unit.Types
 import GHC.Data.FastString
@@ -29,6 +30,7 @@ import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Main (hscParseStmtWithLocation)
 import GHC.Driver.Monad as GHC
 import GHC.Driver.Env as GHC
+import qualified GHC.Driver.Config.Parser as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
 import qualified GHC.Unit.Module.ModSummary as GHC
 import GHC.Types.Name.Occurrence (mkVarOccFS)
@@ -165,6 +167,26 @@ doLocalStep = do
       ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
       let current_toplevel_decl = enclosingTickSpan ticks loc
       GHC.resumeExec (LocalStep (RealSrcSpan current_toplevel_decl mempty)) Nothing >>= handleExecResult
+
+-- | Generalized `doEval` that also handles `imports`
+doEvalCommand :: String -> Debugger EvalResult
+doEvalCommand expr = do
+  dflags <- GHC.getInteractiveDynFlags
+  let pflags = GHC.initParserOpts dflags
+  if GHC.isStmt pflags expr
+    then doEval expr
+    else addImport expr
+
+-- | Parses input as an import declaration and applies it to the interactive context.
+addImport :: String -> Debugger EvalResult
+addImport s = handleError $ do
+  cxt <- GHC.getContext
+  idecl <- parseImportDecl s
+  GHC.setContext $ IIDecl idecl : cxt
+  pure $ EvalCompleted "" "" Nothing NoVariables
+  where
+    handleError m = m `catch` \ (e::SourceError) -> do
+      pure $ EvalAbortedWith $ displayException e
 
 -- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
 doEval :: String -> Debugger EvalResult
