@@ -252,7 +252,7 @@ logMessageExpression tmpl = apply "Prelude.putStrLn" $ apply "Prelude.concat" $ 
   where
     apply f x = f ++ " ( " ++ x ++ " ) "
     parts = listOf $ map renderPart (parseQC [] tmpl)
-    listOf xs = "[ " ++  intercalate ", " xs ++ " ]"
+    listOf xs = intercalate ": " . (++ ["[]"]) $ xs
     renderPart (Literal s) = show s
     renderPart (AntiQuote e) = apply "" e
 
