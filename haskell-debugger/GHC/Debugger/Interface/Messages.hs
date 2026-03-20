@@ -313,6 +313,7 @@ data ExceptionInfo = ExceptionInfo
   , exceptionInfoFullTypeName :: String
   , exceptionInfoMessage      :: String
   , exceptionInfoContext      :: Maybe String
+  , exceptionInfoSourceSpan   :: Maybe SourceSpan
   , exceptionInfoInner        :: [ExceptionInfo]
   }
   deriving (Show)

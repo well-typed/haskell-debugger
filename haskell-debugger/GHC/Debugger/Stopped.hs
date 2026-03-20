@@ -183,7 +183,7 @@ getStacktrace req_tid = do
                   , breakId = Just ibi
                   }
         _ -> do
-          mExcSpan <- exceptionSourceSpanFromContext
+          mExcSpan <- exceptionInfoSourceSpan <$> getExceptionInfo req_tid
           case mExcSpan of
             Just sourceSpan ->  return $ Just DbgStackFrame
                                   { name = GHC.resumeDecl r
