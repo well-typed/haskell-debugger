@@ -1,0 +1,6 @@
+print 1
+print let x = 1
+print undefined
+print undefined :: Int
+print x <- readFile "Main.hs"
+print let a = [1]; b = [2,3]
