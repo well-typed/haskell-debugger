@@ -1,0 +1,17 @@
+[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, interpreted )[main]
+(hdb) 1
+(hdb) 1
+(hdb) Prelude.undefined
+
+HasCallStack backtrace:
+  undefined, called at <interactive>:1:1 in interactive:Ghci4
+
+(hdb) Prelude.undefined
+
+HasCallStack backtrace:
+  undefined, called at <interactive>:1:1 in interactive:Ghci4
+
+(hdb) _
+(hdb) [...]
+(hdb) Exiting...

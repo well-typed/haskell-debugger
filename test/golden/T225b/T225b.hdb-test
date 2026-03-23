@@ -1,0 +1,1 @@
+$HDB Main.hs -v 0 < T225b.hdb-stdin

@@ -1,0 +1,3 @@
+break B.hs 11
+run
+print (show ([1,2,3] :: Set.Set Int))

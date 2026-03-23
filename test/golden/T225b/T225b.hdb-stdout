@@ -1,0 +1,9 @@
+[1 of 4] Compiling B                ( <TEMPORARY-DIRECTORY>/B.hs, interpreted )[main]
+[2 of 4] Compiling A                ( <TEMPORARY-DIRECTORY>/Main.hs, interpreted )[main]
+[3 of 4] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[4 of 4] Compiling GHC.Debugger.View.Containers ( in-memory:GHC.Debugger.View.Containers, interpreted )[haskell-debugger-view-in-memory]
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId B 3], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/./B.hs", startLine = 11, endLine = 11, startCol = 3, endCol = 19}}
+(hdb) 1
+Stopped at breakpoint
+(hdb) "fromList [1,2,3]"
+(hdb) Exiting...
