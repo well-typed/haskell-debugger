@@ -76,9 +76,12 @@ unitTests =
 mkGoldenTest :: Bool -> [(String, String)] -> FilePath -> String -> IO TestTree
 mkGoldenTest keepTmpDirs inheritedEnv flags path = do
   let testName   = takeBaseName     path
-  let goldenPath = replaceExtension path ".hdb-stdout"
+  let goldenPath = replaceExtension path (".ghc-" ++ ghcVersionTag ++ ".hdb-stdout")
   return $ goldenVsStringComparing testName goldenPath action
   where
+    ghcVersionTag :: String
+    ghcVersionTag = show (__GLASGOW_HASKELL__ :: Int)
+
     action :: IO LBS.ByteString
     action = do
       withHermeticDir keepTmpDirs (takeDirectory path) $ \test_dir -> do

@@ -1,0 +1,14 @@
+[Info] Using cabal specification: <VERSION>
+[Warn] unknown license type, you must put a copy in LICENSE yourself.
+[Info] Creating fresh file CHANGELOG.md...
+[Info] Creating fresh directory ./app...
+[Info] Creating fresh file app/Main.hs...
+[Info] Creating fresh file T79-tmp.cabal...
+[Warn] No synopsis given. You should edit the .cabal file and add one.
+[Info] You may want to edit the .cabal file and add a Description field.
+
+[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/app/Main.hs, interpreted )[T79-tmp-0.1.0.0-inplace-T79-tmp]
+(hdb) Hello, Haskell!
+()
+(hdb) 
