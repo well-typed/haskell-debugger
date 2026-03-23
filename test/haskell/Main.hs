@@ -157,6 +157,8 @@ goldenVsStringComparing name ref act = do
       , ( "\\\\", "/" )     -- Use forward slash
       , ( posixTempDirRegex {- the folder in which the test is run, inside the canonical temp dir-}
         , "<TEMPORARY-DIRECTORY>" )
+      , ( "\\.hdb-cache/[^/]+/"
+        , ".hdb-cache/<CACHE-ENTRY>/" )
      ]
 
     let normalising (LT.decodeUtf8 -> txt) = LT.filter (/= '\r') $ foldl' (*=~/) txt replaceREs
