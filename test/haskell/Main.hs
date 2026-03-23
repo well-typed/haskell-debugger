@@ -87,6 +87,7 @@ mkGoldenTest keepTmpDirs inheritedEnv flags path = do
             { P.cwd = Just test_dir, P.std_out = P.CreatePipe
             , P.env = Just $
               inheritedEnv ++
+              [ ("HDB_CACHE_DIR", test_dir </> ".hdb-cache") ] ++
               [ ("HDB", "hdb " ++ flags)
               ]
             }
