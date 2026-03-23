@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -55,7 +56,12 @@ hitBreakpoint supportsRunInTerminal testDir line beforeSetBreakpoints beforeConf
 
   sendLaunch testDir
   expectMessagesUnordered $
+#if __GLASGOW_HASKELL__ >= 915
+    -- GHC 9.15 doesn't produce "[2 of 3] Compiling Main ..." for some reason
+    replicate 8 (eventMatch "output")
+#else
     replicate 9 (eventMatch "output")
+#endif
       ++ [ responseMatch "launch"
          , eventMatch "initialized"
          ]
