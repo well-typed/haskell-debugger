@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "haskell-debugger",
+            "request": "launch",
+            "name": "Debugger Server on Port 12345",
+            "projectRoot": "${workspaceFolder}",
+            "entryFile": "hdb/Main.hs",
+            "entryArgs": ["server", "--port", "12345"],
+            "entryPoint": "main",
+            "extraGhcArgs": []
+        },
+        {
+            "type": "haskell-debugger",
+            "request": "launch",
+            "name": "Debugger Testsuite DAP Scopes",
+            "projectRoot": "${workspaceFolder}",
+            "entryFile": "test/haskell/Main.hs",
+            "entryPoint": "main",
+            "entryArgs": ["--pattern", "DAP.Scopes"],
+            "extraGhcArgs": []
+        }
+    ]
+}
