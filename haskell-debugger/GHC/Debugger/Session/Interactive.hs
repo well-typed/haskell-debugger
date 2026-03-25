@@ -30,7 +30,7 @@ defineNoPrint :: Ghc Name
 defineNoPrint = do
     let ExecOptions{execSourceFile,execLineNumber} = GHC.execOptions
     hsc_env <- getSession
-    let input = "let noPrintConstant x = x `seq` return () :: IO ()"
+    let input = "let noPrintConstant x = x `Prelude.seq` Prelude.return () :: Prelude.IO ()"
     stmt <-
       liftIO $ fmap (fromMaybe $ error "impossible: parsing noPrintConstant") $
       runInteractiveHsc hsc_env $
