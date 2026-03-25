@@ -233,3 +233,6 @@ test-suite haskell-debugger-test
         regex >= 1.1
     build-tool-depends: haskell-debugger:hdb
     ghc-options: -threaded
+    -- TODO: Investigate apparent race condition on windows
+    if !os(windows)
+        ghc-options: -rtsopts "-with-rtsopts=-N"
