@@ -179,10 +179,27 @@ cd vscode-extension
 nix-build
 ```
 
-## Testing
+## Testing and Debugging
 
 ```
+# Main testsuite
+cabal run haskell-debugger-test
+
+# Integration testsuite which uses vscode dap adapter library
+# (Ideally, we'd migrate this by extending the main testsuite until we had an
+# equivalent to lsp-test but for dap; dap-test)
 cd test/integration-tests
 make GHC=/path/to/recent/ghc \
      DEBUGGER=$(cd ../.. && cabal list-bin -w /path/to/ghc-9.14 exe:hdb)
 ```
+
+### Debugging the debugger with the debugger
+
+1. Run the debugger (e.g. through VSCode) with `entryFile: hdb/Main.hs` and
+   arguments `entryArgs: [server, --port, 12345]`. This will start the debugger
+   executable on port 12345 through the debugger.
+
+2. Using VSCode, setup the launch.json for the project you want to test the
+   debugger with `debugServer: 12345`. This will tell VSCode to connect to this
+   port for the DAP server. This should trigger the breakpoint you set on the
+   debugger in step (1).
