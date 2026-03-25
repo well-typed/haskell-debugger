@@ -1,0 +1,7 @@
+[1 of 1] Compiling Lib              ( <TEMPORARY-DIRECTORY>/lib/Lib.hs, interpreted )[T130c-0.1.0.0-inplace]
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Lib 0], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/lib/Lib.hs", startLine = 16, endLine = 16, startCol = 3, endCol = 14}}
+(hdb) Stopped at breakpoint
+(hdb) _result : IO () = <fn> :: IO ()
+value : ColonList = _
+  value : ColonList = alpha:beta:gamma
+(hdb) Exiting...
