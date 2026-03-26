@@ -2,9 +2,7 @@
 [2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, interpreted )[main]
 (hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Main 5], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/Main.hs", startLine = 42, endLine = 42, startCol = 3, endCol = 70}}
 (hdb) Stopped at breakpoint
-(hdb) _result : IO () = _
-*** Ignoring breakpoint [<TEMPORARY-DIRECTORY>/Main.hs:42:3-69]
-  _result : IO () = _
+(hdb) _result : IO () = <fn> :: IO ()
 existentialFoo : Foo = Foo
   _1 : r0 = _
   _2 : [Char] = "value"

@@ -265,6 +265,7 @@ getVariables threadId frameIx vk = do
   frames <- getStacktrace threadId
   let frame = frames !! frameIx
   hsc_env <- getSession
+  fam_envs <- getFamInstEnvs'
   case vk of
     -- Only `seq` the variable when inspecting a specific one (`SpecificVariable`)
     -- (VARR)(b,c)
@@ -282,7 +283,7 @@ getVariables threadId frameIx vk = do
 
           term' <- forceTerm term
 
-          vi <- termToVarInfo key term'
+          vi <- termToVarInfo fam_envs key term'
 
           return (ForcedVariable vi)
 
@@ -293,14 +294,14 @@ getVariables threadId frameIx vk = do
           -- Meaning the @SpecificVariable@ request means to inspect the structure.
           -- Return ONLY the fields
 
-          termVarFields key term >>= \case
+          termVarFields fam_envs key term >>= \case
             VarFields vfs -> pure (VariableFields vfs)
 
     -- (VARR)(a) from here onwards
 
     LocalVariables -> fmap VariableFields $ do
       -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
-      mapM tyThingToVarInfo =<< GHC.getBindings
+      mapM (tyThingToVarInfo fam_envs) =<< GHC.getBindings
 
     ModuleVariables
       | frameIx < length frames
@@ -311,7 +312,7 @@ getVariables threadId frameIx vk = do
         things <- typeEnvElts <$> getTopEnv curr_modl
         mapM (\tt -> do
           nameStr <- display (getName tt)
-          vi <- tyThingToVarInfo tt
+          vi <- tyThingToVarInfo fam_envs tt
           return vi{varName = nameStr}) things
 
     GlobalVariables
@@ -333,7 +334,7 @@ getVariables threadId frameIx vk = do
                 , varRef = NoVariables
                 }
             Just tt -> do
-              vi <- tyThingToVarInfo tt
+              vi <- tyThingToVarInfo fam_envs tt
               return vi{varName = nameStr}
           ) names
 

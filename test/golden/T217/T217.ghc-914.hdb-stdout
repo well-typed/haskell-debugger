@@ -1,0 +1,12 @@
+[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, interpreted )[main]
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Main 13], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/Main.hs", startLine = 17, endLine = 17, startCol = 3, endCol = 10}}
+(hdb) helio
+Stopped at breakpoint
+(hdb) _result : IO () = <fn> :: IO ()
+x : forall a. (a ~ IO ()) => a = <fn> :: forall a. (a ~ IO ()) => a
+y : D Char -> Char = <fn> :: D Char -> Char
+doit : forall {b}. b -> IO () = <fn> :: forall {b}. b -> IO ()
+ix : B = _
+  ix : B = B (Left _)
+(hdb) Exiting...
