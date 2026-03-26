@@ -1,0 +1,24 @@
+cabal-version:   3.14
+name:            T237
+version:         0.1.0.0
+license:         NONE
+author:          Rodrigo Mesquita
+maintainer:      rodrigo.m.mesquita@gmail.com
+build-type:      Simple
+
+common warnings
+    ghc-options: -Wall
+
+library
+    import:           warnings
+    exposed-modules:  MyType
+    build-depends:    base
+    hs-source-dirs:   lib
+    default-language: Haskell2010
+
+executable T237
+    import:           warnings
+    main-is:          Main.hs
+    build-depends:    base, T237, haskell-debugger-view
+    hs-source-dirs:   app
+    default-language: Haskell2010
