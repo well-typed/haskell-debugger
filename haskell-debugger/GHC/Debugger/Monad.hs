@@ -617,7 +617,7 @@ findHsDebuggerViewUnitId mod_graph = do
   case hskl_dbgr_vws of
     [hdv_uid] -> do
       -- In transitive closure, use that one.
-      -- Check that the version is exactly 0.2.0.0
+      -- Check that the version is within the supported range.
       case lookupUnit unitState (RealUnit (Definite hdv_uid)) of
         Just unitInfo -> do
           let version = unitPackageVersion unitInfo
