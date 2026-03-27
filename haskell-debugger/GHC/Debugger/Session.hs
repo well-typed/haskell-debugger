@@ -74,16 +74,14 @@ parseHomeUnitArguments :: GhcMonad m
     => FilePath -- ^ Main entry point function
     -> FilePath -- ^ Component root. Important for multi-package cabal projects.
     -> [String]
-    -> [String] -- ghcInvocation
     -> DynFlags
     -> FilePath -- ^ root dir, see Note [Root Directory]
     -> m (NonEmpty.NonEmpty (DynFlags, [GHC.Target]))
-parseHomeUnitArguments cfp compRoot units theOpts dflags rootDir = do
-    ((theOpts',_errs,_warns),_units) <- GHC.processCmdLineP [] [] (map noLoc theOpts)
+parseHomeUnitArguments cfp compRoot units dflags rootDir = do
     case NonEmpty.nonEmpty units of
       Just us -> initMulti us
       Nothing -> do
-        (df, targets) <- initOne (map unLoc theOpts')
+        (df, targets) <- initOne []
         -- A special target for the file which caused this wonderful
         -- component to be created. In case the cradle doesn't list all the targets for
         -- the component, in which case things will be horribly broken anyway.
