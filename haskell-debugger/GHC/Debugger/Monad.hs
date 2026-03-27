@@ -37,6 +37,7 @@ import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
 
 import GHC
+import GHC.Data.FastString
 import GHC.Data.StringBuffer
 import GHC.Driver.Config.Diagnostic
 import GHC.Driver.DynFlags as GHC
@@ -54,7 +55,9 @@ import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Context as GHCi
 import GHC.Types.Error
+import GHC.Types.PkgQual
 import GHC.Types.SourceError
+import GHC.Types.SourceText
 import GHC.Types.Unique.Supply as GHC
 import GHC.Unit.Module.Graph
 import GHC.Unit.State
@@ -382,11 +385,29 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
 
         -- Set interactive context to import all loaded modules
         let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
+        -- dbgView should always be available, either because we manually loaded it
+        -- or because it's in the transitive closure.
+        let dbgViewImps
+              -- Using in-memory hs-dbg-view. It's a home-unit, so refer to it directly
+              | hdv_uid == hsDebuggerViewInMemoryUnitId
+              = map (GHC.IIModule . mkModule (RealUnit (Definite hdv_uid))) loadedBuiltinModNames
+              -- It's available in a unit in the transitive closure. Resolve it.
+              | otherwise
+              = map (\mn ->
+                  GHC.IIDecl (GHC.simpleImportDecl mn)
+                  { ideclPkgQual = RawPkgQual
+                      StringLiteral
+                        { sl_st = NoSourceText
+                        , sl_fs = mkFastString (unitIdString hdv_uid)
+                        , sl_tc = Nothing
+                        }
+                  }) loadedBuiltinModNames
 
         mss <- getAllLoadedModules
 
         GHC.setContext
           (preludeImp :
+            dbgViewImps ++
             map (GHC.IIModule . GHC.ms_mod) mss)
 
         -- See Note [External interpreter buffering]
@@ -404,7 +425,7 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
           =<< initialDebuggerState dbgLog
               (if loadedBuiltinModNames == []
                 then Nothing
-                else Just hdv_uid {- register in the debugger state that this is the uid we're using for haskell-debugger-view -})
+                else Just hdv_uid)
 
     fwd_thr <- liftIO $ async (void externalInterpFwdThread)
     liftIO $ link fwd_thr
