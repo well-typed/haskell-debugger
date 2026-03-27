@@ -71,10 +71,12 @@ import GHC.Debugger.Runtime.Compile.Cache
 import GHC.Debugger.Utils
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import qualified GHC.Debugger.Runtime.Thread.Map as TM
+import GHC.Debugger.View.Class qualified as View
 
 import Colog.Core as Logger
 
 import {-# SOURCE #-} GHC.Debugger.Runtime.Instances.Discover (RuntimeInstancesCache, emptyRuntimeInstancesCache)
+import GHC.Data.FastString (FastString, unpackFS)
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -125,7 +127,7 @@ data DebuggerState = DebuggerState
       --
       -- If the user explicitly disabled custom views, use @Nothing@.
 
-      , dbgLogger :: LogAction Debugger DebuggerLog
+      , dbgLogger :: LogAction IO DebuggerLog
       -- ^ See Note [Debugger, debuggee, and DAP logs]
       }
 
@@ -168,6 +170,18 @@ data BreakpointAction
 
 instance Outputable BreakpointAction where ppr = text . show
 
+instance View.DebugView FastString where
+  debugFields _ = pure $ View.VarFields []
+  debugValue x = View.simpleValue (unpackFS x) False
+
+instance View.DebugView ModuleGraph where
+  debugFields _ = pure $ View.VarFields []
+  debugValue x = View.simpleValue "MODULEGRAPH" False
+
+instance View.DebugView Bool where
+  debugFields _ = pure $ View.VarFields []
+  debugValue x = View.simpleValue "BOOL" False
+
 --------------------------------------------------------------------------------
 -- Operations
 --------------------------------------------------------------------------------
@@ -197,7 +211,7 @@ runDebugger :: forall a
             -> IO a
 runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp conf (Debugger action) = do
   let ghcLog = liftLogIO l :: LogAction Ghc DebuggerLog
-  let dbgLog = liftLogIO l :: LogAction Debugger DebuggerLog
+  let dbgLog = l :: LogAction IO DebuggerLog
   thisProg <- getExecutablePath
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
   GHC.runGhc (Just libdir) $ do
@@ -320,7 +334,8 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
         mod_graph_base <- doDownsweep Nothing
 
         if_cache <- Just <$> liftIO newIfaceCache
-
+        ldf <- getSessionDynFlags
+        liftLogIO l <& DebuggerLog Logger.Debug (LogSDoc ldf $ withPprStyle (PprDump reallyAlwaysQualify) $ text "GRAPH:" <+> ppr (mg_mss mod_graph_base))
         -- Try to find or load the built-in classes from `haskell-debugger-view`
         (hdv_uid, loadedBuiltinModNames) <- findHsDebuggerViewUnitId mod_graph_base >>= \case
           Nothing -> (hsDebuggerViewInMemoryUnitId,) <$> do
@@ -387,6 +402,9 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
         GHC.setContext
           (preludeImp :
             map (GHC.IIModule . GHC.ms_mod) mss)
+        cxt <- GHC.getContext
+        ldf <- getSessionDynFlags
+        liftLogIO l <& DebuggerLog Logger.Debug (LogSDoc ldf $ text "CONTEXT:" <+> ppr cxt)
 
         -- See Note [External interpreter buffering]
         setBufferings <- compileExprRemote """
@@ -615,7 +633,7 @@ findHsDebuggerViewUnitId mod_graph = do
 --------------------------------------------------------------------------------
 
 -- | Initialize a 'DebuggerState'
-initialDebuggerState :: LogAction Debugger DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
+initialDebuggerState :: LogAction IO DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
 initialDebuggerState l hsDbgViewUid =
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
@@ -735,11 +753,19 @@ instance Show DebuggerMessage where
           ++ show pkg ++ " wasn't found in dependencies " ++ show uids
     LogSDoc dflags doc -> showSDoc dflags doc
 
+pprCxt :: [InteractiveImport] -> SDoc
+pprCxt xs = text "CONTEXT" <+> text (unlines . lines $ showPprUnsafe (withPprStyle (PprDump reallyAlwaysQualify) $ ppr xs))
 logSDoc :: Logger.Severity -> SDoc -> Debugger ()
 logSDoc sev doc = do
   dflags <- getDynFlags
   l <- asks dbgLogger
-  l <& DebuggerLog sev (LogSDoc dflags doc)
+  liftLogIO l <& DebuggerLog sev (LogSDoc dflags doc)
+
+getLogSDoc :: MonadIO m => Debugger (Logger.Severity -> SDoc -> m ())
+getLogSDoc = do
+  dflags <- getDynFlags
+  l <- asks dbgLogger
+  pure $ \sev doc -> liftLogIO l <& DebuggerLog sev (LogSDoc dflags doc)
 
 ghcLogAction :: LogAction IO DebuggerLog -> GHC.LogAction
 ghcLogAction l = \logflags mclass srcSpan sdoc -> do

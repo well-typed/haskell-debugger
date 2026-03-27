@@ -43,6 +43,7 @@ import GHCi.Message
 import GHC.Debugger.Monad
 import GHC.Debugger.Session.Builtin
 import Colog.Core as Logger
+import GHC.Driver.Monad (logDiagnostics)
 
 --------------------------------------------------------------------------------
 -- * The Cache-level interface for runtime 'DebugView' instances
@@ -103,7 +104,9 @@ data DebugViewInstance = DebugViewInstance
 findDebugViewInstance :: Type -> Debugger (Maybe DebugViewInstance)
 findDebugViewInstance needle_ty = do
   hsc_env <- getSession
-
+  cxt <- getContext
+  logSDoc Logger.Debug $ text "CONTEXT:" <+> ppr cxt
+  logSDoc' <- getLogSDoc
   mhdv_uid <- getHsDebuggerViewUid
   case mhdv_uid of
     Just hdv_uid -> do
@@ -111,8 +114,11 @@ findDebugViewInstance needle_ty = do
       let mthdRdrName mthStr = mkOrig modl (mkVarOcc mthStr) :: RdrName
 
       (err_msgs, res) <- liftIO $ runTcInteractive hsc_env $ do
-
-        -- Types used by DebugView
+        glbl_env <- getGblEnv
+        let avails = tcg_imports glbl_env
+        let orphs = imp_orphs avails
+        logSDoc' Logger.Debug $ withPprStyle (PprDump alwaysQualify) $ text "ORPHANS" <+> ppr modl <+> ppr hdv_uid <+> ppr needle_ty <+> text (unwords . lines $ showPprUnsafe $ withPprStyle (PprDump alwaysQualify) $ ppr orphs)
+         -- Types used by DebugView
         varValueIOTy    <-  fmap mkTyConTy . tcLookupTyCon
                         =<< lookupTypeOccRn (mkOrig modl (mkTcOcc "VarValueIO"))
         varFieldsIOTy   <-  fmap mkTyConTy . tcLookupTyCon

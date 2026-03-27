@@ -68,7 +68,7 @@ debugExecution entryFile entry args = do
 
   old_context <- GHC.getContext
   GHC.setContext [GHC.IIModule evalModule]
-
+  logSDoc Logger.Debug $ pprCxt [GHC.IIModule evalModule]
   (entryExp, exOpts) <- case entry of
     MainEntry nm -> do
       let prog = fromMaybe "main" nm
@@ -86,6 +86,7 @@ debugExecution entryFile entry args = do
 
   exec_res <- GHC.execStmt entryExp exOpts
   GHC.setContext old_context -- restore context after running `main`
+  logSDoc Logger.Debug $ pprCxt old_context
   handleExecResult exec_res
   where
     -- It's not ideal to duplicate these two functions from ghci, but its unclear where they would better live. Perhaps next to compileParsedExprRemote? The issue is run
@@ -185,6 +186,7 @@ addImport s = handleError $ do
   cxt <- GHC.getContext
   idecl <- parseImportDecl s
   GHC.setContext $ IIDecl idecl : cxt
+  logSDoc Logger.Debug $ pprCxt (IIDecl idecl : cxt)
   pure $ EvalCompleted "" "" Nothing NoVariables
   where
     handleError m = m `catch` \ (e::SourceError) -> do
@@ -261,7 +263,7 @@ withCurrentBreakExtensions m = do
 
 -- | Turn a GHC's 'ExecResult' into an 'EvalResult' response
 handleExecResult :: GHC.ExecResult -> Debugger EvalResult
-handleExecResult = \case
+handleExecResult = wrap $ \case
     ExecComplete {execResult} -> do
       case execResult of
         Left e -> return (EvalException (show e) "SomeException")
@@ -323,6 +325,11 @@ handleExecResult = \case
               logSDoc Logger.Warning (evalFailedMsg e)
               resume
     resume = GHC.resumeExec GHC.RunToCompletion Nothing >>= handleExecResult
+    wrap f x = do
+      e <- f x
+      cxt <- GHC.getContext
+      logSDoc Logger.Debug $ "handleExecResult" <+> pprCxt cxt
+      pure e
 
 -- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
 inspectName :: Name -> Debugger (Maybe VarInfo)
