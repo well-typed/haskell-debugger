@@ -158,7 +158,7 @@ hieBiosFlags cradle root relTarget = runExceptT $ do
 
   let (units', flags') = extractUnits (HIE.componentOptions componentOpts)
   return HieBiosFlags
-    { ghcInvocation = flags' ++ ghcDebuggerFlags
+    { ghcInvocation = flags'
     , libdir = libdir
     , units  = units'
     , rootDir = HIE.cradleRootDir cradle
@@ -178,13 +178,6 @@ extractUnits = go [] []
     go units rest ("-unit" : x : xs) = go (x : units) rest xs
     go units rest (x : xs)           = go units (x : rest) xs
     go units rest []                 = (reverse units, reverse rest)
-
--- | Flags specific to haskell-debugger to append to all GHC invocations.
-ghcDebuggerFlags :: [String]
-ghcDebuggerFlags =
-  [ "-fno-it" -- don't introduce @it@ after evaluating something at the prompt
-  ]
-
 
 -- ----------------------------------------------------------------------------
 -- Utilities

@@ -1,0 +1,3 @@
+#!/bin/sh
+
+$HDB -v0 --entry-point mainish lib/Lib.hs 2>&1 < T130c.hdb-stdin

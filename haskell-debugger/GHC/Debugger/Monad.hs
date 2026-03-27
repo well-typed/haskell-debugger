@@ -257,7 +257,8 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
       -- 3093efa27468fb2d31a617f6a0e4ff67a90f6623 tried to fix (but had to be
       -- reverted)
       (dflags2, fileish_args, warns)
-        <- parseDynamicFlags logger dflags1 (map noLoc extraGhcArgs)
+        <- parseDynamicFlags logger dflags1 (map noLoc (ghcInvocation ++ extraGhcArgs))
+
       liftIO $ printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
       forM_ fileish_args $ \fish_arg -> liftIO $ do
         GHC.logMsg logger MCOutput noSrcSpan $ text "Ignoring extraGhcArg which isn't a recognized flag:" <+> text (unLoc fish_arg)
@@ -314,7 +315,7 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
           GHC.initUniqSupply (GHC.initialUnique df) (GHC.uniqueIncrement df)
 
         -- Discover the user-given flags and targets
-        flagsAndTargets <- parseHomeUnitArguments mainFp compDir units ghcInvocation dflags2 rootDir
+        flagsAndTargets <- parseHomeUnitArguments mainFp compDir units dflags2 rootDir
         buildWays       <- liftIO $ validateUnitsWays flagsAndTargets
 
         -- Setup base HomeUnitGraph
@@ -617,7 +618,7 @@ findHsDebuggerViewUnitId mod_graph = do
   case hskl_dbgr_vws of
     [hdv_uid] -> do
       -- In transitive closure, use that one.
-      -- Check that the version is exactly 0.2.0.0
+      -- Check that the version is within the supported range.
       case lookupUnit unitState (RealUnit (Definite hdv_uid)) of
         Just unitInfo -> do
           let version = unitPackageVersion unitInfo

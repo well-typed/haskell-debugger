@@ -1,0 +1,1 @@
+$HDB -v0 --entry-point mainish lib/Lib.hs 2>&1 < T234b.hdb-stdin

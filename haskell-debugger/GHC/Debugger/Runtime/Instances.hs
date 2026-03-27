@@ -1,5 +1,9 @@
 {-# LANGUAGE TemplateHaskell, LambdaCase, BlockArguments, OrPatterns #-}
-module GHC.Debugger.Runtime.Instances where
+module GHC.Debugger.Runtime.Instances
+  ( debugValueTerm
+  , debugFieldsTerm
+  , VarValueResult(..)
+  ) where
 
 import GHC
 import GHC.Driver.Env
@@ -23,16 +27,16 @@ data VarValueResult = VarValueResult { varValueResult :: String, varValueResultE
 -- | Get the custom representation of this 'Term' by applying a 'DebugView'
 -- instance 'debugValue' method if there is one.
 debugValueTerm :: Term -> Debugger (Maybe VarValueResult)
-debugValueTerm term@(Suspension{} ; Term{}) = do
+debugValueTerm term = do
   hsc_env <- getSession
   let interp = hscInterp hsc_env
   let ty = termType term
   mbInst <- getDebugViewInstance ty
-  case mbInst of
+  case (,) <$> maybe_hval term <*> mbInst of
     Nothing -> return Nothing
-    Just DebugViewInstance
-      {instDebugValue, varValueIOTy} -> do
-        liftIO (instDebugValue (val term)) >>= \case
+    Just (hval, DebugViewInstance
+      {instDebugValue, varValueIOTy}) -> do
+        liftIO (instDebugValue hval) >>= \case
           Left _e ->
             -- exception! ignore.
             return Nothing
@@ -54,10 +58,6 @@ debugValueTerm term@(Suspension{} ; Term{}) = do
                   _ -> do
                     logSDoc Logger.Warning (text "debugValueTerm(2): Expecting" <+> ppr strTerm <+> text "to be a Term or Suspension.")
                     return Nothing
-debugValueTerm term = do
-  logSDoc Logger.Warning (text "debugValueTerm: Expecting" <+> ppr term <+> text "to be a Term or Suspension.")
-  return Nothing
-
 
 
 -- | Get the custom representation of this 'Term' by applying a 'DebugView'
@@ -68,14 +68,14 @@ debugValueTerm term = do
 --
 -- Returns @Nothing@ if no instance was found for the type of the given term
 debugFieldsTerm :: Term -> Debugger (Maybe [(String, Term)])
-debugFieldsTerm term@(Suspension{} ; Term{}) = do
+debugFieldsTerm term = do
   let ty = termType term
   mbInst <- getDebugViewInstance ty
-  case mbInst of
+  case (,) <$> maybe_hval term <*> mbInst of
     Nothing -> return Nothing
-    Just DebugViewInstance
-      {instDebugFields, varFieldsIOTy} -> do
-        liftIO (instDebugFields (val term)) >>= \case
+    Just (hval, DebugViewInstance
+      {instDebugFields, varFieldsIOTy}) -> do
+        liftIO (instDebugFields hval) >>= \case
           Left _e ->
             -- exception! ignore.
             return Nothing
@@ -84,6 +84,15 @@ debugFieldsTerm term@(Suspension{} ; Term{}) = do
             obtainParsedTerm "VarFields" 2 True varFieldsIOTy transformed_v varFieldsParser >>= \case
               Left _ -> pure Nothing
               Right res -> pure (Just res)
-debugFieldsTerm term = do
-  logSDoc Logger.Warning (text "debugValueTerm: Expecting" <+> ppr term <+> text "to be a Term or Suspension.")
-  return Nothing
+
+-- | The heap value of the Term the debugView instance methods are applied to
+-- (looks through newtypes). For Primitive types and primitive References,
+-- assume dbgInst methods can't be applied to them.
+maybe_hval :: Term -> Maybe ForeignHValue
+maybe_hval t = case t of
+  Suspension{val} -> Just val
+  Term{val}       -> Just val
+  NewtypeWrap{wrapped_term}
+                  -> maybe_hval wrapped_term
+  Prim{}          -> Nothing
+  RefWrap{}       -> Nothing
