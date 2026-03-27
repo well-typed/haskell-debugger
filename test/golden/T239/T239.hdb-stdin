@@ -1,0 +1,4 @@
+break Main.hs 27
+run
+variables
+exit
