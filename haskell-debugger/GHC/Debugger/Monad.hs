@@ -596,11 +596,16 @@ findHsDebuggerViewUnitId mod_graph = do
   hsc_env <- getSession
   let unitState = hsc_units hsc_env
 
-  -- Only looks at unit-nodes, this is not robust!
-  -- TODO: Better lookup of unit-id
-  let hskl_dbgr_vws =
+  -- TODO: is there a non-linear-in-the-nodes solution?
+  -- TODO: test with haskell-debugger-view as a dep of a dep.
+  let potential_units = (`mapMaybe` mg_mss mod_graph) $ \case
+         UnitNode _deps uid -> Just uid
+         ModuleNode _ modl -> Just $ mnkUnitId $ mnKey modl
+         InstantiationNode uid _ -> Just uid
+         LinkNode _ _ -> Nothing
+  let hskl_dbgr_vws = L.nub -- FIXME: more efficient
         [ uid
-        | UnitNode _deps uid <- mg_mss mod_graph
+        | uid <- potential_units
         , "haskell-debugger-view" `L.isPrefixOf` unitIdString uid
             || "hskll-dbggr-vw" `L.isPrefixOf` unitIdString uid
             || "haskell-debug_" `L.isPrefixOf` unitIdString uid
@@ -614,7 +619,7 @@ findHsDebuggerViewUnitId mod_graph = do
   case hskl_dbgr_vws of
     [hdv_uid] -> do
       -- In transitive closure, use that one.
-      -- Check that the version is exactly 0.2.0.0
+      -- Check that the version is in supported range.
       case lookupUnit unitState (RealUnit (Definite hdv_uid)) of
         Just unitInfo -> do
           let version = unitPackageVersion unitInfo
@@ -625,8 +630,8 @@ findHsDebuggerViewUnitId mod_graph = do
           error "Could not find unit info for haskell-debugger-view"
     [] -> do
       return Nothing
-    _  ->
-      error "Multiple unit-ids found for haskell-debugger-view in the transitive closure?!"
+    _  -> do
+      error $ "Multiple unit-ids found for haskell-debugger-view in the transitive closure?!" ++ showSDocUnsafe (withPprStyle (PprDump alwaysQualify) (ppr hskl_dbgr_vws))
 
 --------------------------------------------------------------------------------
 -- Utilities
