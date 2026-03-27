@@ -100,7 +100,6 @@ termVarFields fam_envs top_key top_term = do
 -- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
 termToVarInfo :: FamInstEnvs -> TermKey -> Term -> Debugger VarInfo
 termToVarInfo fam_envs key term0 = do
-  logSDoc Logger.Debug $ text "VARINFO:" <+> pprTerm term0
   -- Make a VarInfo for a term
   let
     ty = GHCI.termType term0
