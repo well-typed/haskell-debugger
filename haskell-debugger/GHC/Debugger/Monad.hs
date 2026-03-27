@@ -36,7 +36,6 @@ import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
 
 import GHC
-import GHC.Data.FastString
 import GHC.Data.StringBuffer
 import GHC.Driver.Config.Diagnostic
 import GHC.Driver.DynFlags as GHC
@@ -54,9 +53,7 @@ import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Context as GHCi
 import GHC.Types.Error
-import GHC.Types.PkgQual
 import GHC.Types.SourceError
-import GHC.Types.SourceText
 import GHC.Types.Unique.Supply as GHC
 import GHC.Unit.Module.Graph
 import GHC.Unit.State
@@ -74,10 +71,12 @@ import GHC.Debugger.Runtime.Compile.Cache
 import GHC.Debugger.Utils
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import qualified GHC.Debugger.Runtime.Thread.Map as TM
+import GHC.Debugger.View.Class qualified as View
 
 import Colog.Core as Logger
 
 import {-# SOURCE #-} GHC.Debugger.Runtime.Instances.Discover (RuntimeInstancesCache, emptyRuntimeInstancesCache)
+import GHC.Data.FastString (FastString, unpackFS)
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -128,7 +127,7 @@ data DebuggerState = DebuggerState
       --
       -- If the user explicitly disabled custom views, use @Nothing@.
 
-      , dbgLogger :: LogAction Debugger DebuggerLog
+      , dbgLogger :: LogAction IO DebuggerLog
       -- ^ See Note [Debugger, debuggee, and DAP logs]
       }
 
@@ -171,6 +170,18 @@ data BreakpointAction
 
 instance Outputable BreakpointAction where ppr = text . show
 
+instance View.DebugView FastString where
+  debugFields _ = pure $ View.VarFields []
+  debugValue x = View.simpleValue (unpackFS x) False
+
+instance View.DebugView ModuleGraph where
+  debugFields _ = pure $ View.VarFields []
+  debugValue x = View.simpleValue "MODULEGRAPH" False
+
+instance View.DebugView Bool where
+  debugFields _ = pure $ View.VarFields []
+  debugValue x = View.simpleValue "BOOL" False
+
 --------------------------------------------------------------------------------
 -- Operations
 --------------------------------------------------------------------------------
@@ -200,7 +211,7 @@ runDebugger :: forall a
             -> IO a
 runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp conf (Debugger action) = do
   let ghcLog = liftLogIO l :: LogAction Ghc DebuggerLog
-  let dbgLog = liftLogIO l :: LogAction Debugger DebuggerLog
+  let dbgLog = l :: LogAction IO DebuggerLog
   thisProg <- getExecutablePath
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
   GHC.runGhc (Just libdir) $ do
@@ -323,7 +334,8 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
         mod_graph_base <- doDownsweep Nothing
 
         if_cache <- Just <$> liftIO newIfaceCache
-
+        ldf <- getSessionDynFlags
+        liftLogIO l <& DebuggerLog Logger.Debug (LogSDoc ldf $ withPprStyle (PprDump reallyAlwaysQualify) $ text "GRAPH:" <+> ppr (mg_mss mod_graph_base))
         -- Try to find or load the built-in classes from `haskell-debugger-view`
         (hdv_uid, loadedBuiltinModNames) <- findHsDebuggerViewUnitId mod_graph_base >>= \case
           Nothing -> (hsDebuggerViewInMemoryUnitId,) <$> do
@@ -384,30 +396,15 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
 
         -- Set interactive context to import all loaded modules
         let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
-        -- dbgView should always be available, either because we manually loaded it
-        -- or because it's in the transitive closure.
-        let dbgViewImps
-              -- Using in-memory hs-dbg-view. It's a home-unit, so refer to it directly
-              | hdv_uid == hsDebuggerViewInMemoryUnitId
-              = map (GHC.IIModule . mkModule (RealUnit (Definite hdv_uid))) loadedBuiltinModNames
-              -- It's available in a unit in the transitive closure. Resolve it.
-              | otherwise
-              = map (\mn ->
-                  GHC.IIDecl (GHC.simpleImportDecl mn)
-                  { ideclPkgQual = RawPkgQual
-                      StringLiteral
-                        { sl_st = NoSourceText
-                        , sl_fs = mkFastString (unitIdString hdv_uid)
-                        , sl_tc = Nothing
-                        }
-                  }) loadedBuiltinModNames
 
         mss <- getAllLoadedModules
 
         GHC.setContext
           (preludeImp :
-            dbgViewImps ++
             map (GHC.IIModule . GHC.ms_mod) mss)
+        cxt <- GHC.getContext
+        ldf <- getSessionDynFlags
+        liftLogIO l <& DebuggerLog Logger.Debug (LogSDoc ldf $ text "CONTEXT:" <+> ppr cxt)
 
         -- See Note [External interpreter buffering]
         setBufferings <- compileExprRemote """
@@ -424,7 +421,7 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
           =<< initialDebuggerState dbgLog
               (if loadedBuiltinModNames == []
                 then Nothing
-                else Just hdv_uid)
+                else Just hdv_uid {- register in the debugger state that this is the uid we're using for haskell-debugger-view -})
 
     fwd_thr <- liftIO $ async (void externalInterpFwdThread)
     liftIO $ link fwd_thr
@@ -599,11 +596,16 @@ findHsDebuggerViewUnitId mod_graph = do
   hsc_env <- getSession
   let unitState = hsc_units hsc_env
 
-  -- Only looks at unit-nodes, this is not robust!
-  -- TODO: Better lookup of unit-id
-  let hskl_dbgr_vws =
+  -- TODO: is there a non-linear-in-the-nodes solution?
+  -- TODO: test with haskell-debugger-view as a dep of a dep.
+  let potential_units = (`mapMaybe` mg_mss mod_graph) $ \case
+         UnitNode _deps uid -> Just uid
+         ModuleNode _ modl -> Just $ mnkUnitId $ mnKey modl
+         InstantiationNode uid _ -> Just uid
+         LinkNode _ _ -> Nothing
+  let hskl_dbgr_vws = L.nub -- FIXME: more efficient
         [ uid
-        | UnitNode _deps uid <- mg_mss mod_graph
+        | uid <- potential_units
         , "haskell-debugger-view" `L.isPrefixOf` unitIdString uid
             || "hskll-dbggr-vw" `L.isPrefixOf` unitIdString uid
             || "haskell-debug_" `L.isPrefixOf` unitIdString uid
@@ -617,7 +619,7 @@ findHsDebuggerViewUnitId mod_graph = do
   case hskl_dbgr_vws of
     [hdv_uid] -> do
       -- In transitive closure, use that one.
-      -- Check that the version is exactly 0.2.0.0
+      -- Check that the version is in supported range.
       case lookupUnit unitState (RealUnit (Definite hdv_uid)) of
         Just unitInfo -> do
           let version = unitPackageVersion unitInfo
@@ -628,15 +630,15 @@ findHsDebuggerViewUnitId mod_graph = do
           error "Could not find unit info for haskell-debugger-view"
     [] -> do
       return Nothing
-    _  ->
-      error "Multiple unit-ids found for haskell-debugger-view in the transitive closure?!"
+    _  -> do
+      error $ "Multiple unit-ids found for haskell-debugger-view in the transitive closure?!" ++ showSDocUnsafe (withPprStyle (PprDump alwaysQualify) (ppr hskl_dbgr_vws))
 
 --------------------------------------------------------------------------------
 -- Utilities
 --------------------------------------------------------------------------------
 
 -- | Initialize a 'DebuggerState'
-initialDebuggerState :: LogAction Debugger DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
+initialDebuggerState :: LogAction IO DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
 initialDebuggerState l hsDbgViewUid =
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
@@ -756,11 +758,19 @@ instance Show DebuggerMessage where
           ++ show pkg ++ " wasn't found in dependencies " ++ show uids
     LogSDoc dflags doc -> showSDoc dflags doc
 
+pprCxt :: [InteractiveImport] -> SDoc
+pprCxt xs = text "CONTEXT" <+> text (unlines . lines $ showPprUnsafe (withPprStyle (PprDump reallyAlwaysQualify) $ ppr xs))
 logSDoc :: Logger.Severity -> SDoc -> Debugger ()
 logSDoc sev doc = do
   dflags <- getDynFlags
   l <- asks dbgLogger
-  l <& DebuggerLog sev (LogSDoc dflags doc)
+  liftLogIO l <& DebuggerLog sev (LogSDoc dflags doc)
+
+getLogSDoc :: MonadIO m => Debugger (Logger.Severity -> SDoc -> m ())
+getLogSDoc = do
+  dflags <- getDynFlags
+  l <- asks dbgLogger
+  pure $ \sev doc -> liftLogIO l <& DebuggerLog sev (LogSDoc dflags doc)
 
 ghcLogAction :: LogAction IO DebuggerLog -> GHC.LogAction
 ghcLogAction l = \logflags mclass srcSpan sdoc -> do
