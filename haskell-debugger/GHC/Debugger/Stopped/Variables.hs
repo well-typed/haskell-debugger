@@ -98,6 +98,7 @@ termVarFields fam_envs top_key top_term = do
 
 
 -- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
+--   The @FamInstEnvs@ is used to look through newtypes and type families when checking if suspensions are of function type.
 termToVarInfo :: FamInstEnvs -> TermKey -> Term -> Debugger VarInfo
 termToVarInfo fam_envs key term0 = do
   -- Make a VarInfo for a term
@@ -106,23 +107,24 @@ termToVarInfo fam_envs key term0 = do
 
   varName <- display key
   varType <- display ty
-  case unwrapNewtype term0 of
-    -- The simple case: The term is a a thunk...
-    Suspension{} -> do
-      -- FIXME: should we special case type variables too?
-      -- let's check how the type of `Term`s is generated: could a suspension with type "a0" be forced into something useful?
-      let isFn = isFunctionType ty
-
+  case term0 of
+    t | Suspension{} <- unwrapNewtype t, isFunctionType ty -> do
       return VarInfo
         { varName
         , varType
-        , varValue = if isFn
-            then "<fn> :: " ++ varType
-            else "_"
-        , varRef = if isFn
-            then NoVariables
-            else SpecificVariable key -- allows forcing the thunk
-        , isThunk = not isFn
+        , varValue = "<fn> :: " ++ varType
+        , varRef = NoVariables
+        , isThunk = False
+        }
+
+    -- The simple case: The term is a a thunk...
+    Suspension{} -> do
+      return VarInfo
+        { varName
+        , varType
+        , varValue = "_"
+        , varRef = SpecificVariable key -- allows forcing the thunk
+        , isThunk = True
         }
 
     -- Otherwise, try to apply and decode a custom 'DebugView', or default to
