@@ -1,7 +1,14 @@
 {-# LANGUAGE BlockArguments, OverloadedStrings, DerivingStrategies #-}
 {-# LANGUAGE NondecreasingIndentation #-}
 -- | Run the proxy mode, which forwards stdin/stdout to/from the DAP server and
--- is displayed in a terminal in the DAP client using 'runInTerminal'
+-- is displayed in a terminal in the DAP client using 'runInTerminal'.
+--
+-- Note: the proxy program is only launched when 'runInTerminal' is supported
+-- and we're using the internal interpreter (--internal-interpreter).
+--
+-- If the external interpreter is being used (the default), we launch the
+-- external interpreter directly with 'runInTerminal' and don't need the proxy
+-- at all.
 module Development.Debug.Adapter.Proxy
   ( serverSideHdbProxy
   , runInTerminalHdbProxy

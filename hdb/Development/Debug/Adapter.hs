@@ -24,23 +24,54 @@ type DebugAdaptorX r = Adaptor DebugAdaptorState r ()
 --    - The debugger main worker writes to this MVar responses (and, for now, events too)
 --    - The handler worker reads from this MVar and writes them to the client with the 'Adapter'.
 data DebugAdaptorState = DAS
-      { syncRequests :: MVar D.Command
+      { syncRequests  :: MVar D.Command
       , syncResponses :: MVar D.Response
-      , nextFreshId :: !Int
+      , nextFreshId   :: !Int
       , breakpointMap :: Map.Map GHC.InternalBreakpointId BreakpointSet
       , stackFrameMap :: IM.IntMap StackFrameIx
       , variablesMap  :: IM.IntMap VariablesIx
-      , entryFile :: FilePath
-      , entryPoint :: String
-      , entryArgs :: [String]
-      , projectRoot :: FilePath
-      , syncProxyIn :: Chan BS.ByteString
+      , entryFile     :: FilePath
+      , entryPoint    :: String
+      , entryArgs     :: [String]
+      , projectRoot   :: FilePath
+      , runInTerminal :: MVar RunInTerminalProc
+        -- ^ Potentially a process launched via 'runInTerminal'.
+        -- The MVar is only filled once the process is actually launched.
+        --
+        -- If on initialization we learn that runInTerminal is not supported,
+        -- we put 'NoRunInTerminal' right away. If on Command-Launch the MVar
+        -- is still empty, then we know runInTerminal is supported and can at
+        -- that point launch the process and fill the MVar.
+      }
+
+-- | A process launched via 'runInTerminal', which is attached to a user's terminal
+data RunInTerminalProc
+  -- | We're not using 'runInTerminal', so we didn't request the DAP client to
+  -- launch a process on the user's terminal.
+  = NoRunInTerminal
+
+  -- | Instead of launching the external interpreter ourselves, we requested
+  -- the DAP client to launch the external interpreter process
+  | RunExternalInterpreterInTerminal
+
+  -- | We launched @hdb proxy ...@ on the user's terminal.
+  --
+  -- This process will forward all input the user types into the
+  -- debugger/debuggee process and be forwarded the debuggee's output to print.
+  --
+  -- We should always prefer to launch 'RunExternalInterpreterInTerminal'
+  -- directly, but is not possible if using the internal interpreter.
+  --
+  -- See 'Development.Debug.Adapter.Proxy' for more details on @hdb proxy@.
+  | RunProxyInTerminal
+      { syncProxyIn :: Chan BS.ByteString
         -- ^ Read input to the debuggee from the proxy
       , syncProxyOut :: Chan BS.ByteString
         -- ^ Write output from the debuggee to the proxy
       , syncProxyErr :: Chan BS.ByteString
         -- ^ Write stderr from the debuggee to the proxy
       }
+
 
 type BreakpointId = Int
 type BreakpointSet = IS.IntSet

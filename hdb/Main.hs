@@ -76,11 +76,9 @@ main = do
         hSetBuffering realStdout LineBuffering
         l <- mainLogger hdbOpts.verbosity realStdout
         init_var <- liftIO (newIORef False{-not supported by default-})
-        pid_var  <- liftIO (newIORef Nothing)
-        ccon_var <- liftIO newEmptyMVar
         runDAPServerWithLogger (contramap DAPLibraryLog l) config
-          (talk l init_var pid_var ccon_var internalInterpreter)
-          (ack l pid_var)
+          (talk l init_var internalInterpreter)
+          (ack l )
     HdbCLI{..} -> do
         setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
         l <- mainLogger hdbOpts.verbosity stdout
@@ -212,16 +210,14 @@ getConfig port = do
 talk :: LogAction IO MainLog
      -> IORef Bool
      -- ^ Whether the client supports runInTerminal
-     -> IORef (Maybe Int)
-     -- ^ The PID of the runInTerminal proxy process
-     -> MVar ()
-     -- ^ A var to block on waiting for the proxy client to connect, if a proxy
-     -- connection is expected. See #95.
+     -- -> MVar ()
+     -- ^ A var to block on waiting for the proxy client to connect, if the
+     -- proxy is expected. See #95.
      -> Bool
      -- ^ Prefer internal interpreter
      -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter = \ case
+talk l support_rit_var client_proxy_signal prefer_internal_interpreter = \ case
   CommandInitialize -> do
     InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
 #ifdef mingw32_HOST_OS
@@ -233,10 +229,6 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
 #endif
     liftIO $ writeIORef support_rit_var runInTerminal
     sendInitializeResponse
-
-    -- If runInTerminal is not supported by the client, signal readiness right away
-    when (not runInTerminal) $
-      liftIO $ putMVar client_proxy_signal ()
 --------------------------------------------------------------------------------
   CommandLaunch -> do
     launch_args <- getArguments
@@ -253,8 +245,17 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
         sendLaunchResponse   -- ack
         sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
 
-        -- Run the proxy in a separate terminal to accept stdin / forward stdout
-        -- if it is supported
+        -- Run the proxy or debuggee in a separate terminal to accept stdin /
+        -- forward stdout, when supported.
+        --
+        -- (1) If using the external interpreter (default), we ask the DAP
+        -- client to launch the external interpreter (a separate process)
+        -- attached to a user's terminal
+        --
+        -- (2) If using the internal interpreter, we ask the DAP client to
+        -- launch the `hdb proxy` attached to the user's terminal. The proxy
+        -- forwards input/output from the user terminal to the
+        -- debugger+debuggee shared process
         when supportsRunInTerminalRequest $ do
           maybe (pure ()) sendRunProxyInTerminal mport
 
@@ -285,7 +286,7 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
     sendConfigurationDoneResponse
     -- now that it has been configured, start executing until it halts, then send an event
 
-    -- wait for the proxy client to connect before starting the execution (#95)
+    -- wait for the proxy client to connect before starting the execution (#95).
     () <- liftIO $ takeMVar client_proxy_signal
     startExecution >>= handleEvalResult False
 ----------------------------------------------------------------------------
@@ -324,10 +325,8 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
 
 -- | Receive reverse request responses (such as runInTerminal response)
 ack :: LogAction IO MainLog
-    -> IORef (Maybe Int)
-    -- ^ Reference to PID of runInTerminal proxy process running
     -> ReverseRequestResponse -> DebugAdaptorCont ()
-ack l _ref rrr = case rrr.reverseRequestCommand of
+ack l rrr = case rrr.reverseRequestCommand of
   ReverseCommandRunInTerminal -> do
     when rrr.success $ do
       liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "RunInTerminal was successful") Info)

@@ -111,7 +111,7 @@ hdbOptionsParser = hsubparser
       ( progDesc "Debug a Haskell program in CLI mode" ) )
  <> Options.Applicative.command "proxy"
     ( info proxyParser
-      ( progDesc "Internal mode used by the DAP server to proxy the stdin/stdout to the DAP client's terminal" ) )
+      ( progDesc "Internal mode used by the DAP server to proxy stdin/stdout to the DAP client's terminal when using the internal interpreter" ) )
  <> Options.Applicative.command "external-interpreter"
     ( info extInterpParser
       ( progDesc "Start the custom-for-debugger external interpreter" ) )
