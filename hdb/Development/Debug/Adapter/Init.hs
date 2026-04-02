@@ -23,6 +23,7 @@ import qualified Data.Text.Encoding as T
 import qualified System.Process as P
 import Control.Monad.Except
 import Control.Monad.Trans
+import Data.Bifunctor
 import Data.Function
 import Data.Functor
 import Data.Maybe
@@ -37,6 +38,7 @@ import GHC.Generics
 import System.Directory
 import System.FilePath
 import Data.Functor.Contravariant
+import Network.Socket (PortNumber)
 
 import Development.Debug.Adapter
 import Development.Debug.Adapter.Exit
@@ -53,6 +55,7 @@ import GHC.Debugger.Interface.Messages hiding (Command, Response)
 import DAP
 import Development.Debug.Adapter.Handles
 import Development.Debug.Session.Setup
+import Development.Debug.Adapter.Proxy
 
 --------------------------------------------------------------------------------
 -- * Client
@@ -84,6 +87,7 @@ data LaunchArgs
 data DAPLog
   = DAPSessionSetupLog (WithSeverity SessionSetupLog)
   | DAPDebuggerLog Debugger.DebuggerLog
+  | RunProxyServerLog (WithSeverity T.Text)
 
 --------------------------------------------------------------------------------
 -- * Launch Debugger
@@ -96,9 +100,9 @@ newtype InitFailed = InitFailed String deriving Show
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
-initDebugger :: LogAction IO DAPLog -> Bool -> Bool
-             -> LaunchArgs -> ExceptT InitFailed DebugAdaptor ()
-initDebugger l supportsRunInTerminal preferInternalInterpreter
+initDebugger :: LogAction IO DAPLog -> MVar () -> Bool -> Bool
+             -> LaunchArgs -> ExceptT InitFailed DebugAdaptor (Maybe PortNumber)
+initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpreter
                LaunchArgs{ __sessionId
                          , projectRoot = givenRoot
                          , entryFile = entryFileMaybe
@@ -140,7 +144,7 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
 
   liftIO (runExceptT (hieBiosSetup hieBiosLogger projectRoot entryFile)) >>= \case
     Left e              -> throwError $ InitFailed e
-    Right (Left e)      -> lift       $ exitWithMsg e
+    Right (Left e)      -> lift       $ exitWithMsg e >> pure Nothing
     Right (Right flags) -> do
       -- Create the stdin handle for the external interpreter
       (readExternalIntStdin, writeExternalIntStdin) <- liftIO P.createPipe
@@ -167,10 +171,15 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
         createDebuggerLogger l dapLogger writeDAPOutput (supportsRunInTerminal, syncProxyOut, syncProxyErr)
 
       let absEntryFile = normalise $ projectRoot </> entryFile
-      lift $ registerNewDebugSession (maybe "debug-session" T.pack __sessionId) DAS{entryFile=absEntryFile,..}
+      let daState = DAS{entryFile=absEntryFile,..}
+      (port, proxyThread) <- do
+        if supportsRunInTerminal then
+          fmap (first Just) . lift $ serverSideHdbProxy (contramap RunProxyServerLog l) client_proxy_signal daState
+          else pure (Nothing,return ())
+      lift $ registerNewDebugSession (maybe "debug-session" T.pack __sessionId) daState
         [ debuggerThread dbgLog finished_init projectRoot flags
             extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
-
+        , ($ proxyThread)
         , \withAdaptor -> forwardHandleToLogger readDAPOutput $
             LogAction (\msg -> withAdaptor (Output.neutral msg))
 
@@ -191,13 +200,14 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
 
       -- Do not return until the initialization is finished
       liftIO (takeMVar finished_init) >>= \case
-        Right () -> pure ()
+        Right () -> pure port
         Left e   -> do
           -- The process terminates cleanly with an error code (probably exit failure = 1)
           -- This can happen if compilation fails and the compiler exits cleanly.
           --
           -- Instead of signalInitialized, respond with error and exit.
           lift $ exitCleanupWithMsg readDAPOutput e
+          pure Nothing
 
 -- | The main debugger thread launches a GHC.Debugger session.
 --

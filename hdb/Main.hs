@@ -245,19 +245,21 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
 
     merror <- runExceptT $
       initDebugger (contramap DAPLog l)
+        client_proxy_signal
         supportsRunInTerminalRequest prefer_internal_interpreter
         launch_args
     case merror of
-      Right () -> do
+      Right mport -> do
         sendLaunchResponse   -- ack
         sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
 
         -- Run the proxy in a separate terminal to accept stdin / forward stdout
         -- if it is supported
         when supportsRunInTerminalRequest $ do
+          maybe (pure ()) sendRunProxyInTerminal mport
+
           -- Run proxy thread, server side, and
           -- send the 'runInTerminal' request
-          serverSideHdbProxy (contramap RunProxyServerLog l) client_proxy_signal
 
         liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "Debugger launched successfully.") Info)
 
@@ -338,7 +340,6 @@ ack l _ref rrr = case rrr.reverseRequestCommand of
 data MainLog
   = DAPLog DAPLog
   | InteractiveLog InteractiveLog
-  | RunProxyServerLog (WithSeverity T.Text)
   | RunProxyClientLog (WithSeverity T.Text)
   | DAPLaunchLog (WithSeverity T.Text)
   | DAPLibraryLog DAP.DAPLog
@@ -377,9 +378,9 @@ mainLogger threshold h = do
   pure $ LogAction $ \case
     DAPLog (DAPSessionSetupLog sessionLog)       -> logSessionLog sessionLog
     DAPLog (DAPDebuggerLog debuggerLog)          -> logDebuggerLog debuggerLog
+    DAPLog (RunProxyServerLog sev_msg) -> defaultLog sev_msg
     InteractiveLog (ISessionSetupLog sessionLog) -> logSessionLog sessionLog
     InteractiveLog (IDebuggerLog debuggerLog)    -> logDebuggerLog debuggerLog
-    RunProxyServerLog sev_msg -> defaultLog sev_msg
     RunProxyClientLog sev_msg -> defaultLog sev_msg
     DAPLaunchLog sev_msg      -> defaultLog sev_msg
     DAPLibraryLog t ->
