@@ -121,6 +121,7 @@ library
                       exceptions >= 0.10.9 && < 0.11,
                       bytestring >= 0.12.1 && < 0.13,
                       async >= 2.2.6 && < 2.3,
+                      network >= 3.2.8,
                       cryptohash-sha1 >= 0.11.101.0 && < 0.12,
                       base16-bytestring >= 1.0.2.0 && < 1.1,
                       aeson >= 2.2.3 && < 2.3,
@@ -129,6 +130,7 @@ library
                       attoparsec >= 0.13 && < 0.15,
                       time >= 1.14 && < 2,
                       text >= 2.1 && < 2.3,
+                      retry >= 0.9 && < 1,
                       co-log-core >= 0.3.2.5 && < 0.4,
 
                       haskell-debugger-view >= 0.2 && < 1.0
