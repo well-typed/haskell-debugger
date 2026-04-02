@@ -263,11 +263,11 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
 
       Left (InitFailed err) -> do
         sendErrorResponse (ErrorMessage (T.pack err)) Nothing
-        exitCleanly Nothing
+        terminateSessionCleanly Nothing
 --------------------------------------------------------------------------------
   CommandAttach -> do
     sendErrorResponse (ErrorMessage (T.pack "hdb does not support \"attach\" mode yet")) Nothing
-    exitCleanly Nothing
+    terminateSessionCleanly Nothing
 --------------------------------------------------------------------------------
   CommandBreakpointLocations       -> commandBreakpointLocations
   CommandSetBreakpoints            -> commandSetBreakpoints
@@ -315,7 +315,7 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
     pure ()
   other -> do
     sendErrorResponse (ErrorMessage (T.pack ("Unsupported command: " <> show other))) Nothing
-    exitCleanly Nothing
+    terminateSessionCleanly Nothing
 ----------------------------------------------------------------------------
 -- talk cmd = logInfo $ BL8.pack ("GOT cmd " <> show cmd)
 ----------------------------------------------------------------------------

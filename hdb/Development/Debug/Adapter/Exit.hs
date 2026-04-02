@@ -27,6 +27,7 @@ import Data.Function
 import System.IO
 import Control.Monad
 import Control.Monad.IO.Class
+import Control.Monad.Error.Class (MonadError(..))
 import Control.Exception
 import Control.Exception.Context
 import qualified Data.Text as T
@@ -45,7 +46,7 @@ commandTerminate = do
   -- DidTerminate <- sendInterleaved TerminateProcess sendTerminateResponse
   destroyDebugSession
   sendTerminateResponse
-  exitCleanly Nothing
+  terminateSessionCleanly Nothing
 
 -- | Command disconnect (1b)
 --
@@ -54,7 +55,7 @@ commandDisconnect :: DebugAdaptor ()
 commandDisconnect = do
   destroyDebugSession
   sendDisconnectResponse
-  exitCleanly Nothing
+  terminateSessionCleanly Nothing
 
 --- Exit Cleanly ---------------------------------------------------------------
 
@@ -83,25 +84,23 @@ exitCleanupWithMsg final_handle msg = do
   exitWithMsg msg
 
 -- | Logs the error to the debug console and sends a terminate event
-exitWithMsg :: String -> DebugAdaptor a
+exitWithMsg :: String -> DebugAdaptor ()
 exitWithMsg msg = do
   Output.important (T.pack msg)
-  exitCleanly (Just msg)
+  terminateSessionCleanly (Just msg)
 
-exitCleanly :: Maybe String -> DebugAdaptor a
-exitCleanly mm = do
-
+terminateSessionCleanly :: Maybe String -> DebugAdaptor ()
+terminateSessionCleanly mm = do
+  -- throws error if no session found.
+  destroyDebugSession `catchError` \ e -> liftIO $ hPutStrLn stdout ("terminateSessionCleanly: ignoring missing session: " ++ show e)
   sendTerminatedEvent (TerminatedEvent False)
 
-  -- We exit here to guarantee the process is killed when
-  -- terminated. Important! We want a new server process per
-  -- session, which means at the end we must kill the server.
   liftIO $ do
     case mm of
-      Nothing -> throwIO TerminateServer
+      Nothing -> return ()
       Just em -> do
         hPutStrLn stderr em
-        throwIO TerminateServer
+        return ()
 
 --- Utils ----------------------------------------------------------------------
 
@@ -111,4 +110,3 @@ displayExceptionWithContext ex = do
   case displayExceptionContext (someExceptionContext ex) of
     "" -> displayException ex
     cx -> displayException ex ++ "\n\n" ++ cx
-

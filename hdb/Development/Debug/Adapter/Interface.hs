@@ -28,8 +28,8 @@ sendInterleaved cmd action = do
   liftIO (takeMVar syncResponses) >>= handleAbort
 
 handleAbort :: Response -> DebugAdaptor Response
-handleAbort (Aborted e) = do
+handleAbort r@(Aborted e) = do
   Output.console (T.pack e)
-  exitCleanly (Just e)
+  terminateSessionCleanly (Just e)
+  return r
 handleAbort r = return r
-
