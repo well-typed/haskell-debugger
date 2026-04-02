@@ -22,6 +22,7 @@ import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
 import Control.Monad.Reader
+import Control.Retry
 import Data.Function
 import Data.Functor.Contravariant
 import Data.IORef
@@ -35,6 +36,9 @@ import System.Posix.Signals
 import Data.Text (Text)
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
+import Network.Socket hiding (Debug)
+import System.Process.Internals (mkProcessHandle)
+import Text.Read (readMaybe)
 
 import GHC
 import GHC.Data.FastString
@@ -81,6 +85,14 @@ import qualified GHC.Debugger.Runtime.Thread.Map as TM
 import Colog.Core as Logger
 
 import {-# SOURCE #-} GHC.Debugger.Runtime.Instances.Discover (RuntimeInstancesCache, emptyRuntimeInstancesCache)
+import GHCi.Message (mkPipeFromHandles)
+import System.IO (Handle, hGetLine)
+import GHC.IO.IOMode (IOMode(..))
+import qualified GHC.Linker.Loader as Loader
+
+#if MIN_VERSION_ghc(9,15,0)
+import GHC.Data.FastString.Env (emptyFsEnv)
+#endif
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -183,9 +195,13 @@ data RunDebuggerSettings = RunDebuggerSettings
       { supportsANSIStyling :: Bool
       , supportsANSIHyperlinks :: Bool
       , preferInternalInterpreter :: Bool
-      , externalInterpreterStdinStream :: StdStream
-      -- ^ How to determine the stdin of the external interpreter running the
-      -- debuggee. If not using the external interpreter this field is unused.
+      , externalInterpreterCustomProc :: Either StdStream PortNumber
+        -- ^ Right: use a custom given existing process for the external
+        -- interpreter listening at given port. (This is used when we want to
+        -- launch the external interpreter attached to a user's terminal).
+        --
+        -- Left: we launch our own external interpreter process through
+        -- GHC's spawnIServ using the given StdStream as the stdin.
       }
 
 -- | Run a 'Debugger' action on a session constructed from a given GHC invocation.
@@ -274,28 +290,42 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
     -- Make sure to override the function which creates the external
     -- interpreter, because we need to keep track of the standard handles
     iserv_handles <- liftIO newEmptyMVar
-    modifySession $ \h -> h
-      { hsc_hooks = (hsc_hooks h)
-          { createIservProcessHook = Just $ \cp -> do
-              -- See Note [External interpreter buffering]
-              (_, Just o, Just e, ph) <-
-                createProcess cp
-                  { std_in  = conf.externalInterpreterStdinStream
-                  , std_out = CreatePipe
-                  , std_err = CreatePipe
-                  -- Override executable path
-                  -- See Note [Custom external interpreter]
+    case conf.externalInterpreterCustomProc of
+      -- Left: GHC will launch the external interpreter itself on demand if
+      -- using external interpreter, and we just provide the stdin stream
+      Left givenStdStream ->
+        modifySession $ \h -> h
+          { hsc_hooks = (hsc_hooks h)
+              { createIservProcessHook = Just $ \cp -> do
+                  -- See Note [External interpreter buffering]
+                  (_, Just o, Just e, ph) <-
+                    createProcess cp
+                      { std_in  = givenStdStream
+                      , std_out = CreatePipe
+                      , std_err = CreatePipe
+                      -- Override executable path
+                      -- See Note [Custom external interpreter]
 #if MIN_VERSION_ghc(9,15,0)
 #else
-                  , cmdspec = case cmdspec cp of
-                      ShellCommand (words -> ws) -> ShellCommand $ unwords $ thisProg : drop 1 ws
-                      RawCommand _fp args -> RawCommand thisProg args
+                      , cmdspec = case cmdspec cp of
+                          ShellCommand (words -> ws) -> ShellCommand $ unwords $ thisProg : drop 1 ws
+                          RawCommand _fp args -> RawCommand thisProg args
 #endif
-                  }
-              putMVar iserv_handles (o, e)
-              return ph
+                      }
+                  putMVar iserv_handles (o, e)
+                  return ph
+              }
           }
-      }
+
+      -- Right: we supply our custom external interpreter process, which is
+      -- already running and connected to the user's terminal.
+      Right port -> do
+        liftIO $ putStrLn "UNBLOCKED! cnstrucgiint ext itnerp"
+        extInterp <- liftIO $ extInterpFromTerminalProcess port
+        liftIO $ putStrLn "Constructed ext interp!"
+        modifySession $ \h -> h
+          { hsc_interp = Just extInterp -- set it directly!
+          }
 
     let
       externalInterpFwdThread :: IO ()
@@ -433,10 +463,16 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
                 then Nothing
                 else Just hdv_uid)
 
-    withUnliftGhc $ \ unlift -> do
-      withAsync (void externalInterpFwdThread) $ \ fwd_thr -> do
-        liftIO $ link fwd_thr
-        unlift mainGhcThread
+    case conf.externalInterpreterCustomProc of
+      Left _ -> do
+        -- We launched the external interpreter ourselves, so forward its output to the logger.
+        withUnliftGhc $ \ unlift -> do
+          withAsync (void externalInterpFwdThread) $ \ fwd_thr -> do
+            liftIO $ link fwd_thr
+            unlift mainGhcThread
+      Right _ ->
+        -- Ext interp is running in user terminal, no need to forward output to logger
+        mainGhcThread
 
 -- | WARNING: callback is not to be used from other threads.
 withUnliftGhc :: ((Ghc b -> IO b) -> IO a) -> Ghc a
@@ -459,6 +495,78 @@ parseDynamicFlagsWithRootDir rootDir logger dflags cmdline = do
   dflags2 <- liftIO $ interpretPackageEnv logger1 dflags1
   return (dflags2, leftovers, warns)
 
+-- | Make an 'ExtInterpInstance' based on an external interpreter process that
+-- was launched by the DAP client via 'runInTerminal'. The process sends its
+-- own PID as the first line on the socket before the GHCi wire protocol
+-- begins.
+extInterpFromTerminalProcess :: PortNumber -> IO Interp
+extInterpFromTerminalProcess port = do
+  bi_h <- mkHandleFromPortSock port
+  pidLine <- hGetLine bi_h
+  pid <- case readMaybe pidLine :: Maybe Int of
+    Just pid -> pure pid
+    Nothing  -> fail $ "invalid external interpreter PID on socket: " ++ show pidLine
+  ph <- mkProcessHandle (fromIntegral pid) False
+  interpPipe <- mkPipeFromHandles bi_h bi_h
+  lock <- newMVar ()
+  let process = InterpProcess
+                  { interpHandle = ph
+                  , interpPipe
+                  , interpLock   = lock
+                  }
+
+  pending_frees <- newMVar []
+  let inst = ExtInterpInstance
+        { instProcess           = process
+        , instPendingFrees      = pending_frees
+        , instExtra             = ()
+        }
+      conf = IServConfig
+       { iservConfProgram  = "should never be used"
+       , iservConfOpts     = []
+       , iservConfProfiled = False
+       , iservConfDynamic  = False
+       , iservConfHook     = Nothing
+       , iservConfTrace    = pure ()
+       }
+
+  lookup_cache <- mkInterpSymbolCache
+  s            <- newMVar $ InterpRunning inst
+  loader       <- Loader.uninitializedLoader
+#if MIN_VERSION_ghc(9,15,0)
+  fs_cache     <- newMVar emptyFsEnv
+  return (Interp (ExternalInterp (ExtIServ (ExtInterpState conf s))) loader lookup_cache fs_cache)
+#else
+  return (Interp (ExternalInterp (ExtIServ (ExtInterpState conf s))) loader lookup_cache)
+#endif
+
+-- | Connect to the given port and return a ReadWriteHandle Handle
+mkHandleFromPortSock :: PortNumber -> IO Handle
+mkHandleFromPortSock port = do
+  addrs <- getAddrInfo (Just defaultHints { addrSocketType = Stream })
+                       (Just "127.0.0.1") (Just (show port))
+  case addrs of
+    addr : _ -> recovering connectRetryPolicy [shouldRetry] $
+      const (connectOnce (addrAddress addr))
+    [] -> fail ("Could not resolve address for external interpreter port " ++ show port)
+  where
+    connectRetryPolicy :: RetryPolicyM IO
+    connectRetryPolicy =
+      limitRetriesByCumulativeDelay 20_000_000 $
+        capDelay 250_000 $
+          fibonacciBackoff 10_000
+
+    shouldRetry :: RetryStatus -> Control.Monad.Catch.Handler IO Bool
+    shouldRetry _ = Control.Monad.Catch.Handler $ \(_ :: IOException) -> pure True
+
+    connectOnce :: SockAddr -> IO Handle
+    connectOnce addr =
+      Control.Exception.bracketOnError
+        (socket AF_INET Stream defaultProtocol)
+        close
+        (\sock -> do
+            connect sock addr
+            socketToHandle sock ReadWriteMode)
 
 {-
 Note [Custom external interpreter]
@@ -537,6 +645,9 @@ Therefore, after loading the modules, we evaluate on the remote process:
 
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
+
+When launching the external interpreter directly attached to the user's
+terminal (via runInTerminal), the handles will indeed be connected to a TTY.
 
 [1] https://ftp.gnu.org/old-gnu/Manuals/glibc-2.2.5/html_node/Buffering-Concepts.html
 -}

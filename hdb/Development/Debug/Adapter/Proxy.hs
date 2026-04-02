@@ -1,11 +1,19 @@
-{-# LANGUAGE BlockArguments, OverloadedStrings, DerivingStrategies #-}
+{-# LANGUAGE BlockArguments, OverloadedStrings, DerivingStrategies, OrPatterns #-}
 {-# LANGUAGE NondecreasingIndentation #-}
 -- | Run the proxy mode, which forwards stdin/stdout to/from the DAP server and
--- is displayed in a terminal in the DAP client using 'runInTerminal'
+-- is displayed in a terminal in the DAP client using 'runInTerminal'.
+--
+-- Note: the proxy program is only launched when 'runInTerminal' is supported
+-- and we're using the internal interpreter (--internal-interpreter).
+--
+-- If the external interpreter is being used (the default), we launch the
+-- external interpreter directly with 'runInTerminal' and don't need the proxy
+-- at all.
 module Development.Debug.Adapter.Proxy
-  ( serverSideHdbProxy
+  ( mkServerSideHdbProxy
   , runInTerminalHdbProxy
   , sendRunProxyInTerminal
+  , openSocketAvailablePort
   ) where
 
 #if !MIN_VERSION_ghc(9,15,0)
@@ -47,22 +55,17 @@ import qualified Control.Exception as E
 -- 2. In a loop,
 -- 2.1 Read stdin from the socket and push it to a Chan
 -- 2.1 Read from a stdout Chan and write to the socket
-serverSideHdbProxy :: LogAction IO (WithSeverity T.Text)
+mkServerSideHdbProxy :: LogAction IO (WithSeverity T.Text)
+                   -> Chan BS8.ByteString
+                   -> Chan BS8.ByteString
+                   -> Chan BS8.ByteString
                    -> MVar ()
-                   -> DebugAdaptorState
                    -> Adaptor DebugAdaptorState r (PortNumber, Adaptor DebugAdaptorState s ())
-serverSideHdbProxy l client_conn_signal
-  DAS { syncProxyIn = dbIn
-      , syncProxyOut = dbOut
-      , syncProxyErr = dbErr } = do
+mkServerSideHdbProxy l dbIn dbOut dbErr client_conn_signal = do
 
-  sock <- liftIO $ do
-    let hints = defaultHints { addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream }
-    addr <- NE.head <$> getAddrInfo (Just hints) (Just "127.0.0.1") (Just "0")
-    -- Bind on "0" to let the OS pick a free port
-    openTCPServerSocket addr
-
+  sock <- liftIO $ openSocketAvailablePort
   port <- liftIO $ socketPort sock
+
   return $ (port,) $ liftIO $ do
    ignoreIOException $ do
     myThreadId >>= \tid -> labelThread tid "Debug/Adapter/Proxy: TCP Server"
@@ -122,10 +125,19 @@ runTCPServerWithSocket' sock server = do
           (const serverLoop)
   serverLoop
 
+-- | Label the running thread
 labelMe :: String -> IO ()
 labelMe name = do
     tid <- myThreadId
     labelThread tid name
+
+-- | Open a socket on an available port
+openSocketAvailablePort :: IO Socket
+openSocketAvailablePort = do
+  let hints = defaultHints { addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream }
+  addr <- NE.head <$> getAddrInfo (Just hints) (Just "127.0.0.1") (Just "0")
+  -- Bind on "0" to let the OS pick a free port
+  openTCPServerSocket addr
 
 -- | The proxy code running on the terminal in which the @hdb proxy@ process is launched.
 --
