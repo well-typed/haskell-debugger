@@ -1,9 +1,18 @@
 {-# LANGUAGE BlockArguments, OverloadedStrings, DerivingStrategies #-}
+{-# LANGUAGE NondecreasingIndentation #-}
 -- | Run the proxy mode, which forwards stdin/stdout to/from the DAP server and
--- is displayed in a terminal in the DAP client using 'runInTerminal'
+-- is displayed in a terminal in the DAP client using 'runInTerminal'.
+--
+-- Note: the proxy program is only launched when 'runInTerminal' is supported
+-- and we're using the internal interpreter (--internal-interpreter).
+--
+-- If the external interpreter is being used (the default), we launch the
+-- external interpreter directly with 'runInTerminal' and don't need the proxy
+-- at all.
 module Development.Debug.Adapter.Proxy
   ( serverSideHdbProxy
   , runInTerminalHdbProxy
+  , sendRunProxyInTerminal
   ) where
 
 #if !MIN_VERSION_ghc(9,15,0)
@@ -33,6 +42,7 @@ import qualified Data.HashMap.Strict as H
 
 import Colog.Core
 import Development.Debug.Adapter
+import qualified Control.Exception as E
 
 -- | Fork a new thread to run the server-side of the proxy.
 --
@@ -46,11 +56,12 @@ import Development.Debug.Adapter
 -- 2.1 Read from a stdout Chan and write to the socket
 serverSideHdbProxy :: LogAction IO (WithSeverity T.Text)
                    -> MVar ()
-                   -> DebugAdaptor ()
-serverSideHdbProxy l client_conn_signal = do
+                   -> DebugAdaptorState
+                   -> Adaptor DebugAdaptorState r (PortNumber, Adaptor DebugAdaptorState s ())
+serverSideHdbProxy l client_conn_signal
   DAS { syncProxyIn = dbIn
       , syncProxyOut = dbOut
-      , syncProxyErr = dbErr } <- getDebugSession
+      , syncProxyErr = dbErr } = do
 
   sock <- liftIO $ do
     let hints = defaultHints { addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream }
@@ -59,10 +70,10 @@ serverSideHdbProxy l client_conn_signal = do
     openTCPServerSocket addr
 
   port <- liftIO $ socketPort sock
-
-  fwd_thr <- liftIO $ async $ ignoreIOException $ do
+  return $ (port,) $ liftIO $ do
+   ignoreIOException $ do
     myThreadId >>= \tid -> labelThread tid "Debug/Adapter/Proxy: TCP Server"
-    runTCPServerWithSocket sock $ \scket -> do
+    runTCPServerWithSocket' sock $ \scket -> do
 
       infoMsg (T.pack $ "Connected to client on port " ++ show port ++ "...!")
       putMVar client_conn_signal () -- signal ready (see #95)
@@ -71,16 +82,14 @@ serverSideHdbProxy l client_conn_signal = do
         (race_
           (-- Read stdout from chan and write to socket
            ignoreIOException $ do
-             tid <- myThreadId
-             labelThread tid "Debug/Adapter/Proxy: Forward stdout"
+             labelMe "Debug/Adapter/Proxy: Forward stdout"
              forever $ do
                bs <- readChan dbOut
                debugMsg (T.pack $ "Writing to socket: " ++ BS8.unpack bs)
                NBS.sendAll scket bs)
           (-- Read stderr from chan and write to socket
            ignoreIOException $ do
-             tid <- myThreadId
-             labelThread tid "Debug/Adapter/Proxy: Forward stderr"
+             labelMe "Debug/Adapter/Proxy: Forward stderr"
              forever $ do
                bs <- readChan dbErr
                debugMsg (T.pack $ "Writing to socket (from stderr): " ++ BS8.unpack bs)
@@ -96,16 +105,34 @@ serverSideHdbProxy l client_conn_signal = do
               else do
                 debugMsg (T.pack $ "Read from socket: " ++ BS8.unpack bs)
                 writeChan dbIn bs >> loop
-          in ignoreIOException loop)
-
-  liftIO $ link fwd_thr
-  sendRunProxyInTerminal port
+          in ignoreIOException $ do
+              labelMe "Debug/Adapter/Proxy: Read stdin"
+              loop)
 
   where
     ignoreIOException a = catch a $ \(e::IOException) ->
       infoMsg (T.pack $ "Ignoring connection broken to proxy client: " ++ show e)
     debugMsg msg = l <& WithSeverity msg Debug
     infoMsg msg  = l <& WithSeverity msg Info
+
+-- | A version of @runTCPServerWithSocket@ that kills the forked connection
+-- handlers when killed.
+runTCPServerWithSocket' :: Socket -> (Socket -> IO a1) -> IO a2
+runTCPServerWithSocket' sock server = do
+  let
+    serverLoop = forever $ E.bracketOnError (accept sock) (close . fst) $
+      \(conn, _peer) ->
+        mask_ $ withAsyncWithUnmask
+          (\ unmask ->
+             unmask (labelMe "TCP Server handler" >> server conn)
+            `finally` gracefulClose conn 5000)
+          (const serverLoop)
+  serverLoop
+
+labelMe :: String -> IO ()
+labelMe name = do
+    tid <- myThreadId
+    labelThread tid name
 
 -- | The proxy code running on the terminal in which the @hdb proxy@ process is launched.
 --
