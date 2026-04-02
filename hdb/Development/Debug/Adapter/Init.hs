@@ -100,9 +100,9 @@ newtype InitFailed = InitFailed String deriving Show
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
-initDebugger :: LogAction IO DAPLog -> MVar () -> Bool -> Bool
+initDebugger :: LogAction IO DAPLog -> Bool -> Bool
              -> LaunchArgs -> ExceptT InitFailed DebugAdaptor (Maybe PortNumber)
-initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpreter
+initDebugger l supportsRunInTerminal preferInternalInterpreter
                LaunchArgs{ __sessionId
                          , projectRoot = givenRoot
                          , entryFile = entryFileMaybe
@@ -112,9 +112,6 @@ initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpret
                          } = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
-  syncProxyIn   <- liftIO newChan
-  syncProxyOut  <- liftIO newChan
-  syncProxyErr  <- liftIO newChan
 
   entryFile <- case entryFileMaybe of
     Nothing -> throwError $ InitFailed "Missing \"entryFile\" key in debugger configuration"
@@ -165,17 +162,23 @@ initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpret
             , externalInterpreterStdinStream = UseHandle readExternalIntStdin
             }
 
-      finished_init <- liftIO $ newEmptyMVar
+      finished_init <- liftIO newEmptyMVar
+      runInTerminalProc <- liftIO newEmptyMVar
 
       dbgLog <- liftIO $
         createDebuggerLogger l dapLogger writeDAPOutput (supportsRunInTerminal, syncProxyOut, syncProxyErr)
 
       let absEntryFile = normalise $ projectRoot </> entryFile
+
       let daState = DAS{entryFile=absEntryFile,..}
+
       (port, proxyThread) <- do
-        if supportsRunInTerminal then
-          fmap (first Just) . lift $ serverSideHdbProxy (contramap RunProxyServerLog l) client_proxy_signal daState
-          else pure (Nothing,return ())
+        if supportsRunInTerminal then do
+          fmap (first Just) . lift $
+            serverSideHdbProxy (contramap RunProxyServerLog l) client_proxy_signal daState
+        else
+          pure (Nothing,return ())
+
       lift $ registerNewDebugSession (maybe "debug-session" T.pack __sessionId) daState
         [ debuggerThread dbgLog finished_init projectRoot flags
             extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses

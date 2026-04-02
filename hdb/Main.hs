@@ -210,14 +210,11 @@ getConfig port = do
 talk :: LogAction IO MainLog
      -> IORef Bool
      -- ^ Whether the client supports runInTerminal
-     -- -> MVar ()
-     -- ^ A var to block on waiting for the proxy client to connect, if the
-     -- proxy is expected. See #95.
      -> Bool
      -- ^ Prefer internal interpreter
      -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l support_rit_var client_proxy_signal prefer_internal_interpreter = \ case
+talk l support_rit_var prefer_internal_interpreter = \ case
   CommandInitialize -> do
     InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
 #ifdef mingw32_HOST_OS
@@ -237,7 +234,6 @@ talk l support_rit_var client_proxy_signal prefer_internal_interpreter = \ case
 
     merror <- runExceptT $
       initDebugger (contramap DAPLog l)
-        client_proxy_signal
         supportsRunInTerminalRequest prefer_internal_interpreter
         launch_args
     case merror of
@@ -286,8 +282,9 @@ talk l support_rit_var client_proxy_signal prefer_internal_interpreter = \ case
     sendConfigurationDoneResponse
     -- now that it has been configured, start executing until it halts, then send an event
 
-    -- wait for the proxy client to connect before starting the execution (#95).
-    () <- liftIO $ takeMVar client_proxy_signal
+    -- wait for the runInTerminal process to be ready before starting the execution (#95).
+    runInTerminalProc <- getDebugSession
+    () <- liftIO $ takeMVar runInTerminalProc
     startExecution >>= handleEvalResult False
 ----------------------------------------------------------------------------
   CommandThreads    -> commandThreads

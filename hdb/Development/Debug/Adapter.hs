@@ -34,7 +34,7 @@ data DebugAdaptorState = DAS
       , entryPoint    :: String
       , entryArgs     :: [String]
       , projectRoot   :: FilePath
-      , runInTerminal :: MVar RunInTerminalProc
+      , runInTerminalProc :: MVar RunInTerminalProc
         -- ^ Potentially a process launched via 'runInTerminal'.
         -- The MVar is only filled once the process is actually launched.
         --
