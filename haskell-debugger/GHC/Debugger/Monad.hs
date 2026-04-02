@@ -10,6 +10,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE NondecreasingIndentation #-}
 
 module GHC.Debugger.Monad where
 
@@ -19,7 +20,7 @@ import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Exception
 import Control.Monad
-import Control.Monad.Catch
+import Control.Monad.Catch (MonadThrow (throwM), MonadCatch, MonadMask)
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.Function
@@ -79,6 +80,7 @@ import qualified GHC.Debugger.Runtime.Thread.Map as TM
 import Colog.Core as Logger
 
 import {-# SOURCE #-} GHC.Debugger.Runtime.Instances.Discover (RuntimeInstancesCache, emptyRuntimeInstancesCache)
+import System.Timeout (timeout)
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -268,12 +270,13 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
     -- Make sure to override the function which creates the external
     -- interpreter, because we need to keep track of the standard handles
     iserv_handles <- liftIO newEmptyMVar
+    withAsyncCleaner $ \ regCleanup -> do
     modifySession $ \h -> h
       { hsc_hooks = (hsc_hooks h)
           { createIservProcessHook = Just $ \cp -> do
               -- See Note [External interpreter buffering]
-              (_, Just o, Just e, ph) <-
-                createProcess cp
+              let
+                createExtInt = createProcess cp
                   { std_in  = conf.externalInterpreterStdinStream
                   , std_out = CreatePipe
                   , std_err = CreatePipe
@@ -286,8 +289,12 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
                       RawCommand _fp args -> RawCommand thisProg args
 #endif
                   }
-              putMVar iserv_handles (o, e)
-              return ph
+              -- TODO: cleanupProcess only sends SIGTERM and possibly leaks a waitForProcess thread.
+              bracketOnError createExtInt cleanupProcess $ \ r -> do
+                regCleanup (cleanupProcess r)
+                (_,Just o,Just e, ph) <- pure r
+                putMVar iserv_handles (o, e)
+                return ph
           }
       }
 
@@ -431,6 +438,15 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
       withAsync (void externalInterpFwdThread) $ \ fwd_thr -> do
         liftIO $ link fwd_thr
         unlift mainGhcThread
+
+-- withAsyncCleaner k = k (const $ return ())
+withAsyncCleaner :: ((IO () -> IO ()) -> Ghc a) -> Ghc a
+withAsyncCleaner k = withUnliftGhc $ \ unlift -> do
+  cleanup <- newEmptyMVar
+  let reg c = putMVar cleanup c `onException` (c >> tryPutMVar cleanup (return ()))
+  let deferedCleanup = void $ forkIO $ void $ timeout (round @Double 10e6) $ takeMVar cleanup >>= id
+  unlift (k reg) `finally` (tryTakeMVar cleanup >>= maybe deferedCleanup id)
+
 
 -- | WARNING: callback is not to be used from other threads.
 withUnliftGhc :: ((Ghc b -> IO b) -> IO a) -> Ghc a
