@@ -23,7 +23,6 @@ import qualified Data.Text.Encoding as T
 import qualified System.Process as P
 import Control.Monad.Except
 import Control.Monad.Trans
-import Data.Bifunctor
 import Data.Function
 import Data.Functor
 import Data.Maybe
@@ -39,7 +38,6 @@ import GHC.Generics
 import System.Directory
 import System.FilePath
 import Data.Functor.Contravariant
-import Network.Socket (PortNumber)
 
 import Development.Debug.Adapter
 import Development.Debug.Adapter.Exit
@@ -57,6 +55,8 @@ import DAP
 import Development.Debug.Adapter.Handles
 import Development.Debug.Session.Setup
 import Development.Debug.Adapter.Proxy
+import System.Environment
+import Network.Socket (socketPort)
 
 --------------------------------------------------------------------------------
 -- * Client
@@ -101,9 +101,9 @@ newtype InitFailed = InitFailed String deriving Show
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
-initDebugger :: LogAction IO DAPLog -> MVar () -> Bool -> Bool
-             -> LaunchArgs -> ExceptT InitFailed DebugAdaptor (Maybe PortNumber)
-initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpreter
+initDebugger :: LogAction IO DAPLog -> Bool -> Bool
+             -> LaunchArgs -> ExceptT InitFailed DebugAdaptor ()
+initDebugger l supportsRunInTerminal preferInternalInterpreter
                LaunchArgs{ __sessionId
                          , projectRoot = givenRoot
                          , entryFile = entryFileMaybe
@@ -113,9 +113,6 @@ initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpret
                          } = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
-  syncProxyIn   <- liftIO newChan
-  syncProxyOut  <- liftIO newChan
-  syncProxyErr  <- liftIO newChan
 
   entryFile <- case entryFileMaybe of
     Nothing -> throwError $ InitFailed "Missing \"entryFile\" key in debugger configuration"
@@ -145,71 +142,122 @@ initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpret
 
   liftIO (runExceptT (hieBiosSetup hieBiosLogger projectRoot entryFile)) >>= \case
     Left e              -> throwError $ InitFailed e
-    Right (Left e)      -> lift       $ exitWithMsg e >> pure Nothing
+    Right (Left e)      -> lift       $ exitWithMsg e
     Right (Right flags) -> do
-      -- Create the stdin handle for the external interpreter
-      (readExternalIntStdin, writeExternalIntStdin) <- liftIO P.createPipe
-      liftIO $ do
-        hSetBuffering readExternalIntStdin LineBuffering
-        hSetBuffering writeExternalIntStdin NoBuffering
-        hSetEncoding readExternalIntStdin utf8
-        hSetEncoding writeExternalIntStdin utf8
 
-      let nextFreshId = 0
-          breakpointMap = mempty
-          stackFrameMap = mempty
-          variablesMap  = mempty
-          defaultRunConf = Debugger.RunDebuggerSettings
-            { supportsANSIStyling = True     -- TODO: Initialize Request sends supportsANSIStyling; this is False for nvim-dap
-            , supportsANSIHyperlinks = False -- VSCode does not support this
-            , preferInternalInterpreter
-            , externalInterpreterStdinStream = UseHandle readExternalIntStdin
-            }
+      let
+        nextFreshId = 0
+        breakpointMap = mempty
+        stackFrameMap = mempty
+        variablesMap  = mempty
 
-      finished_init <- liftIO $ newEmptyMVar
+        mkRunInTerminalProc
+          | not supportsRunInTerminal
+          = pure NoRunInTerminal
+          | not preferInternalInterpreter
+          = do
+            sock <- openSocketAvailablePort
+            port <- socketPort sock
+            pure RunExternalInterpreterInTerminal
+              { extInterpPort  = port
+              }
+          | otherwise
+          = do
+            (syncProxyIn, syncProxyOut, syncProxyErr)
+                             <- (,,) <$> newChan <*> newChan <*> newChan
+            proxyClientReady <- newEmptyMVar
+            pure RunProxyInTerminal{..}
+
+      runInTerminalProc <- liftIO mkRunInTerminalProc
 
       dbgLog <- liftIO $
-        createDebuggerLogger l dapLogger writeDAPOutput (supportsRunInTerminal, syncProxyOut, syncProxyErr)
+        createDebuggerLogger l dapLogger writeDAPOutput runInTerminalProc
 
-      let absEntryFile = normalise $ projectRoot </> entryFile
-      let daState = DAS{entryFile=absEntryFile,..}
-      (port, proxyThread) <- do
-        if supportsRunInTerminal then
-          fmap (first Just) . lift $ serverSideHdbProxy (contramap RunProxyServerLog l) client_proxy_signal daState
-          else pure (Nothing,return ())
+      (runInTerminalThreads, afterRegisterActions) <- lift $
+        mkRunInTerminalThreads l runInTerminalProc preferInternalInterpreter
+
+      let
+        defaultRunConf = Debugger.RunDebuggerSettings
+          { supportsANSIStyling = True     -- TODO: Initialize Request sends supportsANSIStyling; this is False for nvim-dap
+          , supportsANSIHyperlinks = False -- VSCode does not support this
+          , preferInternalInterpreter
+          , externalInterpreterCustomProc = case runInTerminalProc of
+              RunExternalInterpreterInTerminal{extInterpPort}
+                -> Right extInterpPort
+              _ -> Left CreatePipe -- if not runInTerminal, just create a new pipe for stdin
+          }
+        absEntryFile = normalise $ projectRoot </> entryFile
+        daState = DAS{entryFile=absEntryFile,..}
+
       sessionId <- liftIO $ maybe (("debug-session:" <>) . T.show <$> UUID.nextRandom) (pure . T.pack) __sessionId
-      lift $ registerNewDebugSession sessionId daState
-        [ debuggerThread dbgLog finished_init projectRoot flags
-            extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
-        , ($ proxyThread)
+      lift $ registerNewDebugSession sessionId daState $
+        [ debuggerThread dbgLog flags extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
         , \withAdaptor -> forwardHandleToLogger readDAPOutput $
             LogAction (\msg -> withAdaptor (Output.neutral msg))
-
-        -- Setup capturing of the process' own stdout and forwarding of the process' own stdin,
-        -- but only if we're using the internal interpreter!
-        , if preferInternalInterpreter then stdinForwardThread  supportsRunInTerminal syncProxyIn  else mempty
-        , if preferInternalInterpreter then stdoutCaptureThread supportsRunInTerminal syncProxyOut else mempty
-        , if preferInternalInterpreter then stderrCaptureThread supportsRunInTerminal syncProxyErr else mempty
-        , if preferInternalInterpreter
-            then mempty
-            else const $ do
-              -- forward proxy in to external interpreter stdin
-              forever $ do
-                i <- readChan syncProxyIn
-                -- 3. Write to write-end of the pipe
-                BS.hPut writeExternalIntStdin i >> hFlush writeExternalIntStdin
         ]
+        ++
+        runInTerminalThreads
 
-      -- Do not return until the initialization is finished
-      liftIO (takeMVar finished_init) >>= \case
-        Right () -> pure port
-        Left e   -> do
-          -- The process terminates cleanly with an error code (probably exit failure = 1)
-          -- This can happen if compilation fails and the compiler exits cleanly.
-          --
-          -- Instead of signalInitialized, respond with error and exit.
-          lift $ exitCleanupWithMsg readDAPOutput e
-          pure Nothing
+      lift afterRegisterActions
+
+-- | Additional threads to register for this session depending on the process
+-- we're running through `runInTerminal` (see 'RunInTerminalProc').
+mkRunInTerminalThreads
+  :: LogAction IO DAPLog
+  -> RunInTerminalProc
+  -> Bool -- ^ Use internal interpreter
+  -> DebugAdaptor ([(DebugAdaptorCont () -> IO ()) -> IO ()], DebugAdaptor ())
+    -- ^ Threads to register in this debug session and additional commands to
+    -- run after registering the session.
+
+mkRunInTerminalThreads _ NoRunInTerminal useInternalInterp
+  -- Not using the terminal proxy, but we still want to output our own
+  -- stdout/err (from the internal interpreter) as console events.
+  | True <- useInternalInterp
+  = pure ([ stdoutCaptureThread Nothing, stderrCaptureThread Nothing ], pure ())
+
+  | otherwise
+  = pure ([], pure ())
+
+mkRunInTerminalThreads _ RunExternalInterpreterInTerminal{..} _
+  -- No additional bookkeeping is needed in this case because GHC will
+  -- naturally have to wait for the external interpreter in order to start execution
+  = do
+  thisProg <- liftIO getExecutablePath -- run the same `hdb` executable in `proxy` mode
+  pure ([],
+    sendRunInTerminalReverseRequest
+      RunInTerminalRequestArguments
+        { runInTerminalRequestArgumentsKind = Just RunInTerminalRequestArgumentsKindIntegrated
+        , runInTerminalRequestArgumentsTitle = Nothing
+        , runInTerminalRequestArgumentsCwd = ""
+        , runInTerminalRequestArgumentsArgs =
+            [T.pack thisProg, "external-interpreter", "--port", T.pack (show extInterpPort)]
+        , runInTerminalRequestArgumentsEnv = Nothing
+        , runInTerminalRequestArgumentsArgsCanBeInterpretedByShell = False
+        })
+
+mkRunInTerminalThreads l RunProxyInTerminal{..} _
+  = do
+    (serverPort, serverProxyThread) <-
+      mkServerSideHdbProxy (contramap RunProxyServerLog l)
+        syncProxyIn syncProxyOut syncProxyErr proxyClientReady
+
+    pure (
+      [ ($ serverProxyThread)
+
+      -- Setup capturing of the process' own stdout and forwarding of the process' own stdin,
+      -- but only because we're using the internal interpreter!
+      , stdinForwardThread  syncProxyIn
+      , stdoutCaptureThread (Just syncProxyOut)
+      , stderrCaptureThread (Just syncProxyErr)
+      ],
+
+      -- When using the internal interpreter and 'runInTerminal' is supported
+      -- (the 'RunProxyInTerminal' case), we ask the DAP client to launch the
+      -- `hdb proxy` attached to the user's terminal. The proxy forwards
+      -- input/output from the user terminal to the debugger+debuggee shared process
+      sendRunProxyInTerminal serverPort
+      )
 
 -- | The main debugger thread launches a GHC.Debugger session.
 --
@@ -221,8 +269,6 @@ initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpret
 -- Concurrently, it reads from the process's stderr forever and outputs it through OutputEvents.
 --
 debuggerThread :: LogAction IO Debugger.DebuggerLog
-               -> MVar (Either String ()) -- ^ To signal when initialization is complete.
-               -> FilePath        -- ^ Working directory for GHC session
                -> HieBiosFlags    -- ^ GHC Invocation flags
                -> [String]        -- ^ Extra ghc args
                -> FilePath
@@ -232,7 +278,7 @@ debuggerThread :: LogAction IO Debugger.DebuggerLog
                -> (DebugAdaptorCont () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread l finished_init _workDir HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
+debuggerThread l HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
 
   -- Log haskell-debugger invocation
   withAdaptor $
@@ -247,7 +293,6 @@ debuggerThread l finished_init _workDir HieBiosFlags{..} extraGhcArgs mainFp run
         liftIO $ do
           tid <- myThreadId
           labelThread tid "Main Debugger Thread"
-        liftIO $ signalInitialized (Right ())
         forever $ do
           req <- takeMVar requests & liftIO
           resp <- (Debugger.execute req <&> Right)
@@ -257,13 +302,9 @@ debuggerThread l finished_init _workDir HieBiosFlags{..} extraGhcArgs mainFp run
     )
     [ Handler $ \(e::SomeAsyncException) -> do
         throwIO e
-    , Handler $ \(e::SomeException) -> do
-        signalInitialized (Left (displayException e))
     ]
 
   where
-    signalInitialized
-          = putMVar finished_init
     reply = liftIO . putMVar replies
     bad m = liftIO $ do
       hPutStrLn stderr m
@@ -292,9 +333,9 @@ createDebuggerLogger
   :: LogAction IO DAPLog
   -> LogAction IO T.Text -- ^ Logger that writes to to DAP output
   -> Handle              -- ^ Handle to DAP output
-  -> (Bool, Chan BS.ByteString, Chan BS.ByteString) -- ^ Proxy channels, and whether is supported
+  -> RunInTerminalProc
   -> IO (LogAction IO Debugger.DebuggerLog)
-createDebuggerLogger l dapLogger writeDAPOutput (supportsRunInTerminal, syncProxyOut, syncProxyErr) = do
+createDebuggerLogger l dapLogger writeDAPOutput runInTerminalProc = do
   return $
     -- (1) (all output is logged to normal logger)
     contramap DAPDebuggerLog l <>
@@ -305,56 +346,65 @@ createDebuggerLogger l dapLogger writeDAPOutput (supportsRunInTerminal, syncProx
             dapLogger <& T.pack (show msg)
         Debugger.GHCLog logflags msg_class srcSpan msg ->
           defaultLogActionWithHandles writeDAPOutput writeDAPOutput logflags msg_class srcSpan msg
-        Debugger.LogDebuggeeOut txt -> debuggeeOut dapLogger syncProxyOut txt
-        Debugger.LogDebuggeeErr txt -> debuggeeOut dapLogger syncProxyErr txt
+        Debugger.LogDebuggeeOut txt -> debuggeeOut dapLogger msyncProxyOut txt
+        Debugger.LogDebuggeeErr txt -> debuggeeOut dapLogger msyncProxyErr txt
         _ -> pure () -- don't log other messages, already logged to (1)
         )
   where
-    debuggeeOut l' proxyChan txt = do
+    debuggeeOut l' mproxyChan txt = do
       -- (2)
       l' <& txt
       -- (3)
-      when supportsRunInTerminal $
-        writeChan proxyChan $
-          T.encodeUtf8 (txt <> "\n")
+      case mproxyChan of
+        Nothing -> pure ()
+        Just proxyChan ->
+          writeChan proxyChan $
+            T.encodeUtf8 (txt <> "\n")
+
+    (msyncProxyOut, msyncProxyErr)
+      | RunProxyInTerminal{syncProxyOut, syncProxyErr} <- runInTerminalProc
+      = (Just syncProxyOut, Just syncProxyErr)
+      | otherwise
+      = (Nothing, Nothing)
 
 --------------------------------------------------------------------------------
 -- * Capturing stdout, stderr, and writing to self stdin
 --------------------------------------------------------------------------------
 
 -- | Hijack the current process stdin and forward to it the messages from the given channel
-stdinForwardThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
-stdinForwardThread runInTerminal syncIn _withAdaptor = do
+stdinForwardThread :: Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
+stdinForwardThread syncIn _withAdaptor = do
   tid <- myThreadId
   labelThread tid "Stdin Forward Thread"
-  when runInTerminal $ do
-    -- We need to hijack stdin to write to it
 
-    -- 1. Create a new pipe from writeEnd->readEnd
-    (readEnd, writeEnd) <- createPipe
+  -- We need to hijack stdin to write to it
 
-    -- 2. Substitute the read-end of the pipe by stdin
-    _ <- hDuplicateTo readEnd stdin
-    hClose readEnd -- we'll never need to read from readEnd
+  -- 1. Create a new pipe from writeEnd->readEnd
+  (readEnd, writeEnd) <- createPipe
 
-    forever $ do
-      i <- readChan syncIn
-      -- 3. Write to write-end of the pipe
-      BS.hPut writeEnd i >> hFlush writeEnd
+  -- 2. Substitute the read-end of the pipe by stdin
+  _ <- hDuplicateTo readEnd stdin
+  hClose readEnd -- we'll never need to read from readEnd
+
+  forever $ do
+    i <- readChan syncIn
+    -- 3. Write to write-end of the pipe
+    BS.hPut writeEnd i >> hFlush writeEnd
 
 -- | This thread captures stdout from the debuggee and sends it to the client.
 -- NOTE, redirecting the stdout handle is a process-global operation. So this thread
 -- will capture ANY stdout the debuggee emits. Therefore you should never directly
 -- write to stdout, but always write to the appropiate handle.
-stdoutCaptureThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
-stdoutCaptureThread runInTerminal syncOut withAdaptor = do
+stdoutCaptureThread :: Maybe (Chan BS.ByteString) -> (DebugAdaptorCont () -> IO ()) -> IO ()
+stdoutCaptureThread msyncOut withAdaptor = do
   tid <- myThreadId
-  labelThread tid "Stdin Capture Thread"
+  labelThread tid "Stdout Capture Thread"
   withInterceptedStdout $ \_ interceptedStdout -> do
     forever $ do
       line <- liftIO $ T.hGetLine interceptedStdout
-      when runInTerminal $
-        writeChan syncOut $ T.encodeUtf8 (line <> T.pack "\n")
+      case msyncOut of
+        Nothing -> pure ()
+        Just syncOut -> writeChan syncOut $ T.encodeUtf8 (line <> T.pack "\n")
 
       -- Always output to Debug Console
       catch
@@ -363,15 +413,16 @@ stdoutCaptureThread runInTerminal syncOut withAdaptor = do
           throwIO (FailedToWriteToAdaptor line))
 
 -- | Like 'stdoutCaptureThread' but for stderr
-stderrCaptureThread :: Bool -> Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
-stderrCaptureThread runInTerminal syncErr withAdaptor = do
+stderrCaptureThread :: Maybe (Chan BS.ByteString) -> (DebugAdaptorCont () -> IO ()) -> IO ()
+stderrCaptureThread msyncErr withAdaptor = do
   tid <- myThreadId
   labelThread tid "Stderr Capture Thread"
   withInterceptedStderr $ \_ interceptedStderr -> do
     forever $ do
       line <- liftIO $ T.hGetLine interceptedStderr
-      when runInTerminal $
-        writeChan syncErr $ T.encodeUtf8 (line <> "\n")
+      case msyncErr of
+        Nothing -> pure ()
+        Just syncErr -> writeChan syncErr $ T.encodeUtf8 (line <> "\n")
 
       -- Always output to Debug Console
       catch

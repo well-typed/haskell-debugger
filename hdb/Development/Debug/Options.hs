@@ -30,14 +30,19 @@ data HdbOptions
   -- | @proxy --port <port>@
   --
   -- The proxy command serves as a middle man between the user and the debugger.
-  -- It is used implicitly by DAP mode: upon initialization, the debugger
-  -- server asks the DAP client to @runInTerminal@ the @hdb proxy --port ...@
-  -- command at a port determined by the debugger server.
+  -- It is used implicitly by DAP mode when using the internal interpreter:
+  -- upon initialization, the debugger server asks the DAP client to
+  -- @runInTerminal@ the @hdb proxy --port ...@ command at a port determined by
+  -- the debugger server.
   --
   -- The proxy mode will forward stdin to the debugger server and will be
   -- forwarded the debuggee's stdout. This essentially enables the user to
   -- observe and interact with the execution of the debugger, in a standalone
   -- terminal.
+  --
+  -- (When using the external interpreter, the proxy isn't necessary because
+  -- the DAP server can launch directly the external interpreter attached to
+  -- the user's terminal)
   --
   -- See #44 for the original ticket
   | HdbProxy
@@ -65,3 +70,8 @@ data HdbOptions
       , readFd  :: Int
       }
 
+  -- | Launch the custom-for-the-debugger external interpreter and connect it
+  -- to the debugger through a TCP socket.
+  | HdbExternalInterpreterPort
+      { port :: Int
+      }
