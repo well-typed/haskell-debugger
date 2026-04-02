@@ -427,9 +427,14 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
                 then Nothing
                 else Just hdv_uid)
 
-    fwd_thr <- liftIO $ async (void externalInterpFwdThread)
-    liftIO $ link fwd_thr
-    mainGhcThread
+    withUnliftGhc $ \ unlift -> do
+      withAsync (void externalInterpFwdThread) $ \ fwd_thr -> do
+        liftIO $ link fwd_thr
+        unlift mainGhcThread
+
+-- | WARNING: callback is not to be used from other threads.
+withUnliftGhc :: ((Ghc b -> IO b) -> IO a) -> Ghc a
+withUnliftGhc k = reifyGhc $ \ s -> k (flip reflectGhc s)
 
 {-
 Note [Custom external interpreter]
