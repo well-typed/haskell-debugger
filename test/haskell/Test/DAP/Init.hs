@@ -27,12 +27,12 @@ data TestDAPServer = TestDAPServer
   }
 
 -- | Launch an @hdb server@ for tests on a random local port and capture stdout.
-startTestDAPServer :: FilePath -> String -> IO TestDAPServer
+startTestDAPServer :: FilePath -> [String] -> IO TestDAPServer
 startTestDAPServer testDir flags = do
   testPort <- randomRIO (49152, 65534) :: IO Int
 
   (Just _hin, Just hout, _, p)
-    <- P.createProcess (P.shell $ "hdb server " ++ flags ++ " --port " ++ show testPort)
+    <- P.createProcess (P.proc "hdb" $ ["server"] ++ flags ++ ["--port", show testPort])
         { P.cwd = Just testDir
         , P.std_out = P.CreatePipe
         , P.std_in = P.CreatePipe

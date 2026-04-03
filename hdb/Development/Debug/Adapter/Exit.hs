@@ -83,25 +83,22 @@ exitCleanupWithMsg final_handle msg = do
   exitWithMsg msg
 
 -- | Logs the error to the debug console and sends a terminate event
-exitWithMsg :: String -> DebugAdaptor a
+exitWithMsg :: String -> DebugAdaptor ()
 exitWithMsg msg = do
   Output.important (T.pack msg)
   exitCleanly (Just msg)
 
-exitCleanly :: Maybe String -> DebugAdaptor a
+exitCleanly :: Maybe String -> DebugAdaptor ()
 exitCleanly mm = do
 
   sendTerminatedEvent (TerminatedEvent False)
 
-  -- We exit here to guarantee the process is killed when
-  -- terminated. Important! We want a new server process per
-  -- session, which means at the end we must kill the server.
   liftIO $ do
     case mm of
-      Nothing -> throwIO TerminateServer
+      Nothing -> return ()
       Just em -> do
         hPutStrLn stderr em
-        throwIO TerminateServer
+        return ()
 
 --- Utils ----------------------------------------------------------------------
 
@@ -111,4 +108,3 @@ displayExceptionWithContext ex = do
   case displayExceptionContext (someExceptionContext ex) of
     "" -> displayException ex
     cx -> displayException ex ++ "\n\n" ++ cx
-

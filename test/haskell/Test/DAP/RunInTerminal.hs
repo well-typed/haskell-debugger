@@ -27,8 +27,8 @@ runInTerminalTests =
       ignoreTestBecause "Needs to be fixed for Windows (#199)" $
 #endif
       testGroup "runInTerminal: proxy forwards stdin correctly"
-        [ testCase "(default)" (runInTerminal1 "")
-        , testCase "(--internal-interpreter)" (runInTerminal1 "--internal-interpreter")
+        [ testCase "(default)" (runInTerminal1 [])
+        , testCase "(--internal-interpreter)" (runInTerminal1 ["--internal-interpreter"])
         ]
     ]
 
