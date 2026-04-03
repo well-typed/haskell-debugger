@@ -47,12 +47,12 @@ logMessageTests =
 
 simpleTest :: String -> String -> IO ()
 simpleTest tmpl expected =
-  logMessageTestSetup "" [(18,Nothing,Just tmpl)] $ do
+  logMessageTestSetup [] [(18,Nothing,Just tmpl)] $ do
     vs <- receiveMessagesUnordered [eventMatch "output"]
     hasLogMsg expected vs
 
 conditionTest :: IO ()
-conditionTest = logMessageTestSetup "" bps $ do
+conditionTest = logMessageTestSetup [] bps $ do
   [v] <- receiveMessagesUnordered [eventMatch "output"]
   Just output <- pure $ getOutput v
   liftIO $ assertBool "logged when False" $
@@ -65,7 +65,7 @@ conditionTest = logMessageTestSetup "" bps $ do
           ,(19,Just "True", Just "DO LOG")
           ]
 
-logMessageTestSetup :: String -> [(Int, Maybe String, Maybe String)] -> TestDAP a -> IO ()
+logMessageTestSetup :: [String] -> [(Int, Maybe String, Maybe String)] -> TestDAP a -> IO ()
 logMessageTestSetup flags bps check = do
   withHermeticDir False "test/unit/T113" $ \test_dir -> do
 
