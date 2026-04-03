@@ -208,8 +208,11 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
   GHC.runGhc (Just libdir) $ do
 #ifdef MIN_VERSION_unix
-    -- Workaround #4162
-    -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
+    -- Workaround to GHC's #4162
+
+    -- TODO: Instead setup reasonable process-wide handlers to trigger all
+    -- cleanups needed and use custom `runGhc` without `withSignalHandlers`, see
+    -- haskell-debugger's #261.
     _ <- liftIO $ installHandler sigINT Default Nothing
     _ <- liftIO $ installHandler sigQUIT Default Nothing
     _ <- liftIO $ installHandler sigTERM Default Nothing
