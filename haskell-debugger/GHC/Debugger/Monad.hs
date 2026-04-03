@@ -209,7 +209,11 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
   GHC.runGhc (Just libdir) $ do
 #ifdef MIN_VERSION_unix
     -- Workaround #4162
+    -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
     _ <- liftIO $ installHandler sigINT Default Nothing
+    _ <- liftIO $ installHandler sigQUIT Default Nothing
+    _ <- liftIO $ installHandler sigTERM Default Nothing
+    _ <- liftIO $ installHandler sigHUP Default Nothing
 #endif
     dflags0 <- GHC.getSessionDynFlags
     let dflags1 = dflags0
