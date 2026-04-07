@@ -24,6 +24,7 @@ import Test.Tasty.Golden as G
 import Test.Tasty.Golden.Advanced as G
 
 import Test.DAP.LogMessage
+import Test.DAP.Persistent (persistentTests)
 import Test.DAP.RunInTerminal
 import Test.DAP.Scopes
 import Test.Utils
@@ -71,6 +72,7 @@ unitTests =
   [ runInTerminalTests
   , scopesTests
   , logMessageTests
+  , persistentTests
   ]
 
 -- | Receives as an argument the path to the @*.hdb-test@ which contains the

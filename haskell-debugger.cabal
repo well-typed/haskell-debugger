@@ -206,6 +206,7 @@ test-suite haskell-debugger-test
     other-modules:    Test.DAP.RunInTerminal,
                       Test.DAP.Scopes,
                       Test.DAP.LogMessage,
+                      Test.DAP.Persistent,
                       Test.DAP,
                       Test.DAP.Init,
                       Test.DAP.Messages,
@@ -213,6 +214,7 @@ test-suite haskell-debugger-test
                       Test.Utils
     build-depends:
         base >=4.14,
+        async,
         haskell-debugger,
         bytestring, text,
         containers,

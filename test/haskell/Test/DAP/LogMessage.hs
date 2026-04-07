@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE CPP #-}
-module Test.DAP.LogMessage (logMessageTests) where
+module Test.DAP.LogMessage (logMessageTests,hasLogMsg,setupBreakpoints) where
 
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson

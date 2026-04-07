@@ -65,10 +65,16 @@ startTestDAPServer testDir flags = do
     , testDAPServerFlushOutput = flushServerOutput
     }
 
--- | Connect a test client to a running 'TestDAPServer', with retry semantics
--- and server log flushing on failure.
+-- | Like @withTestDAPServerClient'@ but also shutsdown server on exit.
 withTestDAPServerClient :: TestDAPServer -> TestDAP a -> IO a
 withTestDAPServerClient server continue = do
+  withTestDAPServerClient' server continue
+    `E.finally` P.terminateProcess (testDAPServerProcess server)
+
+-- | Connect a test client to a running 'TestDAPServer', with retry semantics
+-- and server log flushing on failure.
+withTestDAPServerClient' :: TestDAPServer -> TestDAP a -> IO a
+withTestDAPServerClient' server continue = do
   retryVar <- newIORef True
   let runClient =
         withNewClient (testDAPServerPort server) retryVar $ \h -> do
@@ -77,7 +83,6 @@ withTestDAPServerClient server continue = do
           seqRef <- newIORef 1
           runTestDAP continue (TestDAPClientContext h seqRef)
   (runClient `E.onException` testDAPServerFlushOutput server)
-    `E.finally` P.terminateProcess (testDAPServerProcess server)
 
 -- | Spawns a new mock client that connects to the mock server.
 --
