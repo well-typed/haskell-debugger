@@ -154,6 +154,15 @@ jobs:
         with:
           submodules: recursive
 
+      - name: "Cache GHC for macOS" # See haskell-actions/setup#139
+        id: cache-haskell
+        uses: actions/cache@v5
+        if: matrix.runner == 'macOS-latest'
+        with:
+          path: ~/.ghcup
+          key: ${{ runner.os }}-ghc-${{ matrix.version }}
+          restore-keys: ${{ runner.os }}-ghc-${{ matrix.version }}
+
       - uses: haskell-actions/setup@v2
         id: setup
         with:
