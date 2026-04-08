@@ -40,6 +40,7 @@ import GHC
 import GHC.Data.FastString
 import GHC.Data.StringBuffer
 import GHC.Driver.Config.Diagnostic
+import GHC.Driver.Config.Logger
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
 import GHC.Driver.Monad
@@ -49,6 +50,7 @@ import GHC.Driver.Errors.Types
 import GHC.Driver.Main
 import GHC.Driver.Make
 import GHC.Driver.Ppr
+import GHC.Driver.Session (parseDynamicFlagsCmdLine)
 import GHC.Runtime.Eval
 import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as GHCi
@@ -262,7 +264,7 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
       -- 3093efa27468fb2d31a617f6a0e4ff67a90f6623 tried to fix (but had to be
       -- reverted)
       (dflags2, fileish_args, warns)
-        <- parseDynamicFlags logger dflags1 (map noLoc extraGhcArgs)
+        <- parseDynamicFlagsWithRootDir rootDir logger dflags1 (map noLoc extraGhcArgs)
       liftIO $ printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
       forM_ fileish_args $ \fish_arg -> liftIO $ do
         GHC.logMsg logger MCOutput noSrcSpan $ text "Ignoring extraGhcArg which isn't a recognized flag:" <+> text (unLoc fish_arg)
@@ -439,6 +441,24 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
 -- | WARNING: callback is not to be used from other threads.
 withUnliftGhc :: ((Ghc b -> IO b) -> IO a) -> Ghc a
 withUnliftGhc k = reifyGhc $ \ s -> k (flip reflectGhc s)
+
+-- | Variant of GHC's parseDynamicFlags which interprets paths relative to first arg.
+parseDynamicFlagsWithRootDir
+    :: MonadIO m
+    => FilePath
+    -> Logger
+    -> DynFlags
+    -> [Located String]
+    -> m (DynFlags, [Located String], Messages DriverMessage)
+parseDynamicFlagsWithRootDir rootDir logger dflags cmdline = do
+  (dflags1', leftovers, warns) <- parseDynamicFlagsCmdLine logger dflags cmdline
+  -- flags that have just been read are used by the logger when loading package
+  -- env
+  let dflags1 = makeDynFlagsAbsoluteOverall rootDir dflags1'
+  let logger1 = GHC.setLogFlags logger (initLogFlags dflags1)
+  dflags2 <- liftIO $ interpretPackageEnv logger1 dflags1
+  return (dflags2, leftovers, warns)
+
 
 {-
 Note [Custom external interpreter]

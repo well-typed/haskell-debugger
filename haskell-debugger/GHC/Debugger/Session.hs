@@ -25,7 +25,8 @@ module GHC.Debugger.Session (
   enableExternalInterpreter,
   enableDynamicDebuggee,
   setPgmI, addOptI,
-  setDynFlagWays
+  setDynFlagWays,
+  makeDynFlagsAbsoluteOverall,
   )
   where
 
@@ -120,6 +121,7 @@ parseHomeUnitArguments cfp compRoot units theOpts dflags rootDir = do
         let targets = HIE.makeTargetsAbsolute root_canon targets'
         cacheDirs <- liftIO $ getCacheDirs (takeFileName root) this_opts
         let dflags'' =
+              makeDynFlagsDirsAbsolute compRoot $
               setWorkingDirectory root $
               setCacheDirs cacheDirs $
               enableByteCodeGeneration $
@@ -402,6 +404,18 @@ setCacheDirs CacheDirs{..} flags = flags
   , bytecodeDir = Just byteCodeCacheDir
 #endif
   }
+
+-- | Prefixes output directories (i.e. @hiDir@, @hieDir@, @stubDir@, @dumpDir@) with @rootDir@ argument.
+makeDynFlagsDirsAbsolute :: FilePath -> DynFlags -> DynFlags
+makeDynFlagsDirsAbsolute rootDir df0 =
+  foldl' (\ df f -> f (fmap $ normalise . (rootDir </>)) df) df0
+    [(\ f df -> df {hiDir = f (hiDir df)})
+    ,(\ f df -> df {hieDir = f (hieDir df)})
+    ,(\ f df -> df {stubDir = f (stubDir df)})
+    ,(\ f df -> df {dumpDir = f (dumpDir df)})]
+
+makeDynFlagsAbsoluteOverall :: FilePath -> DynFlags -> DynFlags
+makeDynFlagsAbsoluteOverall rootDir df0 = makeDynFlagsDirsAbsolute rootDir $ makeDynFlagsAbsolute rootDir df0
 
 -- | If the compiler supports `.gbc` files (>= 9.14.2), then persist these
 -- artefacts to disk.

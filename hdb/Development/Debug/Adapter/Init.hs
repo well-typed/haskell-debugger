@@ -218,14 +218,6 @@ initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpret
 --
 -- Concurrently, it reads from the process's stderr forever and outputs it through OutputEvents.
 --
--- Notes:
---
--- (CWD):
---    It's necessary for the GHC session to be run in the project root.
---    We do this by setting the current directory on initialize.
---    This sets the global CWD for this process, disallowing multiple sessions
---    at the same, but that's OK because we currently only support
---    single-session mode. Each new session gets a new debugger process.
 debuggerThread :: LogAction IO Debugger.DebuggerLog
                -> MVar (Either String ()) -- ^ To signal when initialization is complete.
                -> FilePath        -- ^ Working directory for GHC session
@@ -238,10 +230,7 @@ debuggerThread :: LogAction IO Debugger.DebuggerLog
                -> (DebugAdaptorCont () -> IO ())
                -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread l finished_init workDir HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
-
-  -- See Notes (CWD) above
-  setCurrentDirectory workDir
+debuggerThread l finished_init _workDir HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
 
   -- Log haskell-debugger invocation
   withAdaptor $

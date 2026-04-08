@@ -15,6 +15,7 @@ module Development.Debug.Session.Setup
   ) where
 
 import Control.Applicative ((<|>))
+import Control.Concurrent (newMVar, MVar, withMVar)
 import Control.Exception (handleJust)
 import Control.Monad
 import Control.Monad.Except
@@ -26,11 +27,13 @@ import Data.Functor ((<&>))
 import Data.Maybe
 import Data.Version
 import Data.Void
-import System.Directory hiding (findFile)
+import System.Directory hiding (withCurrentDirectory, findFile)
+import System.Directory qualified as D
 import System.FilePath
 import System.IO.Error
 import Text.ParserCombinators.ReadP (readP_to_S)
 import Data.Functor.Contravariant
+import GHC.IO (unsafePerformIO)
 
 import qualified Data.Text as T
 
@@ -345,3 +348,10 @@ forgetPatchVersion :: Version -> Version
 forgetPatchVersion v = case versionBranch v of
   (major:minor:_patches) -> makeVersion [major, minor]
   _ -> v
+
+{-# NOINLINE cwdLock #-}
+cwdLock :: MVar ()
+cwdLock = unsafePerformIO $ newMVar ()
+
+withCurrentDirectory :: FilePath -> IO b -> IO b
+withCurrentDirectory fp m = withMVar cwdLock $ \ _ -> D.withCurrentDirectory fp m
