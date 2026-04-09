@@ -5,231 +5,42 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
+
+-- TODO: We should be using ToJSON/FromJSON for all messages which `dap` has.
+-- It's just we'd have to derive those instances as orphans or patch upstream.
+-- (Upstream is better. Otherwise very long compile times)
 module Test.DAP
   ( module Test.DAP
   , module Test.DAP.Init
   , module Test.DAP.Messages
   ) where
 
-----------------------------------------------------------------------------
-import           Control.Applicative
-import           Control.Concurrent
-import           Control.Monad.IO.Class
-import           Data.Aeson
-import           Data.Aeson.Types
-import           Data.Aeson.KeyMap (toHashMapText)
-import qualified Data.Foldable as F
-import           Control.Monad.Reader
-import           Control.Exception hiding (handle)
-import qualified Control.Exception as E
-import qualified Data.ByteString            as BS
+import Control.Concurrent.STM
+import Control.Monad.IO.Class
+import Data.Aeson
+import Control.Monad.Reader
+import Test.DAP.Init
+import Test.DAP.Messages
+import Test.DAP.Messages.Parser
+import Control.Concurrent.Async
+import Control.Monad.Cont
+import Control.Monad
+import Data.Maybe
 import qualified Data.HashMap.Strict as H
-import           Data.List (findIndex, sortOn)
-import           Network.Run.TCP
-import           Network.Socket             (socketToHandle)
-import           System.IO
-import           System.Exit
-import           Data.IORef
-import           System.FilePath ((</>))
-import           System.Random (randomRIO)
-import qualified System.Process as P
+import System.FilePath
 import qualified Data.Text as T
-----------------------------------------------------------------------------
-import           DAP.Utils
-import           DAP.Server
-----------------------------------------------------------------------------
-import           Test.Tasty.HUnit
-----------------------------------------------------------------------------
-import           Test.DAP.Init
-import           Test.DAP.Messages
-import           Test.DAP.Parser
-
--- | Launches the debuggee and runs until the given breakpoint is hit.
---
--- The first hook is run after launch/initialized and before setBreakpoints.
--- The second hook is run after setBreakpoints is acknowledged and before
--- configurationDone is sent (used by tests that need extra handshake steps).
-hitBreakpoint :: Bool -> FilePath -> Int -> TestDAP a -> (a -> TestDAP ()) -> TestDAP a
-hitBreakpoint supportsRunInTerminal testDir line beforeSetBreakpoints beforeConfigurationDone = do
-  sendInitialize supportsRunInTerminal
-  expectMessagesUnordered [responseMatch "initialize"]
-
-  sendLaunch testDir
-  expectMessagesUnordered $
-#if __GLASGOW_HASKELL__ >= 915
-    -- GHC 9.15 doesn't produce "[2 of 3] Compiling Main ..." for some reason
-    replicate 8 (eventMatch "output")
-#else
-    replicate 9 (eventMatch "output")
-#endif
-      ++ [ responseMatch "launch"
-         , eventMatch "initialized"
-         ]
-
-  hookResult <- beforeSetBreakpoints
-
-  sendSetBreakpoints testDir line
-  expectMessagesUnordered [responseMatch "setBreakpoints"]
-
-  beforeConfigurationDone hookResult
-
-  sendConfigurationDone
-  expectMessagesUnordered
-    [ responseMatch "configurationDone"
-    , eventMatch "stopped"
-    , subsetMatch ["type" .= ("event" :: String)]
-    ]
-
-  pure hookResult
-
-stepNextLine :: TestDAP ()
-stepNextLine = do
-  send
-    [ "type" .= ("request" :: String)
-    , "command" .= ("next" :: String)
-    , "arguments" .= object
-      [ "threadId" .= (0 :: Int)
-      ]
-    ]
-  expectMessagesUnordered [responseMatch "next"]
-  pure ()
-
--- | Request threads and parse the first thread id.
-getThreads :: TestDAP Int
-getThreads = do
-  send
-    [ "type" .= ("request" :: String)
-    , "command" .= ("threads" :: String)
-    ]
-  threadsResp <- waitForResponseIgnoringOutput "threads"
-  case parseThreadId threadsResp of
-    Nothing -> fail $ "Could not parse first thread id from: " ++ show threadsResp
-    Just tid -> pure tid
-
--- | Request stackTrace and parse the first frame id.
-getStackTrace :: Int -> TestDAP Int
-getStackTrace threadId = do
-  send
-    [ "type" .= ("request" :: String)
-    , "command" .= ("stackTrace" :: String)
-    , "arguments" .= object
-      [ "threadId" .= threadId
-      ]
-    ]
-  stackResp <- waitForResponseIgnoringOutput "stackTrace"
-  case parseFrameId stackResp of
-    Nothing -> fail $ "Could not parse first frame id from: " ++ show stackResp
-    Just fid -> pure fid
-
--- | Request scopes and parse (name, expensive) pairs.
-getScopes :: Int -> TestDAP [(String, Bool)]
-getScopes frameId = do
-  send
-    [ "type" .= ("request" :: String)
-    , "command" .= ("scopes" :: String)
-    , "arguments" .= object
-      [ "frameId" .= frameId
-      ]
-    ]
-  scopesResp <- waitForResponseIgnoringOutput "scopes"
-  case parseScopes scopesResp of
-    Nothing -> fail $ "Could not parse scopes from: " ++ show scopesResp
-    Just scopes -> pure scopes
-
-waitForResponseIgnoringOutput :: String -> TestDAP Value
-waitForResponseIgnoringOutput commandName = do
-  TestDAPClientContext{clientHandle = h} <- ask
-  payload <- liftIO $ readPayload h
-  actual <- case payload of
-    Left e -> fail e
-    Right v -> pure v
-
-  if messageMatchMatches (responseMatch commandName) actual
-    then pure actual
-    else
-      if messageMatchMatches (eventMatch "output") actual
-        then waitForResponseIgnoringOutput commandName
-        else fail $
-          "Unexpected message while waiting for response(" ++ commandName ++ "): " ++ show actual
-
-disconnectSession :: TestDAP ()
-disconnectSession = do
-  send
-    [ "type" .= ("request" :: String)
-    , "command" .= ("disconnect" :: String)
-    , "arguments" .= object
-      [ "restart" .= False
-      , "terminateDebuggee" .= True
-      , "suspendDebuggee" .= False
-      ]
-    ]
-  expectMessagesUnordered
-    [ responseMatch "disconnect"
-    , eventMatch "terminated"
-    ]
+import Data.Aeson.Types
+import Test.Tasty.HUnit
 
 --------------------------------------------------------------------------------
--- * runInTerminal
+-- * Highest level DSL
 --------------------------------------------------------------------------------
+-- fill as needed; some parts of the highest level DSL will prefer NOT to be sync.
 
-receiveRunInTerminal :: TestDAP (Maybe (H.HashMap T.Text T.Text), [T.Text])
-receiveRunInTerminal = do
-  TestDAPClientContext{clientHandle = h} <- ask
-  payload <- liftIO $ readPayload h
-  actual <- case payload of
-    Left e -> fail e
-    Right v -> pure v
-  case parseMaybe (withObject "runInTerminal request" $ \o -> do
-          ("request" :: String) <- o .: "type"
-          ("runInTerminal" :: String) <- o .: "command"
-          argsObj <- o .: "arguments"
-          withObject "runInTerminal arguments" (\a -> do
-            env <- a .:? "env"
-            args <- a .: "args"
-            pure (env, args)
-            ) argsObj
-        ) actual of
-    Nothing -> fail $ "Failed to parse runInTerminal request: " ++ show actual
-    Just req -> pure req
-
-sendRunInTerminalResponse :: Int -> TestDAP ()
-sendRunInTerminalResponse shellProcessId =
-  send
-    [ "command" .= ("runInTerminal" :: String)
-    , "type"    .= ("response" :: String)
-    , "success" .= True
-    , "body"    .= object
-        [ "shellProcessId" .= shellProcessId
-        ]
-    ]
-
---------------------------------------------------------------------------------
--- * Lower level interface
---------------------------------------------------------------------------------
-
-sendInitialize :: Bool -> TestDAP ()
-sendInitialize supportsRunInTerminal =
-  send
-    [ "type" .= ("request" :: String)
-    , "command" .= ("initialize" :: String)
-    , "arguments" .= object
-      [ "adapterID" .= ("haskell-debugger" :: String)
-      , "clientID" .= ("mock-client" :: String)
-      , "clientName" .= ("Mock Client" :: String)
-      , "columnsStartAt1" .= True
-      , "linesStartAt1" .= True
-      , "locale" .= ("en" :: String)
-      , "pathFormat" .= ("path" :: String)
-      , "supportsRunInTerminalRequest" .= supportsRunInTerminal
-      ]
-    ]
-
-sendLaunch :: FilePath -> TestDAP ()
-sendLaunch testDir =
-  send
-    [ "type" .= ("request" :: String)
-    , "command" .= ("launch" :: String)
-    , "arguments" .= object
+defaultLaunch :: FilePath -> ResponseCont Value a -> TestDAP a
+defaultLaunch testDir =
+  launch $
+    object
       [ "entryFile" .= (testDir </> "Main.hs")
       , "entryPoint" .= ("main" :: String)
       , "projectRoot" .= testDir
@@ -237,24 +48,11 @@ sendLaunch testDir =
       , "entryArgs" .= ([] :: [String])
       , "request" .= ("launch" :: String)
       ]
-    ]
 
-sendConfigurationDone :: TestDAP ()
-sendConfigurationDone =
-  send
-    [ "type" .= ("request" :: String)
-    , "command" .= ("configurationDone" :: String)
-    ]
-
-sendSetBreakpoints :: FilePath -> Int -> TestDAP ()
-sendSetBreakpoints testDir line = sendSetBreakpoints' testDir [(line, Nothing,Nothing)]
-
-sendSetBreakpoints' :: FilePath -> [(Int, Maybe String, Maybe String)] -> TestDAP ()
-sendSetBreakpoints' testDir bps =
-  send
-    [ "type" .= ("request" :: String)
-    , "command" .= ("setBreakpoints" :: String)
-    , "arguments" .= object
+defaultSetBreakpoints :: FilePath -> [(Int, Maybe String, Maybe String)] {- use `dap` types... -} -> ResponseCont Value a -> TestDAP a
+defaultSetBreakpoints testDir bps = do
+  setBreakpointsRequest $
+    object
       [ "source" .= object
         [ "name" .= ("Main.hs" :: String)
         , "path" .= T.pack (testDir </> "Main.hs")
@@ -270,4 +68,281 @@ sendSetBreakpoints' testDir bps =
       , "lines" .= [line | (line,_,_) <- bps ]
       , "sourceModified" .= False
       ]
+
+defaultSetLineBreakpoints :: FilePath -> [Int] -> ResponseCont Value a -> TestDAP a
+defaultSetLineBreakpoints testDir bps = defaultSetBreakpoints testDir [(b, Nothing, Nothing) | b <- bps]
+
+next, stepIn :: TestDAP ()
+next   = void . sync $ nextRequest Null
+stepIn = void . sync $ stepInRequest Null
+
+threads :: TestDAP [Int]
+threads = do
+  v <- sync threadsRequest
+  return $ fromMaybe [] $ parseThreadIds v
+
+stackTrace :: Int -> TestDAP [Int {-stack frame id-}]
+stackTrace threadId = do
+  v <- sync $ stackTraceRequest $ object [ "threadId" .= threadId ]
+  return $ fromMaybe [] $ parseFramesIds v
+
+-- | Request scopes and parse (name, expensive) pairs.
+--
+-- todo: please, use FromJSON/ToJSON of `dap` library datatypes. this is madness!
+scopes :: Int {- stack frame id -} -> TestDAP [(String, Bool)]
+scopes stackFrameId = do
+  v <- sync $ scopesRequest $ object [ "frameId" .= stackFrameId ]
+  case parseScopes v of
+    Nothing -> fail $ "Could not parse scopes from: " ++ show v
+    Just scs -> pure scs
+
+configurationDone :: ResponseCont Value a -> TestDAP a
+configurationDone = configurationDoneRequest Nothing
+
+--------------------------------------------------------------------------------
+-- ** "Scenarios"
+--------------------------------------------------------------------------------
+
+-- | Register handler that will reply to runInTerminal reverse request
+handleRunInTerminal :: ResponseCont (Maybe (H.HashMap T.Text T.Text), [T.Text]) (a, Int)
+                    -- ^ Continuation receives async with args of runInTerm req.
+                    --
+                    -- - Waiting means block waiting for reverse request to be received
+                    -- - Returns the process id of the launched runInTerminal process.
+                    -> TestDAP a
+handleRunInTerminal k = do
+  ctx <- ask
+  liftIO $
+    withAsync (upd <$> runTestDAP waitForReverseRequest ctx) $ \a ->
+      runTestDAP (k a >>= \(x, pid) -> do
+        respondWithBody 0{-hardcode seqn-} "runInTerminal" (object [ "shellProcessId" .= pid ])
+        return x
+        ) ctx
+  where
+    upd :: Value -> (Maybe (H.HashMap T.Text T.Text), [T.Text])
+    upd orig =
+      fromMaybe (error $ "Failed to parse runInTerminal request: " ++ show orig) $
+      parseMaybe parser orig
+
+    parser :: Value -> Parser (Maybe (H.HashMap T.Text T.Text), [T.Text])
+    parser = withObject "runInTerminal request" $ \o -> do
+      ("request" :: String) <- o .: "type"
+      ("runInTerminal" :: String) <- o .: "command"
+      argsObj <- o .: "arguments"
+      withObject "runInTerminal arguments" (\a -> do
+        env :: Maybe (H.HashMap T.Text T.Text) <- a .:? "env"
+        args :: [T.Text] <- a .: "args"
+        pure (env, args)
+        ) argsObj
+
+-- | Uses defaultLaunch and defaultSetBreakpoints
+defaultHitBreakpoint :: FilePath -> Int -> TestDAP ()
+defaultHitBreakpoint testDir line = do
+  ctx <- ask
+  liftIO $ mapConcurrently_
+    (`runTestDAP` ctx)
+    [ do _ <- waitFiltering Event "initialized"
+         _ <- sync $ defaultSetLineBreakpoints testDir [line]
+         _ <- sync $ configurationDone
+         _ <- assertStoppedLocation "breakpoint" line
+         return ()
+    , void $ sync $ defaultLaunch testDir
     ]
+
+-- waitEventFiltering $ eventMatch "terminated"
+disconnect :: TestDAP ()
+disconnect = do
+  _ <- sync $ disconnectRequest $ Just $ object
+    [ "restart" .= False
+    , "terminateDebuggee" .= True
+    , "suspendDebuggee" .= False
+    ]
+  _ <- waitFiltering Event "terminated"
+  return ()
+
+--------------------------------------------------------------------------------
+-- ** Convenience methods (based on vscode-debugadapter-node/testSupport)
+--------------------------------------------------------------------------------
+
+launch :: Value {-^ Launch args -} -> ResponseCont Value a {- LaunchResponse, todo: use `dap` types w Aeson -} -> TestDAP a
+launch args = runContT $
+  ContT initializeRequest
+    >>= liftIO . wait
+    >> ContT (launchRequest args)
+
+configurationSequence :: ResponseCont Value a -> TestDAP a
+configurationSequence k = do
+  _ <- waitFiltering Event "initialized"
+  configurationDone k
+
+-- | Assert that a "stopped" event with the given reason is received
+assertStoppedLocation :: String -> Int -> TestDAP ()
+assertStoppedLocation reason expectedLine = do
+  -- TODO: Timeouts on waiting!!
+  v <- waitFiltering Event "stopped"
+  liftIO $
+    assertBool "" (maybe False (==reason) (parseStoppedEventReason v))
+  -- TODO: Validate expected line and potentially path too
+  -- (see assertStoppedLocation in debugClient.ts)
+
+-- | Assert that all accumulated output events contain a certain string
+assertOutput :: T.Text -> TestDAP ()
+assertOutput expected = do
+  events <- waitAccumulating Event "output"
+  let outputs = mapMaybe parseOutput events
+  liftIO $
+    assertBool
+      ("assertOutput: expecting " ++ show expected ++ " but got " ++ show outputs)
+      (any (T.isInfixOf expected) outputs)
+
+--------------------------------------------------------------------------------
+-- * Waiting for messages
+--------------------------------------------------------------------------------
+
+data MsgType = Event | Response | ReverseRequest
+
+msgChan :: MsgType -> TestDAPClientContext -> TChan Value
+msgChan ty TestDAPClientContext{..} = case ty of
+  Event          -> clientEvents
+  Response       -> clientResponses
+  ReverseRequest -> clientReverseRequests
+
+msgMatch :: MsgType -> String -> MessageMatch
+msgMatch ty s = case ty of
+  Event          -> eventMatch s
+  Response       -> responseMatch s
+  ReverseRequest -> reverseRequestMatch s
+
+-- | Drop messages of the given type until a message with the given
+-- eventType/command is found. The matching message is returned.
+waitFiltering :: MsgType -> String -> TestDAP Value
+waitFiltering ty s = do
+  ch <- asks (msgChan ty)
+  let mm = msgMatch ty s
+  let loop = do
+        v <- atomically $ readTChan ch -- block waiting for input
+        if messageMatchMatches mm v
+          then return v
+          else loop
+  liftIO loop
+
+-- | Accumulate messages of the given type until a message with a
+-- eventType/command different from the given one is found.
+--
+-- The non-matching message is not consumed, nor returned, and will be kept in
+-- the messages buffer.
+waitAccumulating :: MsgType -> String -> TestDAP [Value]
+waitAccumulating ty s = do
+  ch <- asks (msgChan ty)
+  let mm = msgMatch ty s
+  let loop acc = do
+        r <- atomically $ do
+          v <- readTChan ch
+          if messageMatchMatches mm v
+            then pure (Just v)
+            else Nothing <$ unGetTChan ch v
+        case r of
+          Nothing -> return (reverse acc)
+          Just v  -> loop (v:acc)
+  liftIO $ loop []
+
+--------------------------------------------------------------------------------
+-- * Protocol requests (based on vscode-debugadapter-node/testSupport)
+--------------------------------------------------------------------------------
+
+initializeRequest :: ResponseCont Value a -> TestDAP a
+initializeRequest k = do
+  TestDAPClientContext{clientSupportsRunInTerminal} <- ask
+  customRequest "initialize"
+    (Just $ object $
+      [ "adapterID" .= ("haskell-debugger" :: String)
+      , "clientID" .= ("mock-client" :: String)
+      , "clientName" .= ("Mock Client" :: String)
+      , "linesStartAt1" .= True
+      , "columnsStartAt1" .= True
+      , "locale" .= ("en" :: String)
+      , "pathFormat" .= ("path" :: String)
+      , "supportsRunInTerminalRequest" .= clientSupportsRunInTerminal
+      ]) k
+
+configurationDoneRequest :: Maybe Value -> ResponseCont Value a -> TestDAP a
+configurationDoneRequest = customRequest "configurationDone"
+
+launchRequest, attachRequest, restartRequest, setBreakpointsRequest,
+  setFunctionBreakpointsRequest, setExceptionBreakpointsRequest,
+  setInstructionBreakpointsRequest, dataBreakpointInfoRequest,
+  setDataBreakpointsRequest, continueRequest, nextRequest, stepInRequest,
+  stepOutRequest, stepBackRequest, reverseContinueRequest, restartFrameRequest,
+  gotoRequest, pauseRequest, stackTraceRequest, scopesRequest, variablesRequest,
+  setVariableRequest, sourceRequest, modulesRequest, evaluateRequest,
+  disassembleRequest, stepInTargetsRequest, gotoTargetsRequest, completionsRequest,
+  exceptionInfoRequest, readMemoryRequest, writeMemoryRequest :: Value -> ResponseCont Value a -> TestDAP a
+
+launchRequest                    = requestWithArgs "launch"
+attachRequest                    = requestWithArgs "attach"
+restartRequest                   = requestWithArgs "restart"
+setBreakpointsRequest            = requestWithArgs "setBreakpoints"
+setFunctionBreakpointsRequest    = requestWithArgs "setFunctionBreakpoints"
+setExceptionBreakpointsRequest   = requestWithArgs "setExceptionBreakpoints"
+setInstructionBreakpointsRequest = requestWithArgs "setInstructionBreakpoints"
+dataBreakpointInfoRequest        = requestWithArgs "dataBreakpointInfo"
+setDataBreakpointsRequest        = requestWithArgs "setDataBreakpoints"
+continueRequest                  = requestWithArgs "continue"
+nextRequest                      = requestWithArgs "next"
+stepInRequest                    = requestWithArgs "stepIn"
+stepOutRequest                   = requestWithArgs "stepOut"
+stepBackRequest                  = requestWithArgs "stepBack"
+reverseContinueRequest           = requestWithArgs "reverseContinue"
+restartFrameRequest              = requestWithArgs "restartFrame"
+gotoRequest                      = requestWithArgs "goto"
+pauseRequest                     = requestWithArgs "pause"
+stackTraceRequest                = requestWithArgs "stackTrace"
+scopesRequest                    = requestWithArgs "scopes"
+variablesRequest                 = requestWithArgs "variables"
+setVariableRequest               = requestWithArgs "setVariable"
+sourceRequest                    = requestWithArgs "source"
+modulesRequest                   = requestWithArgs "modules"
+evaluateRequest                  = requestWithArgs "evaluate"
+disassembleRequest               = requestWithArgs "disassemble"
+stepInTargetsRequest             = requestWithArgs "stepInTargets"
+gotoTargetsRequest               = requestWithArgs "gotoTargets"
+completionsRequest               = requestWithArgs "completions"
+exceptionInfoRequest             = requestWithArgs "exceptionInfo"
+readMemoryRequest                = requestWithArgs "readMemory"
+writeMemoryRequest               = requestWithArgs "writeMemory"
+
+terminateRequest, disconnectRequest :: Maybe Value -> ResponseCont Value a -> TestDAP a
+terminateRequest  = customRequest "terminate"
+-- example:
+--  object
+--    [ "restart" .= False
+--    , "terminateDebuggee" .= True
+--    , "suspendDebuggee" .= False
+--    ]
+-- then...
+-- wait "disconnected"
+-- waitEventFiltering $ eventMatch "terminated"
+disconnectRequest = customRequest "disconnect"
+
+threadsRequest :: ResponseCont Value a -> TestDAP a
+threadsRequest = customRequest "threads" Nothing
+--------------------------------------------------------------------------------
+requestWithArgs :: String -> Value -> ResponseCont Value a -> TestDAP a
+requestWithArgs command args = customRequest command (Just args)
+
+-- example: respondWithBody revReqNum [ "shellProcessId" .= ... ]
+respondWithBody :: Int -> String -> Value -> TestDAP ()
+respondWithBody seqNum command body =
+  reply seqNum $
+    [ "type" .= ("response" :: String)
+    , "command" .= command
+    , "success" .= True
+    , "body" .= body
+    ]
+--------------------------------------------------------------------------------
+customRequest :: String -> Maybe Value -> ResponseCont Value a -> TestDAP a
+customRequest command args = do
+  send $
+    [ "type" .= ("request" :: String)
+    , "command" .= command
+    ] ++ maybe [] (\v -> ["arguments" .= v]) args
