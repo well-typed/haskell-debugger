@@ -3,19 +3,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE CPP #-}
-module Test.DAP.LogMessage (logMessageTests,hasLogMsg,setupBreakpoints) where
+module Test.Unit.DAP.LogMessage (logMessageTests,setupBreakpoints) where
 
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson
-import Data.Aeson.Types
-import Data.Maybe (fromMaybe)
-import Data.Text qualified as T
-import Data.List (isInfixOf)
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
-import Test.Tasty.ExpectedFailure
 import Test.Utils
+import Test.DAP.Messages.Parser
+import Data.Maybe (mapMaybe)
+import qualified Data.Text as T
 
 logMessageTests :: TestTree
 logMessageTests =
@@ -48,17 +45,17 @@ logMessageTests =
 simpleTest :: String -> String -> IO ()
 simpleTest tmpl expected =
   logMessageTestSetup [] [(18,Nothing,Just tmpl)] $ do
-    vs <- receiveMessagesUnordered [eventMatch "output"]
-    hasLogMsg expected vs
+    assertOutput (T.pack expected)
 
 conditionTest :: IO ()
 conditionTest = logMessageTestSetup [] bps $ do
-  [v] <- receiveMessagesUnordered [eventMatch "output"]
-  Just output <- pure $ getOutput v
+  events <- waitAccumulating Event "output"
+  let output = T.concat $ mapMaybe parseOutput events
+
   liftIO $ assertBool "logged when False" $
-    not $ "DO NOT LOG" `isInfixOf` output
+    not $ "DO NOT LOG" `T.isInfixOf` output
   liftIO $ assertBool "did not log when True" $
-    "DO LOG" `isInfixOf` output
+    "DO LOG" `T.isInfixOf` output
   return ()
   where
     bps = [(18,Just "False", Just "DO NOT LOG")
@@ -71,53 +68,17 @@ logMessageTestSetup flags bps check = do
 
     server <- startTestDAPServer test_dir flags
 
-    withTestDAPServerClient server $ do
-      () <- setupBreakpoints test_dir $ bps
+    withTestDAPServerClient False server $ do
+      () <- setupBreakpoints test_dir bps
       _ <- check
-
-      -- consume further prints and events
-      expectMessagesUnordered $
-        replicate 3 (eventMatch "output")
-          ++ [eventMatch "terminated", eventMatch "exited"]
-
-      -- Send disconnect
-      disconnectSession
-      pure ()
+      disconnect
 
 -- | Let's you setup multiple breakpoints, with conditions and logs.
 --   Any events after configurationDone are left unconsumed.
 setupBreakpoints :: FilePath -> [(Int, Maybe String, Maybe String)] -> TestDAP ()
 setupBreakpoints testDir bps = do
-  sendInitialize False
-  expectMessagesUnordered [responseMatch "initialize"]
-
-  sendLaunch testDir
-  expectMessagesUnordered $
-    replicate 9 (eventMatch "output")
-      ++ [ responseMatch "launch"
-         , eventMatch "initialized"
-         ]
-
-  sendSetBreakpoints' testDir bps
-  expectMessagesUnordered [responseMatch "setBreakpoints"]
-
-  sendConfigurationDone
-  expectMessagesUnordered
-    [ responseMatch "configurationDone"
-    ]
-
+  _ <- sync $ defaultLaunch testDir
+  _ <- waitFiltering Event "initialized"
+  _ <- sync $ defaultSetBreakpoints testDir bps
+  _ <- sync configurationDone
   pure ()
-
-getOutput :: Value -> Maybe String
-getOutput = parseMaybe $ withObject "event" $ \ o -> do
-    body <- o .: "body"
-    String output <- body .: "output"
-    pure $ T.unpack output
-
-hasLogMsg :: String -> [Value] -> TestDAP ()
-hasLogMsg expected vs = liftIO $ do
-  let
-    p v = do
-      output <- getOutput v
-      pure $ output == expected ++ "\n"
-  assertBool ("missing expected log msg: " ++ expected) $ any (fromMaybe False . p) vs

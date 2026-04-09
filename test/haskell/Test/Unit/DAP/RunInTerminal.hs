@@ -3,10 +3,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE CPP #-}
-module Test.DAP.RunInTerminal (runInTerminalTests) where
+module Test.Unit.DAP.RunInTerminal (runInTerminalTests) where
 
-import Control.Monad.IO.Class (liftIO)
-import Data.Aeson
 import Data.List (isInfixOf)
 import System.IO
 import Test.DAP
@@ -19,7 +17,10 @@ import qualified Data.ByteString.Lazy.Char8 as LB8
 import qualified Data.HashMap.Strict as H
 import qualified Data.Text as T
 import qualified System.Process as P
+import Control.Concurrent.Async
+import Control.Monad.Reader
 
+runInTerminalTests :: TestTree
 runInTerminalTests =
   testGroup "DAP.RunInTerminal"
     [
@@ -35,33 +36,32 @@ runInTerminalTests =
 rit_keep_tmp_dirs :: Bool
 rit_keep_tmp_dirs = False
 
+runInTerminal1 :: [String] -> IO ()
 runInTerminal1 flags = do
   withHermeticDir rit_keep_tmp_dirs "test/unit/T44" $ \test_dir -> do
 
     server <- startTestDAPServer test_dir flags
 
-    withTestDAPServerClient server $ do
+    withTestDAPServerClient True server $ do
 
-      (rit_in, rit_out, rit_p) <-
-        hitBreakpoint True test_dir 6
-          (do
-            -- Receive a runInTerminal request!!
-            (ritEnv, ritArgs) <- receiveRunInTerminal
-            (Just rit_in, Just rit_out, _, rit_p)
-              <- liftIO $ P.createProcess
-                (P.shell $ T.unpack $
-                    "/usr/bin/env " <> addRITEnv ritEnv <> " " <> T.unwords ritArgs)
-                  {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.CreatePipe}
-
-            pure (rit_in, rit_out, rit_p)
-          )
-          (\(_, _, rit_p) -> do
-            Just rit_pid <- liftIO $ P.getPid rit_p
-            sendRunInTerminalResponse (fromIntegral rit_pid :: Int)
-          )
+      ctx <- ask
+      (rit_in, rit_out, rit_p) <- liftIO $ snd <$>
+        concurrently 
+          (runTestDAP (defaultHitBreakpoint test_dir 6) ctx)
+          (flip runTestDAP ctx $
+            handleRunInTerminal $ \args -> do
+              (ritEnv, ritArgs) <- liftIO $ wait args
+              -- Received a runInTerminal request!!
+              (Just rit_in, Just rit_out, _, rit_p)
+                <- liftIO $ P.createProcess
+                  (P.shell $ T.unpack $
+                      "/usr/bin/env " <> addRITEnv ritEnv <> " " <> T.unwords ritArgs)
+                    {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.CreatePipe}
+              Just rit_pid <- liftIO $ P.getPid rit_p
+              pure ((rit_in, rit_out, rit_p), fromIntegral rit_pid))
 
       -- Continue from "getLine" which will block waiting for input
-      stepNextLine
+      next
 
       let secret_in = "SOMETHING_SECRET"
 
@@ -70,13 +70,10 @@ runInTerminal1 flags = do
       liftIO $ hPutStrLn rit_in secret_in
 
       -- Only after writing should we receive the next "stopped" event
-      expectMessagesUnordered [eventMatch "stopped"]
+      _ <- waitFiltering Event "stopped"
 
       -- To next line, which should be the "putStrLn" after the "getLine"
-      stepNextLine
-      -- It's both stopped and we receive the SOMETHING_SECRET printed out. Order not important.
-      expectMessagesUnordered $
-        replicate 2 (subsetMatch ["type" .= ("event" :: String)])
+      next
 
       -- The contents of the rit_output should contain "hello" plus printing of what we wrote
       out <- liftIO $ LBS.hGetContents rit_out
@@ -87,7 +84,7 @@ runInTerminal1 flags = do
                  (secret_in `isInfixOf` out_str)
 
       -- Send disconnect
-      disconnectSession
+      disconnect
 
       -- Kill the process
       liftIO $ P.terminateProcess rit_p
@@ -97,4 +94,4 @@ runInTerminal1 flags = do
     addRITEnv env =
       case env of
         Nothing -> ""
-        Just env -> T.unwords [k{-todo: escape-} <> "=" <> v | (k,v) <- H.toList env]
+        Just ev -> T.unwords [k{-todo: escape-} <> "=" <> v | (k,v) <- H.toList ev]
