@@ -23,10 +23,10 @@ import Test.Tasty.ExpectedFailure
 import Test.Tasty.Golden as G
 import Test.Tasty.Golden.Advanced as G
 
-import Test.DAP.LogMessage
-import Test.DAP.Persistent (persistentTests)
-import Test.DAP.RunInTerminal
-import Test.DAP.Scopes
+import Test.Unit.DAP.LogMessage
+import Test.Unit.DAP.Persistent (persistentTests)
+import Test.Unit.DAP.RunInTerminal
+import Test.Unit.DAP.Scopes
 import Test.Utils
 
 main :: IO ()

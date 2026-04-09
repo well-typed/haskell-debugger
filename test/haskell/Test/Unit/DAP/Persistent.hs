@@ -3,18 +3,18 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ViewPatterns #-}
-module Test.DAP.Persistent (persistentTests) where
+module Test.Unit.DAP.Persistent (persistentTests) where
 
 import Control.Concurrent.Async
+import qualified Data.Text as T
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.ExpectedFailure
 import Test.Utils
-import Test.DAP.LogMessage (hasLogMsg,setupBreakpoints)
+import Test.Unit.DAP.LogMessage (setupBreakpoints)
 import qualified System.Process as P
 import Control.Exception (bracket)
-import Data.Bifunctor
 
 persistentTests :: TestTree
 persistentTests =
@@ -29,14 +29,14 @@ persistentTests =
         , testCase "parallel" $
           testParallel [] $ simpleSessions 2
         , testGroup "cwd /= test_dir" $ do
-            let units = replicate 2 ("test/unit/T113",(18,[]))
+            let units = replicate 2 ("test/unit/T113",18)
             [ testCase "sequential" $ testSequential' units [] $ simpleSessions'
              , testCase "parallel" $ testParallel' units [] $ simpleSessions'
              ]
         , testGroup "multiple test_dirs" $ do
             let units = concat $ replicate 2
-                  [ ("test/unit/T113",(18,[]))
-                  , ("test/unit/T44" ,(5,[eventMatch "output"]))
+                  [ ("test/unit/T113",18)
+                  , ("test/unit/T44" ,5)
                   ]
             [  testCase "sequential" $ testSequential' units [] $ simpleSessions'
              , testCase "parallel" $ testParallel' units [] $ simpleSessions'
@@ -64,12 +64,13 @@ withServerTestSetup' dirs0 flags check = bracket (startTestDAPServer "." flags)
 
 withBreakPoints :: [(Int, Maybe String, Maybe String)] -> TestDAP a -> (FilePath, TestDAPServer) -> IO ()
 withBreakPoints bps check (test_dir,server) =
-     withTestDAPServerClient' server $ do
-      () <- setupBreakpoints test_dir $ bps
+     withTestDAPServerClient' False server $ do
+      () <- setupBreakpoints test_dir bps
       _ <- check
-
-      -- Send disconnect
-      disconnectSession
+      disconnect
+        -- FIXME: we re-send the terminated event in response to disconnect,
+        -- even if we already sent it once before above. probably not very
+        -- correct
       pure ()
 
 testSequential :: Foldable t => [String] -> ((FilePath, TestDAPServer) -> t (IO a)) -> IO ()
@@ -78,9 +79,9 @@ testSequential flags k
       (curry $ \ x -> sequence_ $ k x)
 
 testSequential' :: Foldable t =>
-  [(FilePath,(Int,[MessageMatch]))] ->
+  [(FilePath,Int)] ->
   [String] ->
-  ([(Int,[MessageMatch])] -> ([FilePath], TestDAPServer) -> t (IO a)) ->
+  ([Int] -> ([FilePath], TestDAPServer) -> t (IO a)) ->
   IO ()
 testSequential' (unzip -> (dirs,bps)) flags k
   = withServerTestSetup' dirs flags
@@ -92,9 +93,9 @@ testParallel flags k
       (curry $ \ x -> mapConcurrently_ id (k x))
 
 testParallel' :: Foldable f =>
-  [(FilePath,(Int,[MessageMatch]))] ->
+  [(FilePath,Int)] ->
   [String] ->
-  ([(Int,[MessageMatch])] -> ([FilePath], TestDAPServer) -> f (IO b)) ->
+  ([Int] -> ([FilePath], TestDAPServer) -> f (IO b)) ->
   IO ()
 testParallel' (unzip -> (dirs,bps)) flags k
   = withServerTestSetup' dirs flags
@@ -107,25 +108,19 @@ simpleSessions n x =
       , let msg = "MSG_" ++ show i
       , let
           check = do
-            vs <- receiveMessagesUnordered [eventMatch "output"]
-            hasLogMsg msg vs
-                  -- consume further prints and events
-            expectMessagesUnordered $
-              replicate 3 (eventMatch "output")
-                ++ [eventMatch "terminated", eventMatch "exited"]
-
+            assertOutput (T.pack msg)
+            waitFiltering Event "exited"
       ]
 
--- simpleSessions' :: [(Int,_)] -> ([FilePath], TestDAPServer) -> [IO ()]
+simpleSessions' :: [Int] -> ([FilePath], TestDAPServer) -> [IO ()]
 simpleSessions' ls (dirs,server) =
-  [withBreakPoints [ (line,Nothing,Just msg)
-                   , (line+1,Nothing,Nothing)
-                   ] check (d,server)
-      | (i,((line,matches),d)) <- zip [(0::Int)..] $ zip ls dirs
+  [ withBreakPoints [ (line,Nothing,Just msg)
+                    , (line+1,Nothing,Nothing)
+                    ] check (d,server)
+      | (i,(line,d)) <- zip [(0::Int)..] $ zip ls dirs
       , let msg = "MSG_" ++ show i
       , let
           check = do
-            vs <- receiveMessagesUnordered [eventMatch "output"]
-            hasLogMsg msg vs
-            expectMessagesUnordered $ matches ++ [eventMatch "stopped"]
+            assertOutput (T.pack msg)
+            waitFiltering Event "stopped"
       ]
