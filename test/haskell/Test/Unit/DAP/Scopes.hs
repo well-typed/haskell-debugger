@@ -1,6 +1,6 @@
 -- | 'scopes' request tests
 {-# LANGUAGE OverloadedStrings, CPP #-}
-module Test.DAP.Scopes (scopesTests) where
+module Test.Unit.DAP.Scopes (scopesTests) where
 
 import Control.Monad.IO.Class (liftIO)
 import Test.DAP
@@ -23,18 +23,18 @@ scopesExpensiveTest :: Assertion
 scopesExpensiveTest = withHermeticDir False "test/unit/T44" $ \test_dir -> do
   server <- startTestDAPServer test_dir ["--disable-ipe-backtraces"]
 
-  withTestDAPServerClient server $ do
+  withTestDAPServerClient False server $ do
 
-      _ <- hitBreakpoint False test_dir 6 (pure ()) (\_ -> pure ())
+      _ <- defaultHitBreakpoint test_dir 6
 
-      threadId <- getThreads
-      frameId <- getStackTrace threadId
-      scopes <- getScopes frameId
+      threadId:_ <- threads
+      frameId:_ <- stackTrace threadId
+      scps <- scopes frameId
 
-      let lookupExpensive n = lookup n scopes
+      let lookupExpensive n = lookup n scps
       liftIO $ assertEqual "Locals should not be expensive" (Just False) (lookupExpensive "Locals")
       liftIO $ assertEqual "Module should be expensive" (Just True) (lookupExpensive "Module")
       liftIO $ assertEqual "Globals should be expensive" (Just True) (lookupExpensive "Globals")
 
-      disconnectSession
+      disconnect
       pure ()
