@@ -48,7 +48,7 @@ import qualified Control.Exception as E
 -- 2.1 Read stdin from the socket and push it to a Chan
 -- 2.1 Read from a stdout Chan and write to the socket
 serverSideHdbProxy :: LogAction IO (WithSeverity T.Text)
-                   -> IO ()
+                   -> MVar ()
                    -> DebugAdaptorState
                    -> Adaptor DebugAdaptorState r (PortNumber, Adaptor DebugAdaptorState s ())
 serverSideHdbProxy l client_conn_signal
@@ -69,7 +69,7 @@ serverSideHdbProxy l client_conn_signal
     runTCPServerWithSocket' sock $ \scket -> do
 
       infoMsg (T.pack $ "Connected to client on port " ++ show port ++ "...!")
-      client_conn_signal -- signal ready (see #95)
+      putMVar client_conn_signal () -- signal ready (see #95)
 
       race_
         (race_

@@ -170,7 +170,6 @@ executable hdb
         exceptions, aeson, bytestring,
         containers, filepath,
         process, mtl,
-        stm,
         unordered-containers >= 0.2.19 && < 0.3,
 
         haskell-debugger,
