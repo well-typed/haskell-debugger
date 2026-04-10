@@ -100,7 +100,7 @@ jobs:
       - uses: haskell-actions/setup@v2
         with:
           ghc-version: ${{ matrix.version }}
-          cabal-version: 3.14
+          cabal-version: 3.16
           ghcup-release-channel: ${{ matrix.channel }}
 
       - uses: cachix/install-nix-action@v31
@@ -167,7 +167,7 @@ jobs:
         id: setup
         with:
           ghc-version: ${{ matrix.version }}
-          cabal-version: 3.14
+          cabal-version: 3.16
           ghcup-release-channel: ${{ matrix.channel }}
 
       - name: Configure the build
