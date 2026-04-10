@@ -7,11 +7,8 @@ import System.Process
 import System.Environment
 import Data.Maybe
 import Data.IORef
-import Data.Set (Set)
-import Data.Set qualified as Set
 import Text.Read
 import Control.Concurrent
-import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Except
@@ -80,7 +77,7 @@ main = do
         l <- mainLogger hdbOpts.verbosity realStdout
         init_var <- liftIO (newIORef False{-not supported by default-})
         pid_var  <- liftIO (newIORef Nothing)
-        ccon_var <- liftIO $ newTVarIO Set.empty
+        ccon_var <- liftIO newEmptyMVar
         runDAPServerWithLogger (contramap DAPLibraryLog l) config
           (talk l init_var pid_var ccon_var internalInterpreter)
           (ack l pid_var)
@@ -217,7 +214,7 @@ talk :: LogAction IO MainLog
      -- ^ Whether the client supports runInTerminal
      -> IORef (Maybe Int)
      -- ^ The PID of the runInTerminal proxy process
-     -> TVar (Set ThreadId)
+     -> MVar ()
      -- ^ A var to block on waiting for the proxy client to connect, if a proxy
      -- connection is expected. See #95.
      -> Bool
@@ -238,18 +235,17 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
     sendInitializeResponse
 
     -- If runInTerminal is not supported by the client, signal readiness right away
-    when (not runInTerminal) $ do
-      liftIO $ join $ signalThisThread client_proxy_signal
-
+    when (not runInTerminal) $
+      liftIO $ putMVar client_proxy_signal ()
 --------------------------------------------------------------------------------
   CommandLaunch -> do
     launch_args <- getArguments
 
     supportsRunInTerminalRequest <- liftIO $ readIORef support_rit_var
-    signal <- liftIO $ signalThisThread client_proxy_signal
+
     merror <- runExceptT $
       initDebugger (contramap DAPLog l)
-        signal
+        client_proxy_signal
         supportsRunInTerminalRequest prefer_internal_interpreter
         launch_args
     case merror of
@@ -290,7 +286,7 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
     -- now that it has been configured, start executing until it halts, then send an event
 
     -- wait for the proxy client to connect before starting the execution (#95)
-    () <- liftIO $ blockForSignal client_proxy_signal
+    () <- liftIO $ takeMVar client_proxy_signal
     startExecution >>= handleEvalResult False
 ----------------------------------------------------------------------------
   CommandThreads    -> commandThreads
@@ -322,24 +318,6 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
   other -> do
     sendErrorResponse (ErrorMessage (T.pack ("Unsupported command: " <> show other))) Nothing
     terminateSessionCleanly Nothing
-
-
--- | Waits until own ThreadId appears in var, then deletes it.
-blockForSignal :: TVar (Set ThreadId) -> IO ()
-blockForSignal x = do
-  thId <- myThreadId
-  atomically $ do
-    ths <- readTVar x
-    if Set.member thId ths
-      then writeTVar x (Set.delete thId ths)
-      else retry
-
--- | Returns an action that adds to the var the ThreadId @signalThisThread@ was called from.
-signalThisThread :: TVar (Set ThreadId) -> IO (IO ())
-signalThisThread x = do
-  thId <- liftIO $ myThreadId
-  pure $ atomically $ modifyTVar x (Set.insert thId)
-
 ----------------------------------------------------------------------------
 -- talk cmd = logInfo $ BL8.pack ("GOT cmd " <> show cmd)
 ----------------------------------------------------------------------------
