@@ -6,33 +6,19 @@
 {-# LANGUAGE RecordWildCards #-}
 module Test.DAP.Messages where
 ----------------------------------------------------------------------------
-import           Control.Applicative
-import           Control.Concurrent
+import           Control.Concurrent.Async
 import           Control.Monad.IO.Class
 import           Data.Aeson
 import           Data.Aeson.Types
-import           Data.Aeson.KeyMap (toHashMapText)
-import qualified Data.Foldable as F
 import           Control.Monad.Reader
-import           Control.Exception hiding (handle)
-import qualified Control.Exception as E
 import qualified Data.ByteString            as BS
-import qualified Data.HashMap.Strict as H
-import           Data.List (findIndex, sortOn)
-import           Network.Run.TCP
-import           Network.Socket             (socketToHandle)
 import           System.IO
-import           System.Exit
 import           Data.IORef
-import           System.FilePath ((</>))
-import           System.Random (randomRIO)
-import qualified System.Process as P
-import qualified Data.Text as T
 ----------------------------------------------------------------------------
 import           DAP.Utils
-import           DAP.Server
+import Control.Concurrent.STM
+import qualified Data.Text as T
 ----------------------------------------------------------------------------
-import           Test.Tasty.HUnit
 
 ----------------------------------------------------------------------------
 -- * Monad for DAP client context
@@ -40,7 +26,27 @@ import           Test.Tasty.HUnit
 
 data TestDAPClientContext = TestDAPClientContext
   { clientHandle :: Handle
+    -- ^ Connection to server
   , clientNextSeqRef :: IORef Int
+    -- ^ Counter for seq numbers
+  , clientResponses :: TChan Value
+    -- ^ Collect response messages sent by server
+  , clientEvents :: TChan Value
+    -- ^ Collect event messages sent by server
+  , clientReverseRequests :: TChan Value
+    -- ^ Collect reverse requests messages sent by server
+  , clientFullOutput :: TVar [T.Text]
+    -- ^ The full output is available here in reverse order (from most recent to oldest output strings).
+    --
+    -- The output events are STILL available from the events channel (this
+    -- might be useful if you want to check a certain output event happens
+    -- after some other specific event like a stopped one, rather than just
+    -- overall).
+    --
+    -- We keep this full text because it is often useful to query the full
+    -- output and not care about ordering.
+  , clientSupportsRunInTerminal :: Bool
+    -- ^ Run test with runInTerminal support?
   }
 
 newtype TestDAP a = TestDAP { runTestDAP :: TestDAPClientContext -> IO a }
@@ -50,75 +56,46 @@ newtype TestDAP a = TestDAP { runTestDAP :: TestDAPClientContext -> IO a }
 -- * Message primitives
 --------------------------------------------------------------------------------
 
-send :: [Pair] -> TestDAP ()
-send message = do
-  TestDAPClientContext{..} <- ask
+type ResponseCont b a = Async b -> TestDAP a
+
+-- | Run an action with an Async in the continuation synchronously by simply
+-- waiting for the response.
+sync :: (ResponseCont b b -> TestDAP b) -> TestDAP b
+sync k = k (liftIO . wait)
+
+-- | Send message with next sequence number and expect a response (response
+-- value is given as async in continuation)
+send :: [Pair] -> ResponseCont Value a -> TestDAP a
+send message k = do
+  ctx@TestDAPClientContext{..} <- ask
   seqNum <- liftIO $ atomicModifyIORef' clientNextSeqRef (\n -> (n + 1, n))
-  liftIO $
+  liftIO $ do
     BS.hPutStr clientHandle $
       encodeBaseProtocolMessage (object ("seq" .= seqNum : filter ((/= "seq") . fst) message))
 
-data MessageMatch = MessageMatch
-  { messageMatchDescription :: String
-  , messageMatchMatches :: Value -> Bool
-  }
+    withAsync (runTestDAP waitForResponse ctx) $ \v ->
+      runTestDAP (k v) ctx
 
-subsetMatch :: [Pair] -> MessageMatch
-subsetMatch expected =
-  MessageMatch ("subset: " ++ show (object expected)) $ \actual ->
-    case (object expected, actual) of
-      (Object ex, Object actualObj) ->
-        toHashMapText ex `H.isSubmapOf` toHashMapText actualObj
-      _ -> False
+-- | Reply to reverse request of given seq number
+reply :: Int -> [Pair] -> TestDAP ()
+reply revReqSeqNum message = do
+  TestDAPClientContext{..} <- ask
+  liftIO $ do
+    BS.hPutStr clientHandle $
+      encodeBaseProtocolMessage (object ("seq" .= (revReqSeqNum + 1) : filter ((/= "seq") . fst) message))
 
-responseMatch :: String -> MessageMatch
-responseMatch cmd =
-  MessageMatch ("response(" ++ cmd ++ ")") $ \v ->
-    maybe False id $ parseMaybe (withObject "response" $ \o -> do
-      typ <- o .: "type"
-      responseCmd <- o .: "command"
-      success <- o .: "success"
-      pure ((typ :: String) == "response" && (responseCmd :: String) == cmd && (success :: Bool))
-      ) v
+waitForResponse :: TestDAP Value
+waitForResponse = do
+  TestDAPClientContext{..} <- ask
+  liftIO $ atomically $ readTChan clientResponses
 
-eventMatch :: String -> MessageMatch
-eventMatch eventNameExpected =
-  MessageMatch ("event(" ++ eventNameExpected ++ ")") $ \v ->
-    maybe False id $ parseMaybe (withObject "event" $ \o -> do
-      typ <- o .: "type"
-      eventName <- o .: "event"
-      pure ((typ :: String) == "event" && (eventName :: String) == eventNameExpected)
-      ) v
+waitForReverseRequest :: TestDAP Value
+waitForReverseRequest = do
+  TestDAPClientContext{..} <- ask
+  liftIO $ atomically $ readTChan clientReverseRequests
 
-receiveMessagesUnordered :: [MessageMatch] -> TestDAP [Value]
-receiveMessagesUnordered filters = go (zip [0 :: Int ..] filters) []
-  where
-    go [] matched = pure (map snd (sortOn fst matched))
-    go remaining matched = do
-      actual <- nextPayload
-      case findIndex (\(_, f) -> messageMatchMatches f actual) remaining of
-        Nothing -> do
-          let pending = map (messageMatchDescription . snd) remaining
-          liftIO $ assertFailure $
-            "Unexpected message: " ++ show actual ++ "\nPending filters: " ++ show pending
-          pure []
-        Just idx ->
-          case splitAt idx remaining of
-            (before, (i, _) : after) ->
-              go (before ++ after) ((i, actual) : matched)
-            _ -> fail "Internal error in receiveMessagesUnordered"
+waitForEvent :: TestDAP Value
+waitForEvent = do
+  TestDAPClientContext{..} <- ask
+  liftIO $ atomically $ readTChan clientEvents
 
-    nextPayload :: TestDAP Value
-    nextPayload = do
-      TestDAPClientContext{clientHandle = h} <- ask
-      payload <- liftIO $ readPayload h
-      case payload of
-        Left e -> fail e
-        Right actual -> pure actual
-
-expectMessagesUnordered :: [MessageMatch] -> TestDAP ()
-expectMessagesUnordered filters = do
-  _ <- receiveMessagesUnordered filters
-  pure ()
-
---------------------------------------------------------------------------------

@@ -11,14 +11,26 @@ import           Control.Concurrent
 import           Control.Exception hiding (handle)
 import qualified Control.Exception as E
 import           Network.Run.TCP
-import           Network.Socket             (socketToHandle)
+import           Network.Socket             (Family(AF_INET), SockAddr(SockAddrInet, SockAddrInet6), SocketOption(ReuseAddr), SocketType(Stream), bind, close, defaultProtocol, getSocketName, setSocketOption, socket, socketToHandle, tupleToHostAddress)
 import           System.IO
-import           System.Exit
+import           Control.Retry
 import           Data.IORef
-import           System.Random (randomRIO)
 import qualified System.Process as P
 ----------------------------------------------------------------------------
 import           Test.DAP.Messages
+import Control.Concurrent.STM
+import Control.Concurrent.Async
+import Control.Monad.Reader
+import Control.Monad
+import Data.Aeson.Types
+import Test.Tasty.HUnit (assertFailure)
+import DAP.Server (readPayload)
+import qualified Control.Monad.Catch
+import Test.DAP.Messages.Parser
+
+--------------------------------------------------------------------------------
+-- * Launch the DAP server process (what we're testing)
+--------------------------------------------------------------------------------
 
 data TestDAPServer = TestDAPServer
   { testDAPServerPort :: Int
@@ -29,30 +41,33 @@ data TestDAPServer = TestDAPServer
 -- | Launch an @hdb server@ for tests on a random local port and capture stdout.
 startTestDAPServer :: FilePath -> [String] -> IO TestDAPServer
 startTestDAPServer testDir flags = do
-  testPort <- randomRIO (49152, 65534) :: IO Int
+  testPort <- getAvailablePort
 
-  (Just _hin, Just hout, _, p)
+  (Just _hin, Just hout, Just herr, p)
     <- P.createProcess (P.proc "hdb" $ ["server"] ++ flags ++ ["--port", show testPort])
         { P.cwd = Just testDir
         , P.std_out = P.CreatePipe
+        , P.std_err = P.CreatePipe
         , P.std_in = P.CreatePipe
         }
 
   serverOutputRef <- newIORef []
 
-  -- Fork thread to read output of server process. If we don't, the server
+  -- Spawn threads to read output of server process. If we don't, the server
   -- blocks trying to write to stdout/stderr?
-  _ <- forkIO $ flip catch (\(e :: IOException) -> print ("server process forwarding" :: String, e)) $ do
-    hSetBuffering hout LineBuffering
-    let loop = do
-          eof <- hIsEOF hout
-          if eof
-            then return ()
-            else do
-              l <- hGetLine hout
-              modifyIORef' serverOutputRef (l :)
-              loop
-    loop
+  let forwardServerHandle h = flip catch (\(e :: IOException) -> print ("server process forwarding" :: String, e)) $ do
+        hSetBuffering h LineBuffering
+        let loop = do
+              eof <- hIsEOF h
+              if eof
+                then return ()
+                else do
+                  l <- hGetLine h
+                  modifyIORef' serverOutputRef (l :)
+                  loop
+        loop
+
+  _ <- forkIO $ concurrently_ (forwardServerHandle hout) (forwardServerHandle herr)
 
   let flushServerOutput = do
         putStrLn "\n--- SERVER OUTPUT ---"
@@ -65,46 +80,91 @@ startTestDAPServer testDir flags = do
     , testDAPServerFlushOutput = flushServerOutput
     }
 
+getAvailablePort :: IO Int
+getAvailablePort =
+  bracket open close $ \sock -> do
+    setSocketOption sock ReuseAddr 1
+    bind sock (SockAddrInet 0 (tupleToHostAddress (0, 0, 0, 0)))
+    getSocketName sock >>= \case
+      SockAddrInet port _ -> pure (fromIntegral port)
+      SockAddrInet6 port _ _ _ -> pure (fromIntegral port)
+      addr -> error $ "getAvailablePort: unexpected socket address " ++ show addr
+  where
+    open = socket AF_INET Stream defaultProtocol
+
+--------------------------------------------------------------------------------
+-- * Launch the client connecting to the server (the test driver)
+--------------------------------------------------------------------------------
+
 -- | Like @withTestDAPServerClient'@ but also shutsdown server on exit.
-withTestDAPServerClient :: TestDAPServer -> TestDAP a -> IO a
-withTestDAPServerClient server continue = do
-  withTestDAPServerClient' server continue
+withTestDAPServerClient :: Bool -> TestDAPServer -> TestDAP a -> IO a
+withTestDAPServerClient clientSupportsRunInTerminal server continue = do
+  withTestDAPServerClient' clientSupportsRunInTerminal server continue
     `E.finally` P.terminateProcess (testDAPServerProcess server)
 
--- | Connect a test client to a running 'TestDAPServer', with retry semantics
--- and server log flushing on failure.
-withTestDAPServerClient' :: TestDAPServer -> TestDAP a -> IO a
-withTestDAPServerClient' server continue = do
-  retryVar <- newIORef True
-  let runClient =
-        withNewClient (testDAPServerPort server) retryVar $ \h -> do
-          -- As soon as we get a connection, stop retrying
-          writeIORef retryVar False
-          seqRef <- newIORef 1
-          runTestDAP continue (TestDAPClientContext h seqRef)
-  (runClient `E.onException` testDAPServerFlushOutput server)
+--- | Connect a test client to a running 'TestDAPServer', with retry semantics
+--- and server log flushing on failure.
+withTestDAPServerClient' :: Bool {-^ Announce support for runInTerminal? -} -> TestDAPServer -> TestDAP a -> IO a
+withTestDAPServerClient' clientSupportsRunInTerminal server continue = do
+  runClient `E.onException` testDAPServerFlushOutput server
+  where
+    runClient = do
+      withNewClient (testDAPServerPort server) $ \clientHandle -> do
+        clientNextSeqRef      <- newIORef 1
+        clientReverseRequests <- newTChanIO
+        clientResponses       <- newTChanIO
+        clientEvents          <- newTChanIO
+        clientFullOutput      <- newTVarIO []
+        let ctx = TestDAPClientContext{..}
+        either id (\() -> error "handleServerTestDAP unexpectedly returned") <$> race
+          (runTestDAP continue ctx)
+          (runTestDAP handleServerTestDAP ctx)
 
 -- | Spawns a new mock client that connects to the mock server.
---
 withNewClient :: forall a. Int -- ^ Port
-              -> IORef Bool
-              -- ^ True if we've already connected once and therefore should no longer retry
               -> (Handle -> IO a)
               -> IO a
-withNewClient port retryVar continue = flip catch exceptionHandler $
-  runTCPClient "127.0.0.1" (show port) $ \socket -> do
-    h <- socketToHandle socket ReadWriteMode
-    hSetNewlineMode h NewlineMode { inputNL = CRLF, outputNL = CRLF }
-    continue h `finally` hClose h
-      where
-        exceptionHandler :: SomeException -> IO a
-        exceptionHandler e = do
-          do_retry <- readIORef retryVar
-          if do_retry then do
-            threadDelay 100_000 -- 0.1s
-            -- Do it silently:
-            -- putStrLn "Retrying connection..."
-            withNewClient port retryVar continue
-          else do
-            putStrLn $ displayException e
-            exitWith (ExitFailure 22)
+withNewClient port continue = do
+  recovering (constantDelay 50000 <> limitRetries 50) retry_handlers $ \_ ->
+    runTCPClient "127.0.0.1" (show port) $ \sock -> do
+      h <- socketToHandle sock ReadWriteMode
+      hSetNewlineMode h NewlineMode { inputNL = CRLF, outputNL = CRLF }
+      continue h `finally` hClose h
+  where
+    retry_handlers =
+      skipAsyncExceptions ++
+      [const $ Control.Monad.Catch.Handler $ \ (_ :: SomeException) -> return True]
+
+--------------------------------------------------------------------------------
+-- ** Handle server responses, events, and reverse requests
+--------------------------------------------------------------------------------
+
+-- | Forever: read messages from handle and write them either to clientNonEvents or clientEvents
+handleServerTestDAP :: TestDAP ()
+handleServerTestDAP = do
+  TestDAPClientContext{..} <- ask
+  forever $ do
+    payload <- nextPayload
+    liftIO $ case parseMaybe parseType payload of
+      Just "event"    -> do
+        let mtxt = parseOutput payload
+        atomically $ do
+          writeTChan clientEvents payload
+          case mtxt of
+            Just txt -> modifyTVar' clientFullOutput (txt:)
+            Nothing  -> pure ()
+      Just "response" -> atomically $ writeTChan clientResponses payload
+      Just "request"  -> atomically $ do writeTChan clientReverseRequests payload
+      Just ty      -> assertFailure $ "handleServerTestDAP: Unsupported message type: " ++ show ty
+      Nothing      -> assertFailure $ "Received message without type: " ++ show payload
+  where
+    nextPayload = do
+      TestDAPClientContext{clientHandle = h} <- ask
+      payload <- liftIO $ readPayload h
+      case payload of
+        Left e -> fail e
+        Right actual -> pure actual
+
+    parseType = withObject "message" $ \o -> do
+      typ <- o .: "type"
+      pure ((typ :: String))

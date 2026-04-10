@@ -7,15 +7,12 @@ import System.Process
 import System.Environment
 import Data.Maybe
 import Data.IORef
-import Data.Set (Set)
-import Data.Set qualified as Set
 import Text.Read
 import Control.Concurrent
-import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Except
-import Control.Exception (uninterruptibleMask)
+import Control.Exception (bracket, uninterruptibleMask)
 import Control.Exception.Backtrace
 
 import DAP
@@ -31,13 +28,42 @@ import Development.Debug.Adapter.Handles
 import Colog.Core
 
 import Data.Time
-import System.IO (hSetBuffering, BufferMode(LineBuffering), Handle, openFile, IOMode(ReadMode))
+import System.IO
+  ( hFlush
+  , hClose
+  , hPutStrLn
+  , hSetBuffering
+  , BufferMode(LineBuffering)
+  , Handle
+  , openFile
+  , IOMode(ReadMode, ReadWriteMode)
+  )
 import qualified DAP.Log as DAP
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import GHC.IO.Handle.FD
 import Data.Functor.Contravariant
+import Network.Socket
+  ( AddrInfo(addrAddress)
+  , AddrInfoFlag(AI_NUMERICHOST)
+  , Family(AF_INET)
+  , PortNumber
+  , SockAddr
+  , SocketType(Stream)
+  , accept
+  , addrFlags
+  , addrSocketType
+  , bind
+  , close
+  , defaultHints
+  , defaultProtocol
+  , getAddrInfo
+  , listen
+  , maxListenQueue
+  , socket
+  , socketToHandle
+  )
 
 import qualified GHCi.Server as GHCi
 import qualified GHCi.Signals as GHCi
@@ -79,11 +105,9 @@ main = do
         hSetBuffering realStdout LineBuffering
         l <- mainLogger hdbOpts.verbosity realStdout
         init_var <- liftIO (newIORef False{-not supported by default-})
-        pid_var  <- liftIO (newIORef Nothing)
-        ccon_var <- liftIO $ newTVarIO Set.empty
         runDAPServerWithLogger (contramap DAPLibraryLog l) config
-          (talk l init_var pid_var ccon_var internalInterpreter)
-          (ack l pid_var)
+          (talk l init_var internalInterpreter)
+          (ack l )
     HdbCLI{..} -> do
         setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
         l <- mainLogger hdbOpts.verbosity stdout
@@ -94,7 +118,7 @@ main = do
               { supportsANSIStyling = True -- todo: check!!
               , supportsANSIHyperlinks = False
               , preferInternalInterpreter = internalInterpreter
-              , externalInterpreterStdinStream = stdinStream
+              , externalInterpreterCustomProc = Left stdinStream
               }
         runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs
           runConf debugInteractive
@@ -105,6 +129,15 @@ main = do
     HdbExternalInterpreter{writeFd, readFd} -> do
       inh  <- GHCi.readGhcHandle (show readFd)
       outh <- GHCi.readGhcHandle (show writeFd)
+      runExternalInterpreterServer inh outh
+    HdbExternalInterpreterPort{port} -> do
+      pid <- getCurrentPid
+      withExternalInterpreterPort (fromIntegral port) $ \h -> do
+        hPutStrLn h (show pid)
+        hFlush h
+        runExternalInterpreterServer h h
+  where
+    runExternalInterpreterServer inh outh = do
       GHCi.installSignalHandlers
       pipe <- GHCi.mkPipeFromHandles inh outh
       let verbose = False
@@ -117,7 +150,30 @@ main = do
       where hook = return -- empty hook
         -- we cannot allow any async exceptions while communicating, because
         -- we will lose sync in the protocol, hence uninterruptibleMask.
-  where
+
+    withExternalInterpreterPort :: PortNumber -> (Handle -> IO a) -> IO a
+    withExternalInterpreterPort port k =
+      bracket openListener close $ \listener ->
+        bracket (accept listener) (close . fst) $ \(sock, _) ->
+          bracket (socketToHandle sock ReadWriteMode) hClose k
+      where
+        openListener = do
+          listener <- socket AF_INET Stream defaultProtocol
+          addr <- socketAddressFromPort port
+          bind listener addr
+          listen listener maxListenQueue
+          pure listener
+
+    socketAddressFromPort :: PortNumber -> IO SockAddr
+    socketAddressFromPort port = do
+      addrs <- getAddrInfo (Just defaultHints
+        { addrFlags = [AI_NUMERICHOST]
+        , addrSocketType = Stream
+        }) (Just "127.0.0.1") (Just (show port))
+      case addrs of
+        addr : _ -> pure (addrAddress addr)
+        [] -> fail ("Could not resolve address for external interpreter port " ++ show port)
+
     -- When using the internal interpreter in DAP mode, we can't write to
     -- stdout directly because there will also be a thread forwarding the
     -- debuggee stdout by capturing it from stdout (and we'd get into a loop
@@ -215,16 +271,11 @@ getConfig port = do
 talk :: LogAction IO MainLog
      -> IORef Bool
      -- ^ Whether the client supports runInTerminal
-     -> IORef (Maybe Int)
-     -- ^ The PID of the runInTerminal proxy process
-     -> TVar (Set ThreadId)
-     -- ^ A var to block on waiting for the proxy client to connect, if a proxy
-     -- connection is expected. See #95.
      -> Bool
      -- ^ Prefer internal interpreter
      -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter = \ case
+talk l support_rit_var prefer_internal_interpreter = \ case
   CommandInitialize -> do
     InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
 #ifdef mingw32_HOST_OS
@@ -234,36 +285,31 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
 #else
     let runInTerminal = fromMaybe False supportsRunInTerminalRequest
 #endif
+    -- This global variable is wrong. Even though we only register the session
+    -- and the per-session state on Launch (which gives us __sessionId), the
+    -- *initialize* command is run once per new session on a new connection and
+    -- two different clients which may differ in their support for
+    -- 'runInTerminal'.
+    --
+    -- The `dap` library should likely keep track of the client capabilities
+    -- per connection.
     liftIO $ writeIORef support_rit_var runInTerminal
     sendInitializeResponse
-
-    -- If runInTerminal is not supported by the client, signal readiness right away
-    when (not runInTerminal) $ do
-      liftIO $ join $ signalThisThread client_proxy_signal
-
 --------------------------------------------------------------------------------
   CommandLaunch -> do
     launch_args <- getArguments
 
+    -- Wrong-ish. See above where this variable is written
     supportsRunInTerminalRequest <- liftIO $ readIORef support_rit_var
-    signal <- liftIO $ signalThisThread client_proxy_signal
+
     merror <- runExceptT $
       initDebugger (contramap DAPLog l)
-        signal
         supportsRunInTerminalRequest prefer_internal_interpreter
         launch_args
     case merror of
-      Right mport -> do
+      Right () -> do
         sendLaunchResponse   -- ack
         sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
-
-        -- Run the proxy in a separate terminal to accept stdin / forward stdout
-        -- if it is supported
-        when supportsRunInTerminalRequest $ do
-          maybe (pure ()) sendRunProxyInTerminal mport
-
-          -- Run proxy thread, server side, and
-          -- send the 'runInTerminal' request
 
         liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "Debugger launched successfully.") Info)
 
@@ -287,10 +333,16 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
 ----------------------------------------------------------------------------
   CommandConfigurationDone -> do
     sendConfigurationDoneResponse
-    -- now that it has been configured, start executing until it halts, then send an event
 
-    -- wait for the proxy client to connect before starting the execution (#95)
-    () <- liftIO $ blockForSignal client_proxy_signal
+    DAS{runInTerminalProc} <- getDebugSession
+    case runInTerminalProc of
+      RunProxyInTerminal{proxyClientReady} -> liftIO $ do
+        -- Only start executing after proxy client connects succesfully (#95)
+        takeMVar proxyClientReady
+      _ ->
+        pure ()
+
+    -- Configuration is finished. Start executing until it halts.
     startExecution >>= handleEvalResult False
 ----------------------------------------------------------------------------
   CommandThreads    -> commandThreads
@@ -315,42 +367,30 @@ talk l support_rit_var _pid_var client_proxy_signal prefer_internal_interpreter 
   CommandSource -> undefined
   CommandPause -> pure () -- TODO
   (CustomCommand "mycustomcommand") -> undefined
-  (CustomCommand "runInTerminal") -> do
-    -- Ignore result of runInTerminal (reverse request) response.
-    -- If it fails, we simply continue without that functionality.
-    pure ()
   other -> do
     sendErrorResponse (ErrorMessage (T.pack ("Unsupported command: " <> show other))) Nothing
     terminateSessionCleanly Nothing
 
-
--- | Waits until own ThreadId appears in var, then deletes it.
-blockForSignal :: TVar (Set ThreadId) -> IO ()
-blockForSignal x = do
-  thId <- myThreadId
-  atomically $ do
-    ths <- readTVar x
-    if Set.member thId ths
-      then writeTVar x (Set.delete thId ths)
-      else retry
-
--- | Returns an action that adds to the var the ThreadId @signalThisThread@ was called from.
-signalThisThread :: TVar (Set ThreadId) -> IO (IO ())
-signalThisThread x = do
-  thId <- liftIO $ myThreadId
-  pure $ atomically $ modifyTVar x (Set.insert thId)
-
-----------------------------------------------------------------------------
--- talk cmd = logInfo $ BL8.pack ("GOT cmd " <> show cmd)
-----------------------------------------------------------------------------
-
 -- | Receive reverse request responses (such as runInTerminal response)
 ack :: LogAction IO MainLog
-    -> IORef (Maybe Int)
-    -- ^ Reference to PID of runInTerminal proxy process running
     -> ReverseRequestResponse -> DebugAdaptorCont ()
-ack l _ref rrr = case rrr.reverseRequestCommand of
+ack l rrr = case rrr.reverseRequestCommand of
   ReverseCommandRunInTerminal -> do
+
+    RunInTerminalResponse{} <- getReverseRequestResponseBody rrr
+
+    -- TODO: keep track of body.shellProcessId to then kill the proxy when the
+    -- session is terminated:
+    -- [stdout] [127.0.0.1:54427][DEBUG][RECEIVED]
+    --  {
+    --      "body": {
+    --          "shellProcessId": 2092
+    --      },
+    --      "command": "runInTerminal",
+    --      "seq": 14,
+    --      "success": true,
+    --      "type": "response"
+    --  }
     when rrr.success $ do
       liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "RunInTerminal was successful") Info)
   _ -> pure ()

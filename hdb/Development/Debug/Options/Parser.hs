@@ -89,16 +89,24 @@ proxyParser = HdbProxy
      <> help "proxy port to which the debugger connects" )
   <*> verbosityParser Warning
 
--- | Parser for @hdb external-interpreter <write-fd> <read-fd>@
+-- | Parser for @hdb external-interpreter <write-fd> <read-fd>@ or
+-- @hdb external-interpreter --port <port>@
 -- See Note [Custom external interpreter]
 extInterpParser :: Parser HdbOptions
-extInterpParser = HdbExternalInterpreter
-  <$> argument auto
-    ( metavar "WRITE_FD"
-   <> help "external interpreter write file descriptor" )
-  <*> argument auto
-    ( metavar "READ_FD"
-   <> help "external interpreter read file descriptor" )
+extInterpParser =
+      HdbExternalInterpreterPort
+        <$> option auto
+          ( long "port"
+         <> short 'p'
+         <> metavar "PORT"
+         <> help "port on which the external interpreter should connect to the debugger" )
+  <|> HdbExternalInterpreter
+        <$> argument auto
+          ( metavar "WRITE_FD"
+         <> help "external interpreter write file descriptor" )
+        <*> argument auto
+          ( metavar "READ_FD"
+         <> help "external interpreter read file descriptor" )
 
 -- | Combined parser for HdbOptions
 hdbOptionsParser :: Parser HdbOptions
@@ -111,7 +119,7 @@ hdbOptionsParser = hsubparser
       ( progDesc "Debug a Haskell program in CLI mode" ) )
  <> Options.Applicative.command "proxy"
     ( info proxyParser
-      ( progDesc "Internal mode used by the DAP server to proxy the stdin/stdout to the DAP client's terminal" ) )
+      ( progDesc "Internal mode used by the DAP server to proxy stdin/stdout to the DAP client's terminal when using the internal interpreter" ) )
  <> Options.Applicative.command "external-interpreter"
     ( info extInterpParser
       ( progDesc "Start the custom-for-debugger external interpreter" ) )
