@@ -17,6 +17,7 @@ import           Data.IORef
 ----------------------------------------------------------------------------
 import           DAP.Utils
 import Control.Concurrent.STM
+import qualified Data.Text as T
 ----------------------------------------------------------------------------
 
 ----------------------------------------------------------------------------
@@ -34,6 +35,16 @@ data TestDAPClientContext = TestDAPClientContext
     -- ^ Collect event messages sent by server
   , clientReverseRequests :: TChan Value
     -- ^ Collect reverse requests messages sent by server
+  , clientFullOutput :: TVar [T.Text]
+    -- ^ The full output is available here in reverse order (from most recent to oldest output strings).
+    --
+    -- The output events are STILL available from the events channel (this
+    -- might be useful if you want to check a certain output event happens
+    -- after some other specific event like a stopped one, rather than just
+    -- overall).
+    --
+    -- We keep this full text because it is often useful to query the full
+    -- output and not care about ordering.
   , clientSupportsRunInTerminal :: Bool
     -- ^ Run test with runInTerminal support?
   }
