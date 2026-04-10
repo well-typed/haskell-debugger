@@ -27,6 +27,7 @@ import Data.Bifunctor
 import Data.Function
 import Data.Functor
 import Data.Maybe
+import Data.UUID.V4 qualified as UUID
 import System.IO
 import GHC.IO.Encoding
 import Control.Monad.Catch
@@ -176,7 +177,8 @@ initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpret
         if supportsRunInTerminal then
           fmap (first Just) . lift $ serverSideHdbProxy (contramap RunProxyServerLog l) client_proxy_signal daState
           else pure (Nothing,return ())
-      lift $ registerNewDebugSession (maybe "debug-session" T.pack __sessionId) daState
+      sessionId <- liftIO $ maybe (("debug-session:" <>) . T.show <$> UUID.nextRandom) (pure . T.pack) __sessionId
+      lift $ registerNewDebugSession sessionId daState
         [ debuggerThread dbgLog finished_init projectRoot flags
             extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
         , ($ proxyThread)
