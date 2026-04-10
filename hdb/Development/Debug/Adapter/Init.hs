@@ -101,7 +101,7 @@ newtype InitFailed = InitFailed String deriving Show
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
-initDebugger :: LogAction IO DAPLog -> MVar () -> Bool -> Bool
+initDebugger :: LogAction IO DAPLog -> IO () -> Bool -> Bool
              -> LaunchArgs -> ExceptT InitFailed DebugAdaptor (Maybe PortNumber)
 initDebugger l client_proxy_signal supportsRunInTerminal preferInternalInterpreter
                LaunchArgs{ __sessionId
