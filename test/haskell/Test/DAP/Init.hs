@@ -26,6 +26,7 @@ import Data.Aeson.Types
 import Test.Tasty.HUnit (assertFailure)
 import DAP.Server (readPayload)
 import qualified Control.Monad.Catch
+import Test.DAP.Messages.Parser
 
 --------------------------------------------------------------------------------
 -- * Launch the DAP server process (what we're testing)
@@ -113,6 +114,7 @@ withTestDAPServerClient' clientSupportsRunInTerminal server continue = do
         clientReverseRequests <- newTChanIO
         clientResponses       <- newTChanIO
         clientEvents          <- newTChanIO
+        clientFullOutput      <- newTVarIO []
         let ctx = TestDAPClientContext{..}
         either id (\() -> error "handleServerTestDAP unexpectedly returned") <$> race
           (runTestDAP continue ctx)
@@ -144,9 +146,15 @@ handleServerTestDAP = do
   forever $ do
     payload <- nextPayload
     liftIO $ case parseMaybe parseType payload of
-      Just "event"    -> atomically $ writeTChan clientEvents payload
+      Just "event"    -> do
+        let mtxt = parseOutput payload
+        atomically $ do
+          writeTChan clientEvents payload
+          case mtxt of
+            Just txt -> modifyTVar' clientFullOutput (txt:)
+            Nothing  -> pure ()
       Just "response" -> atomically $ writeTChan clientResponses payload
-      Just "request"  -> atomically $ writeTChan clientReverseRequests payload
+      Just "request"  -> atomically $ do writeTChan clientReverseRequests payload
       Just ty      -> assertFailure $ "handleServerTestDAP: Unsupported message type: " ++ show ty
       Nothing      -> assertFailure $ "Received message without type: " ++ show payload
   where
