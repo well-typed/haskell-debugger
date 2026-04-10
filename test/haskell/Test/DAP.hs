@@ -185,7 +185,8 @@ assertStoppedLocation reason expectedLine = do
   -- TODO: Validate expected line and potentially path too
   -- (see assertStoppedLocation in debugClient.ts)
 
--- | Assert that all accumulated output events contain a certain string
+-- | Assert that all *pending*(not yet taken from channel) accumulated output
+-- events (until any other event is found) contain a certain string
 assertOutput :: T.Text -> TestDAP ()
 assertOutput expected = do
   events <- waitAccumulating Event "output"
@@ -194,6 +195,15 @@ assertOutput expected = do
     assertBool
       ("assertOutput: expecting " ++ show expected ++ " but got " ++ show outputs)
       (any (T.isInfixOf expected) outputs)
+
+-- | Assert that the full output up until now contains any given string
+assertFullOutput :: T.Text -> TestDAP ()
+assertFullOutput expected = do
+  TestDAPClientContext{..} <- ask
+  fullOut <- liftIO $ readTVarIO clientFullOutput
+  liftIO $ assertBool
+    ("assertFullOutput: expecting " ++ show expected ++ " but got " ++ show fullOut)
+    (any (T.isInfixOf expected) fullOut)
 
 --------------------------------------------------------------------------------
 -- * Waiting for messages
