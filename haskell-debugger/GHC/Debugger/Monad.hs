@@ -555,7 +555,7 @@ mkHandleFromPortSock port = do
           fibonacciBackoff 10_000
 
     shouldRetry :: RetryStatus -> Control.Monad.Catch.Handler IO Bool
-    shouldRetry _ = Control.Monad.Catch.Handler $ \(_ :: IOException) -> pure True
+    shouldRetry _ = Control.Monad.Catch.Handler $ \(e :: IOException) -> pure $ "Network.Socket.connect" `L.isInfixOf` show e
 
     connectOnce :: SockAddr -> IO Handle
     connectOnce addr =
