@@ -41,22 +41,18 @@ runInTerminal1 flags = do
     withTestDAPServerClient True server $ do
 
       ctx <- ask
-      (rit_in, rit_out, rit_p) <- liftIO $ snd <$>
+      (rit_in, rit_out, rit_err, rit_p, invocation) <- liftIO $ snd <$>
         concurrently
           (runTestDAP (defaultHitBreakpoint test_dir 6) ctx)
           (flip runTestDAP ctx $
             handleRunInTerminal $ \args -> do
               (ritEnv, ritArgs) <- liftIO $ wait args
-              -- FIXME: can we close it in this process but let the child close its end whenever?
-              herr <- liftIO $ openFile (test_dir </> ("runInTerm"++ T.unpack (T.concat $ drop 1 ritArgs)) <.> "err") WriteMode
-              -- Received a runInTerminal request!!
-              (Just rit_in, Just rit_out, _, rit_p)
-                <- liftIO $ P.createProcess
-                  (P.shell $ T.unpack $
-                      "/usr/bin/env " <> addRITEnv ritEnv <> " " <> T.unwords ritArgs)
-                    {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.CreatePipe, P.std_err = P.UseHandle herr}
+              let invocation = T.unpack $ "/usr/bin/env " <> addRITEnv ritEnv <> " " <> T.unwords ritArgs
+              (Just rit_in, Just rit_out, Just rit_err, rit_p)
+                <- liftIO $ P.createProcess (P.shell invocation)
+                    {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.CreatePipe, P.std_err = P.CreatePipe}
               Just rit_pid <- liftIO $ P.getPid rit_p
-              pure ((rit_in, rit_out, rit_p), fromIntegral rit_pid))
+              pure ((rit_in, rit_out, rit_err, rit_p, invocation), fromIntegral rit_pid))
 
       -- Continue from "getLine" which will block waiting for input
       next
@@ -73,19 +69,35 @@ runInTerminal1 flags = do
       -- To next line, which should be the "putStrLn" after the "getLine"
       next
 
-      -- The contents of the rit_output should contain "hello" plus printing of what we wrote
-      out <- liftIO $ LBS.hGetContents rit_out
-      let out_str = LB8.unpack out
-      liftIO $ assertBool ("Expected output to contain 'hello', got: " ++ show out_str)
-                 ("hello" `isInfixOf` out_str)
-      liftIO $ assertBool ("Expected output to contain '" ++ secret_in ++ "' , got: " ++ show out_str)
-                 (secret_in `isInfixOf` out_str)
-
       -- Send disconnect
       disconnect
 
-      -- Kill the process
-      liftIO $ P.terminateProcess rit_p
+      liftIO $ do
+        -- The contents of the rit_output should contain "hello" plus printing of what we wrote
+        out <- LBS.hGetContents rit_out
+        let out_str = LB8.unpack out
+
+        -- Disconnect should be handled cleanly (#268)
+        err <- LBS.hGetContents rit_err
+        let err_str = LB8.unpack err
+
+        -- Write stdout and stderr to file.
+        writeFile (test_dir </> ("runInTerm" <.> "out")) (invocation ++ "\n" ++ out_str)
+        writeFile (test_dir </> ("runInTerm" <.> "err")) (invocation ++ "\n" ++ err_str)
+
+        assertBool
+          ("Expected output to contain 'hello', got: " ++ out_str)
+          ("hello" `isInfixOf` out_str)
+        assertBool
+          ("Expected output to contain '" ++ secret_in ++ "' , got: " ++ out_str)
+          (secret_in `isInfixOf` out_str)
+
+        assertBool
+          ("The stderr of the runInTerminal process shouldn't have any errors, but has: " ++ err_str ++ "\nStdout: " ++ out_str)
+          (not ("GHCi.Message.readPipe:" `isInfixOf` err_str) && not ("Uncaught exception" `isInfixOf` err_str))
+
+        -- -- Kill the process
+        P.terminateProcess rit_p
 
   where
     addRITEnv :: Maybe (H.HashMap T.Text T.Text) -> T.Text
