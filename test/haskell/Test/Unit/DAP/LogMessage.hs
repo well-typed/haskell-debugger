@@ -64,9 +64,7 @@ conditionTest = logMessageTestSetup [] bps $ do
 
 logMessageTestSetup :: [String] -> [(Int, Maybe String, Maybe String)] -> TestDAP a -> IO ()
 logMessageTestSetup flags bps check = do
-  withHermeticDir False "test/unit/T113" $ \test_dir -> do
-
-    server <- startTestDAPServer test_dir flags
+  withTestDAPServer "test/unit/T113" flags $ \test_dir server-> do
 
     withTestDAPServerClient False server $ do
       () <- setupBreakpoints test_dir bps
