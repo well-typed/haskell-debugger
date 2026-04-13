@@ -15,6 +15,7 @@ import Test.Utils
 import Test.Unit.DAP.LogMessage (setupBreakpoints)
 import qualified System.Process as P
 import Control.Exception (bracket)
+import System.Environment (lookupEnv)
 
 persistentTests :: TestTree
 persistentTests =
@@ -45,26 +46,23 @@ persistentTests =
     ]
 
 
-withServerTestSetup :: [String] -> (FilePath -> TestDAPServer -> IO a) -> IO a
-withServerTestSetup flags check = do
-  withHermeticDir False "test/unit/T113" $ \test_dir ->
-    bracket (startTestDAPServer test_dir flags)
-      (\server -> P.terminateProcess (testDAPServerProcess server))
-      (check test_dir)
-
 withServerTestSetup' :: [FilePath] -> [String] -> ([FilePath] -> TestDAPServer -> IO a) -> IO a
-withServerTestSetup' dirs0 flags check = bracket (startTestDAPServer "." flags)
-      (\server -> P.terminateProcess (testDAPServerProcess server))
-      (go [] dirs0)
+withServerTestSetup' [] _ _ = error "no test dirs"
+withServerTestSetup' dirs0@(d0:_) flags check = do
+  keep_temp_dirs <- maybe False read <$> lookupEnv "KEEP_TEMP_DIRS"
+  withHermeticDir keep_temp_dirs d0 $ \server_dir ->
+    bracket (startTestDAPServer server_dir flags)
+      (testDAPServerCleanup)
+      (go keep_temp_dirs [] dirs0)
 
   where
-    go acc [] server = check (reverse acc) server
-    go acc (d:ds) server = withHermeticDir False d $ \test_dir ->
-      go (test_dir:acc) ds server
+    go _keep acc [] server = check (reverse acc) server
+    go keep acc (d:ds) server = withHermeticDir keep d $ \test_dir ->
+      go keep (test_dir:acc) ds server
 
 withBreakPoints :: [(Int, Maybe String, Maybe String)] -> TestDAP a -> (FilePath, TestDAPServer) -> IO ()
 withBreakPoints bps check (test_dir,server) =
-     withTestDAPServerClient' False server $ do
+     withTestDAPServerClient False server $ do
       () <- setupBreakpoints test_dir bps
       _ <- check
       disconnect
@@ -75,7 +73,7 @@ withBreakPoints bps check (test_dir,server) =
 
 testSequential :: Foldable t => [String] -> ((FilePath, TestDAPServer) -> t (IO a)) -> IO ()
 testSequential flags k
-  = withServerTestSetup flags
+  = withTestDAPServer "test/unit/T113" flags
       (curry $ \ x -> sequence_ $ k x)
 
 testSequential' :: Foldable t =>
@@ -89,7 +87,7 @@ testSequential' (unzip -> (dirs,bps)) flags k
 
 testParallel :: Foldable f => [String] -> ((FilePath, TestDAPServer) -> f (IO b)) -> IO ()
 testParallel flags k
-  = withServerTestSetup flags
+  = withTestDAPServer "test/unit/T113" flags
       (curry $ \ x -> mapConcurrently_ id (k x))
 
 testParallel' :: Foldable f =>
