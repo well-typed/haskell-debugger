@@ -7,6 +7,8 @@
 module Test.DAP.Init where
 
 ----------------------------------------------------------------------------
+import Data.Maybe
+import Data.List (isInfixOf)
 import           Control.Concurrent
 import           Control.Exception hiding (handle)
 import qualified Control.Exception as E
@@ -15,6 +17,8 @@ import           Network.Socket             (Family(AF_INET), SockAddr(SockAddrI
 import           System.IO
 import           Control.Retry
 import           Data.IORef
+import System.Environment (lookupEnv)
+import System.FilePath ((</>), (<.>))
 import qualified System.Process as P
 ----------------------------------------------------------------------------
 import           Test.DAP.Messages
@@ -27,6 +31,7 @@ import Test.Tasty.HUnit (assertFailure)
 import DAP.Server (readPayload)
 import qualified Control.Monad.Catch
 import Test.DAP.Messages.Parser
+import Test.Utils (withHermeticDir)
 
 --------------------------------------------------------------------------------
 -- * Launch the DAP server process (what we're testing)
@@ -34,51 +39,55 @@ import Test.DAP.Messages.Parser
 
 data TestDAPServer = TestDAPServer
   { testDAPServerPort :: Int
-  , testDAPServerProcess :: P.ProcessHandle
+  , testDAPServerCleanup :: IO ()
   , testDAPServerFlushOutput :: IO ()
   }
 
 -- | Launch an @hdb server@ for tests on a random local port and capture stdout.
+--   Prefer withTestDAPServer because it will terminate the process at the end.
 startTestDAPServer :: FilePath -> [String] -> IO TestDAPServer
 startTestDAPServer testDir flags = do
   testPort <- getAvailablePort
-
-  (Just _hin, Just hout, Just herr, p)
+  let nameTemplate= testDir </> ("server_port_" ++ show testPort)
+  let openHandle ext = do
+        h <- openFile (nameTemplate <.> ext) WriteMode
+        hSetBuffering h LineBuffering
+        pure h
+  hout <- openHandle "out"
+  herr <- openHandle "err"
+  (Just hin, Nothing, Nothing, p)
     <- P.createProcess (P.proc "hdb" $ ["server"] ++ flags ++ ["--port", show testPort])
         { P.cwd = Just testDir
-        , P.std_out = P.CreatePipe
-        , P.std_err = P.CreatePipe
+        , P.std_out = P.UseHandle hout
+        , P.std_err = P.UseHandle herr
         , P.std_in = P.CreatePipe
         }
 
-  serverOutputRef <- newIORef []
-
-  -- Spawn threads to read output of server process. If we don't, the server
-  -- blocks trying to write to stdout/stderr?
-  let forwardServerHandle h = flip catch (\(e :: IOException) -> print ("server process forwarding" :: String, e)) $ do
-        hSetBuffering h LineBuffering
-        let loop = do
-              eof <- hIsEOF h
-              if eof
-                then return ()
-                else do
-                  l <- hGetLine h
-                  modifyIORef' serverOutputRef (l :)
-                  loop
-        loop
-
-  _ <- forkIO $ concurrently_ (forwardServerHandle hout) (forwardServerHandle herr)
+  pid <- fromMaybe 0 <$> P.getPid p
+  writeFile (nameTemplate <.> "pid") (show pid)
 
   let flushServerOutput = do
         putStrLn "\n--- SERVER OUTPUT ---"
-        readIORef serverOutputRef >>= mapM_ putStrLn . reverse
+        putStrLn $ "See: " ++ testDir
+        putStrLn $ "Might need: KEEP_TEMP_DIRS=True"
         putStrLn "---------------------\n"
 
   pure TestDAPServer
     { testDAPServerPort = testPort
-    , testDAPServerProcess = p
     , testDAPServerFlushOutput = flushServerOutput
+    , testDAPServerCleanup = do
+        P.cleanupProcess (Just hin, Just hout, Just herr, p)
+
     }
+
+-- | Prefer this to startTestDAPServer
+withTestDAPServer :: FilePath -> [String] -> (FilePath -> TestDAPServer -> IO a) -> IO a
+withTestDAPServer dir flags check = do
+  keep_tmp_dirs <- maybe False read <$> lookupEnv "KEEP_TEMP_DIRS"
+  withHermeticDir keep_tmp_dirs dir $ \test_dir ->
+    bracket (startTestDAPServer test_dir flags)
+      testDAPServerCleanup
+      (check test_dir)
 
 getAvailablePort :: IO Int
 getAvailablePort =
@@ -96,16 +105,10 @@ getAvailablePort =
 -- * Launch the client connecting to the server (the test driver)
 --------------------------------------------------------------------------------
 
--- | Like @withTestDAPServerClient'@ but also shutsdown server on exit.
-withTestDAPServerClient :: Bool -> TestDAPServer -> TestDAP a -> IO a
-withTestDAPServerClient clientSupportsRunInTerminal server continue = do
-  withTestDAPServerClient' clientSupportsRunInTerminal server continue
-    `E.finally` P.terminateProcess (testDAPServerProcess server)
-
 --- | Connect a test client to a running 'TestDAPServer', with retry semantics
 --- and server log flushing on failure.
-withTestDAPServerClient' :: Bool {-^ Announce support for runInTerminal? -} -> TestDAPServer -> TestDAP a -> IO a
-withTestDAPServerClient' clientSupportsRunInTerminal server continue = do
+withTestDAPServerClient :: Bool {-^ Announce support for runInTerminal? -} -> TestDAPServer -> TestDAP a -> IO a
+withTestDAPServerClient clientSupportsRunInTerminal server continue = do
   runClient `E.onException` testDAPServerFlushOutput server
   where
     runClient = do
@@ -133,7 +136,7 @@ withNewClient port continue = do
   where
     retry_handlers =
       skipAsyncExceptions ++
-      [const $ Control.Monad.Catch.Handler $ \ (_ :: SomeException) -> return True]
+      [const $ Control.Monad.Catch.Handler $ \ (e :: IOException) -> return $ "Network.Socket.connect" `isInfixOf` show e]
 
 --------------------------------------------------------------------------------
 -- ** Handle server responses, events, and reverse requests

@@ -33,20 +33,15 @@ runInTerminalTests =
         ]
     ]
 
-rit_keep_tmp_dirs :: Bool
-rit_keep_tmp_dirs = False
-
 runInTerminal1 :: [String] -> IO ()
 runInTerminal1 flags = do
-  withHermeticDir rit_keep_tmp_dirs "test/unit/T44" $ \test_dir -> do
-
-    server <- startTestDAPServer test_dir flags
+  withTestDAPServer "test/unit/T44" flags $ \ test_dir server -> do
 
     withTestDAPServerClient True server $ do
 
       ctx <- ask
       (rit_in, rit_out, rit_p) <- liftIO $ snd <$>
-        concurrently 
+        concurrently
           (runTestDAP (defaultHitBreakpoint test_dir 6) ctx)
           (flip runTestDAP ctx $
             handleRunInTerminal $ \args -> do

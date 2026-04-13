@@ -20,8 +20,7 @@ scopesTests =
     ]
 
 scopesExpensiveTest :: Assertion
-scopesExpensiveTest = withHermeticDir False "test/unit/T44" $ \test_dir -> do
-  server <- startTestDAPServer test_dir ["--disable-ipe-backtraces"]
+scopesExpensiveTest = withTestDAPServer "test/unit/T44" ["--disable-ipe-backtraces"] $ \ test_dir server ->
 
   withTestDAPServerClient False server $ do
 
