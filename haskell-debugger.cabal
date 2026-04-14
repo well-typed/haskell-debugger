@@ -153,6 +153,7 @@ executable hdb
                       Development.Debug.Adapter.Interface,
                       Development.Debug.Adapter.Output,
                       Development.Debug.Adapter.Exit,
+                      Development.Debug.Adapter.Exit.Helpers,
                       Development.Debug.Adapter.Handles,
                       Development.Debug.Adapter,
 

@@ -40,7 +40,7 @@ import System.FilePath
 import Data.Functor.Contravariant
 
 import Development.Debug.Adapter
-import Development.Debug.Adapter.Exit
+import Development.Debug.Adapter.Exit.Helpers
 import Colog.Core as Logger
 import qualified Development.Debug.Adapter.Output as Output
 
