@@ -274,12 +274,12 @@ hitCountBreakParser =
    <> metavar "N:INT"
    <> help "Ignore first N:INT times this breakpoint is hit" ))
 
+data OrExit a = Do a
+              | Exit
+  deriving Functor
+
 runParser :: RunOptions -> Parser Command
 runParser opts =
-  -- --entry <name> with some args
-  -- (DebugExecution <$> parseEntry <*> parseSomeArgs)
-  -- --entry <name> without any args
-  -- <|> (DebugExecution <$> parseEntry <*> pure [])
   -- just some args
   (DebugExecution (mkEntry (runEntryPoint opts)) (runEntryFile opts) <$> parseSomeArgs)
   -- just "run"
@@ -301,55 +301,55 @@ runParser opts =
       | otherwise = FunctionEntry (runEntryPoint opts)
 
 -- | Combined parser for 'Command'
-cmdParser :: RunOptions -> RunContext -> Parser Command
+cmdParser :: RunOptions -> RunContext -> Parser (OrExit Command)
 cmdParser opts ctx = hsubparser
    (
     Options.Applicative.command "delete"
-    ( info (DelBreakpoint <$> breakpointParser)
+    ( info (Do . DelBreakpoint <$> breakpointParser)
       ( progDesc "Delete a breakpoint" ) )
   <>
     Options.Applicative.command "run"
-    ( info (runParser opts)
+    ( info (Do <$> runParser opts)
       ( progDesc "Run the debuggee" ) )
   <>
     Options.Applicative.command "next"
-    ( info (pure DoStepLocal)
+    ( info (pure $ Do DoStepLocal)
       ( progDesc "Step over to the next line" ) )
   <>
     Options.Applicative.command "step"
-    ( info (pure DoSingleStep)
+    ( info (pure $ Do DoSingleStep)
       ( progDesc "Step-in to the next immediate location" ) )
   <>
     Options.Applicative.command "finish"
-    ( info (pure DoStepOut)
+    ( info (pure $ Do DoStepOut)
       ( progDesc "Step-out of the current function into the caller/its continuation" ) )
   <>
     Options.Applicative.command "continue"
-    ( info (pure DoContinue)
+    ( info (pure $ Do DoContinue)
       ( progDesc "Continue executing from the current breakpoint" ) )
   <>
     Options.Applicative.command "print"
-    ( info (DoEval . unwords <$> many (argument str ( metavar "EXPRESSION"
+    ( info (Do . DoEval . unwords <$> many (argument str ( metavar "EXPRESSION"
      <> help "Expression to evaluate in the current context" )))
       ( progDesc "Evaluate an expression in the current context" ) )
   <>
     Options.Applicative.command "exit"
-    ( info (pure TerminateProcess)
+    ( info (pure Exit)
       ( progDesc "Terminate and exit the debugger session" ) )
   <>
     Options.Applicative.command "threads"
-    ( info (pure GetThreads)
+    ( info (pure $ Do GetThreads)
       ( progDesc "Print all user threads" ) )
   <>
     Options.Applicative.command "backtrace"
-    ( info (stackTraceParser ctx <**> helper)
+    ( info (Do <$> stackTraceParser ctx <**> helper)
       ( progDesc "Print stack trace" ) )
   <>
     Options.Applicative.command "variables"
-    ( info (variablesParser ctx <**> helper)
+    ( info (Do <$> variablesParser ctx <**> helper)
       ( progDesc "Print local variables" ) )
   <> Options.Applicative.command "break"
-    ( info (SetBreakpoint <$> breakpointParser <*> hitCountBreakParser <*> conditionalBreakParser <*> logMessageParser)
+    ( info (Do <$> (SetBreakpoint <$> breakpointParser <*> hitCountBreakParser <*> conditionalBreakParser <*> logMessageParser))
       ( progDesc "Set a breakpoint" ) )
   )
 
@@ -374,7 +374,7 @@ threadIdParser ctx helpMsg =
  <|> Maybe.maybe (empty <**> abortOption (ErrorMsg "Not stopped at a Breakpoint") mempty) pure (runCurrentThread ctx)
 
 -- | Main parser info
-cmdParserInfo :: RunOptions -> RunContext -> ParserInfo Command
+cmdParserInfo :: RunOptions -> RunContext -> ParserInfo (OrExit Command)
 cmdParserInfo opts ctx = info (cmdParser opts ctx)
   ( fullDesc )
 
@@ -389,8 +389,10 @@ parseCmd input = do
      (cmdParserInfo opts ctx)
      (words input)
    in case res of
-    Success x ->
+    Success (Do x) ->
       return (Just x)
+    Success Exit ->
+      return Nothing -- exit!
     Failure bad ->
       let (msg, _exit) = renderFailure bad "(hdb)"
        in outputStrLn msg >> pure Nothing
