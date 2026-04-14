@@ -142,7 +142,7 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
 
   liftIO (runExceptT (hieBiosSetup hieBiosLogger projectRoot entryFile)) >>= \case
     Left e              -> throwError $ InitFailed e
-    Right (Left e)      -> lift       $ exitWithMsg e
+    Right (Left e)      -> lift       $ terminateWithError e
     Right (Right flags) -> do
 
       let
