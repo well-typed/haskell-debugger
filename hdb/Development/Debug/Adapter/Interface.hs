@@ -9,7 +9,6 @@ import DAP
 
 import GHC.Debugger.Interface.Messages as D
 import Development.Debug.Adapter
-import Development.Debug.Adapter.Exit.Helpers
 import qualified Development.Debug.Adapter.Output as Output
 
 -- | Synchronously send a command to the debugger and await a response
@@ -28,8 +27,10 @@ sendInterleaved cmd action = do
   liftIO (takeMVar syncResponses) >>= handleAbort
 
 handleAbort :: Response -> DebugAdaptor Response
-handleAbort r@(Aborted e) = do
+handleAbort (Aborted e) = do
   Output.console (T.pack e)
-  terminateSessionCleanly (Just e)
-  return r
+  sendTerminatedEvent (TerminatedEvent False)
+  destroyDebugSession -- kill this debu session's threads
+  -- reply still in thia connection with "ErrorResponse" to pending request
+  sendError (ErrorMessage (T.pack e)) Nothing
 handleAbort r = return r

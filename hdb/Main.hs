@@ -234,14 +234,14 @@ getConfig port = do
       , supportsExceptionOptions              = True
       , supportsValueFormattingOptions        = True
       , supportsExceptionInfoRequest          = True
-      , supportTerminateDebuggee              = True
+      , supportTerminateDebuggee              = False -- for now, when debugger is disconnected, we always kill the debuggee
       , supportSuspendDebuggee                = False
       , supportsDelayedStackTraceLoading      = False
       , supportsLoadedSourcesRequest          = False
       , supportsLogPoints                     = True
       , supportsTerminateThreadsRequest       = False
       , supportsSetExpression                 = False
-      , supportsTerminateRequest              = False
+      , supportsTerminateRequest              = True
       , supportsDataBreakpoints               = False
       , supportsReadMemoryRequest             = False
       , supportsWriteMemoryRequest            = False
@@ -314,13 +314,13 @@ talk l support_rit_var prefer_internal_interpreter = \ case
 
         liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "Debugger launched successfully.") Info)
 
-      Left (InitFailed err) -> do
-        sendErrorResponse (ErrorMessage (T.pack err)) Nothing
-        terminateSessionCleanly Nothing
+      Left (InitFailed err) ->
+        terminateWithError err
 --------------------------------------------------------------------------------
   CommandAttach -> do
-    sendErrorResponse (ErrorMessage (T.pack "hdb does not support \"attach\" mode yet")) Nothing
-    terminateSessionCleanly Nothing
+    sendTerminatedEvent (TerminatedEvent False)
+    destroyDebugSession
+    sendError (ErrorMessage (T.pack "hdb does not support \"attach\" mode yet")) Nothing
 --------------------------------------------------------------------------------
   CommandBreakpointLocations       -> commandBreakpointLocations
   CommandSetBreakpoints            -> commandSetBreakpoints
@@ -369,8 +369,7 @@ talk l support_rit_var prefer_internal_interpreter = \ case
   CommandPause -> pure () -- TODO
   (CustomCommand "mycustomcommand") -> undefined
   other -> do
-    sendErrorResponse (ErrorMessage (T.pack ("Unsupported command: " <> show other))) Nothing
-    terminateSessionCleanly Nothing
+    terminateWithError ("Unsupported command: " <> show other)
 
 -- | Receive reverse request responses (such as runInTerminal response)
 ack :: LogAction IO MainLog

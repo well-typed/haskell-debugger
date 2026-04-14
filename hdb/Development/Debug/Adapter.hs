@@ -48,9 +48,7 @@ data StackFrameIx = StackFrameIx D.RemoteThreadId Int{-stack frame ix-}
 data VariablesIx = VariablesIx StackFrameIx D.VariableReference
 
 instance MonadFail DebugAdaptor where
-  fail a = error a
-  -- TODO: PROPER ERROR HANDLING with termination, possibly delete this instance
-  -- use: exitWithMsg.
+  fail a = sendError (ErrorMessage (T.pack a)) Nothing
 
 --------------------------------------------------------------------------------
 -- * Run in terminal
