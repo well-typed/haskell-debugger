@@ -144,6 +144,7 @@ printResponse = \case
   GotVariables vis -> outputVariables vis
   GotExceptionInfo exc_info -> outputStrLn $ renderExceptionInfo exc_info
   Aborted err_str -> outputStrLn ("Aborted: " ++ err_str)
+  DidTerminateDebuggee -> pure () -- finalized!
   Initialised -> pure ()
   where
     outputEvalResult er = do

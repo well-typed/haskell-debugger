@@ -5,7 +5,6 @@ import Data.Function
 import System.IO
 import Control.Monad
 import Control.Monad.IO.Class
-import Control.Monad.Error.Class (MonadError(..))
 import Control.Exception
 import Control.Exception.Context
 import qualified Data.Text as T
@@ -32,32 +31,22 @@ exitCleanupWithMsg
   -- ^ Error message, logged with notification
   -> DebugAdaptor ()
 exitCleanupWithMsg final_handle msg = do
-  destroyDebugSession -- kill all session threads (including the output thread)
   has_data <- hReady final_handle & liftIO
   when has_data $ do
       -- get all pending output from GHC
       c <- T.hGetContents final_handle & liftIO
       Output.neutral c
-  exitWithMsg msg
+  terminateWithError msg
 
--- | Logs the error to the debug console and sends a terminate event
-exitWithMsg :: String -> DebugAdaptor ()
-exitWithMsg msg = do
+-- | Abruptly terminate a session in the middle of a Request/Response cycle by
+-- sending a Terminated event (meaning the debug session is over), destroying
+-- the debug session threads, and replying to the response with 'ErrorResponse'
+terminateWithError :: String -> DebugAdaptor ()
+terminateWithError msg = do
   Output.important (T.pack msg)
-  terminateSessionCleanly (Just msg)
-
-terminateSessionCleanly :: Maybe String -> DebugAdaptor ()
-terminateSessionCleanly mm = do
-  -- throws error if no session found.
-  destroyDebugSession `catchError` \ e -> liftIO $ hPutStrLn stdout ("terminateSessionCleanly: ignoring missing session: " ++ show e)
+  destroyDebugSession
   sendTerminatedEvent (TerminatedEvent False)
-
-  liftIO $ do
-    case mm of
-      Nothing -> return ()
-      Just em -> do
-        hPutStrLn stderr em
-        return ()
+  sendError (ErrorMessage (T.pack msg)) Nothing
 
 --- Utils ----------------------------------------------------------------------
 

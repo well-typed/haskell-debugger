@@ -89,6 +89,8 @@ data Command
   -- Haskell function arguments.
   | DebugExecution { entryPoint :: EntryPoint, entryFile :: FilePath, runArgs :: [String] }
 
+  -- | Terminate the debuggee gracefully (by sending 'Shutdown')
+  | TerminateDebuggee
 
 -- | An entry point for program execution.
 data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnName :: String }
@@ -237,6 +239,7 @@ data Response
   | DidContinue EvalResult
   | DidStep EvalResult
   | DidExec EvalResult
+  | DidTerminateDebuggee
   | GotThreads [DebuggeeThread]
   | GotStacktrace [DbgStackFrame]
   | GotScopes [ScopeInfo]
