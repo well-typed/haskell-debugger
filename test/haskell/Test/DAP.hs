@@ -149,15 +149,16 @@ defaultHitBreakpoint testDir line = do
     , void $ sync $ defaultLaunch testDir
     ]
 
--- waitEventFiltering $ eventMatch "terminated"
 disconnect :: TestDAP ()
 disconnect = do
-  _ <- sync $ disconnectRequest $ Just $ object
+  -- wait for disconnect response
+  r <- sync $ disconnectRequest $ Just $ object
     [ "restart" .= False
     , "terminateDebuggee" .= True
     , "suspendDebuggee" .= False
     ]
-  _ <- waitFiltering Event "terminated"
+  liftIO $ assertBool "disconnect response should indicate success" $
+    fromMaybe False $ parseMaybe (withObject "disconnect response" $ \o -> o .: "success") r
   return ()
 
 --------------------------------------------------------------------------------
