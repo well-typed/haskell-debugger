@@ -45,4 +45,3 @@ commandDisconnect = do
   -- ignore error if session has already been destroyed (e.g. client sends disconnect after terminate)
   destroyDebugSession `catchError` \ e -> liftIO $ putStrLn ("terminateSessionCleanly: ignoring missing session: " ++ show e)
   sendDisconnectResponse
-  sendTerminatedEvent (TerminatedEvent False) -- we're done debugging now!
