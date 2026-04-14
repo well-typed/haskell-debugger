@@ -6,6 +6,7 @@
 module Test.Unit.DAP.RunInTerminal (runInTerminalTests) where
 
 import Data.List (isInfixOf)
+import System.FilePath
 import System.IO
 import Test.DAP
 import Test.Tasty
@@ -46,12 +47,14 @@ runInTerminal1 flags = do
           (flip runTestDAP ctx $
             handleRunInTerminal $ \args -> do
               (ritEnv, ritArgs) <- liftIO $ wait args
+              -- FIXME: can we close it in this process but let the child close its end whenever?
+              herr <- liftIO $ openFile (test_dir </> ("runInTerm"++ T.unpack (T.concat $ drop 1 ritArgs)) <.> "err") WriteMode
               -- Received a runInTerminal request!!
               (Just rit_in, Just rit_out, _, rit_p)
                 <- liftIO $ P.createProcess
                   (P.shell $ T.unpack $
                       "/usr/bin/env " <> addRITEnv ritEnv <> " " <> T.unwords ritArgs)
-                    {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.CreatePipe}
+                    {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.CreatePipe, P.std_err = P.UseHandle herr}
               Just rit_pid <- liftIO $ P.getPid rit_p
               pure ((rit_in, rit_out, rit_p), fromIntegral rit_pid))
 
