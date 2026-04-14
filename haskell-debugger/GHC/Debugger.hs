@@ -3,9 +3,6 @@
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
 module GHC.Debugger where
 
-import System.Exit
-import Control.Monad.IO.Class
-
 import GHC.Debugger.Breakpoint
 import GHC.Debugger.Run
 import GHC.Debugger.Stopped
@@ -37,6 +34,3 @@ execute = \case
   DoStepOut -> DidStep <$> doStepOut
   DoStepLocal -> DidStep <$> doLocalStep
   DebugExecution { entryPoint, entryFile, runArgs } -> DidExec <$> debugExecution entryFile entryPoint runArgs
-  TerminateProcess -> liftIO $ do
-    -- Terminate!
-    exitWith ExitSuccess

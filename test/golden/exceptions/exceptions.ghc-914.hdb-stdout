@@ -10,4 +10,4 @@ Call stack:
     error, called at <TEMPORARY-DIRECTORY>/prog/Main.hs:6:3 in main:Main
 
 Exception location: <TEMPORARY-DIRECTORY>/prog/Main.hs:6:3
-(hdb) 
+(hdb) (hdb) Exiting...

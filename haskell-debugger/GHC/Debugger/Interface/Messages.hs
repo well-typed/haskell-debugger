@@ -89,8 +89,6 @@ data Command
   -- Haskell function arguments.
   | DebugExecution { entryPoint :: EntryPoint, entryFile :: FilePath, runArgs :: [String] }
 
-  -- | Terminate haskell-debugger and exit
-  | TerminateProcess
 
 -- | An entry point for program execution.
 data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnName :: String }
