@@ -9,7 +9,7 @@ import DAP
 
 import GHC.Debugger.Interface.Messages as D
 import Development.Debug.Adapter
-import Development.Debug.Adapter.Exit
+import Development.Debug.Adapter.Exit.Helpers
 import qualified Development.Debug.Adapter.Output as Output
 
 -- | Synchronously send a command to the debugger and await a response

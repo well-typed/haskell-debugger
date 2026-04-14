@@ -24,6 +24,7 @@ import Development.Debug.Adapter.Stopped
 import Development.Debug.Adapter.Evaluation
 import Development.Debug.Adapter.ExceptionInfo
 import Development.Debug.Adapter.Exit
+import Development.Debug.Adapter.Exit.Helpers
 import Development.Debug.Adapter.Handles
 import Colog.Core
 
