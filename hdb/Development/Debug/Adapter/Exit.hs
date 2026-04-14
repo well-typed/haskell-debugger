@@ -25,32 +25,24 @@ module Development.Debug.Adapter.Exit where
 import Control.Monad.Except
 import Control.Monad.IO.Class
 import DAP
-import GHC.Debugger.Interface.Messages
 import Development.Debug.Adapter
-import Development.Debug.Adapter.Interface
-
--- FIXME: difference between terminate and disconnect??
 
 -- | Command terminate (1a)
 --
 -- Terminate the *debuggee* gracefully
 commandTerminate :: DebugAdaptor ()
 commandTerminate = do
-  DidTerminateDebuggee <- sendSync TerminateDebuggee
+  destroyDebugSession -- kills debugger GHC session (which handles stopping the debuggee ext-interp too)
   sendTerminateResponse
   sendTerminatedEvent (TerminatedEvent False) -- we're done debugging now!
-  destroyDebugSession
 
 -- | Command disconnect (1b)
 --
 -- Terminate the debuggee (and any child processes) forcefully.
 commandDisconnect :: DebugAdaptor ()
 commandDisconnect = do
-  -- TerminateDebuggee is idempotent.
-  -- Even if the client has already sent a 'terminate' request to shutdown, we
-  -- always re-do it.
-  DidTerminateDebuggee <- sendSync TerminateDebuggee
+  -- kills debugger GHC session (which handles stopping the debuggee ext-interp too)
+  -- ignore error if session has already been destroyed (e.g. client sends disconnect after terminate)
+  destroyDebugSession `catchError` \ e -> liftIO $ putStrLn ("terminateSessionCleanly: ignoring missing session: " ++ show e)
   sendDisconnectResponse
   sendTerminatedEvent (TerminatedEvent False) -- we're done debugging now!
-  -- Then, kill the session
-  destroyDebugSession `catchError` \ e -> liftIO $ putStrLn ("terminateSessionCleanly: ignoring missing session: " ++ show e)

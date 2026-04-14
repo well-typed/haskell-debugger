@@ -3,11 +3,6 @@
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
 module GHC.Debugger where
 
-import Control.Monad.IO.Class
-
-import qualified GHC (getSession)
-import GHC.Driver.Env (hscInterp)
-import GHC.Runtime.Interpreter (stopInterp)
 import GHC.Debugger.Breakpoint
 import GHC.Debugger.Run
 import GHC.Debugger.Stopped
@@ -39,11 +34,3 @@ execute = \case
   DoStepOut -> DidStep <$> doStepOut
   DoStepLocal -> DidStep <$> doLocalStep
   DebugExecution { entryPoint, entryFile, runArgs } -> DidExec <$> debugExecution entryFile entryPoint runArgs
-  TerminateDebuggee -> DidTerminateDebuggee <$ terminateDebuggee
-
--- | Stop the debuggee gracefully
--- (idempotent, stopInterp for InterpPending will do nothing)
-terminateDebuggee :: Debugger ()
-terminateDebuggee = do
-  interp <- hscInterp <$> GHC.getSession
-  liftIO $ stopInterp interp

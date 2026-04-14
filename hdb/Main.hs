@@ -360,8 +360,7 @@ talk l support_rit_var prefer_internal_interpreter = \ case
 ----------------------------------------------------------------------------
   CommandEvaluate   -> commandEvaluate
 ----------------------------------------------------------------------------
-  CommandTerminate  -> do
-    commandTerminate
+  CommandTerminate  -> commandTerminate
   CommandDisconnect -> commandDisconnect
 ----------------------------------------------------------------------------
   CommandModules -> sendModulesResponse (ModulesResponse [] Nothing)
