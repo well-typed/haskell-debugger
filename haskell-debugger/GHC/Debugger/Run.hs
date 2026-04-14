@@ -284,7 +284,9 @@ handleExecResult = \case
                 return EvalStopped{ breakId = Just bid
                                   , breakThread = rt_id }
           performAction (BreakpointLogAndResume logExpr) = do
-            let evalFailedMsg e = text $ "Evaluation of log message expression failed with " ++ e ++ "\nIgnoring..."
+            let evalFailedMsg e = text $ unlines ["Evaluation of log message expression failed with " ++ e
+                  , "Expr: " ++ logExpr
+                  , "Ignoring..."]
             doEval' logExpr evalFailedMsg $ \ _ _ -> resume
 
       bm <- liftIO . readIORef =<< asks activeBreakpoints
