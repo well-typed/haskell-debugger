@@ -12,7 +12,7 @@ import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Except
-import Control.Exception (bracket, uninterruptibleMask)
+import Control.Exception (bracket, uninterruptibleMask, bracketOnError)
 import Control.Exception.Backtrace
 
 import DAP
@@ -34,7 +34,7 @@ import System.IO
   , hClose
   , hPutStrLn
   , hSetBuffering
-  , BufferMode(LineBuffering)
+  , BufferMode(..)
   , Handle
   , openFile
   , IOMode(ReadMode, ReadWriteMode)
@@ -45,26 +45,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import GHC.IO.Handle.FD
 import Data.Functor.Contravariant
-import Network.Socket
-  ( AddrInfo(addrAddress)
-  , AddrInfoFlag(AI_NUMERICHOST)
-  , Family(AF_INET)
-  , PortNumber
-  , SockAddr
-  , SocketType(Stream)
-  , accept
-  , addrFlags
-  , addrSocketType
-  , bind
-  , close
-  , defaultHints
-  , defaultProtocol
-  , getAddrInfo
-  , listen
-  , maxListenQueue
-  , socket
-  , socketToHandle
-  )
+import Network.Socket hiding (Debug)
 
 import qualified GHCi.Server as GHCi
 import qualified GHCi.Signals as GHCi
@@ -78,6 +59,7 @@ import Development.Debug.Options.Parser (parseHdbOptions)
 import Development.Debug.Adapter
 import Development.Debug.Adapter.Proxy
 import Development.Debug.Interactive
+import GHC.Stack.Annotation (annotateCallStackIO)
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -153,27 +135,25 @@ main = do
         -- we will lose sync in the protocol, hence uninterruptibleMask.
 
     withExternalInterpreterPort :: PortNumber -> (Handle -> IO a) -> IO a
-    withExternalInterpreterPort port k =
-      bracket openListener close $ \listener ->
-        bracket (accept listener) (close . fst) $ \(sock, _) ->
-          bracket (socketToHandle sock ReadWriteMode) hClose k
-      where
-        openListener = do
-          listener <- socket AF_INET Stream defaultProtocol
-          addr <- socketAddressFromPort port
-          bind listener addr
-          listen listener maxListenQueue
-          pure listener
+    withExternalInterpreterPort port k = do
+      bracket (mkHandleFromPortSock "127.0.0.1" port) hClose $ \ h -> do
+        annotateCallStackIO $ k h
 
-    socketAddressFromPort :: PortNumber -> IO SockAddr
-    socketAddressFromPort port = do
-      addrs <- getAddrInfo (Just defaultHints
-        { addrFlags = [AI_NUMERICHOST]
-        , addrSocketType = Stream
-        }) (Just "127.0.0.1") (Just (show port))
-      case addrs of
-        addr : _ -> pure (addrAddress addr)
-        [] -> fail ("Could not resolve address for external interpreter port " ++ show port)
+    mkHandleFromPortSock :: HostName -> PortNumber -> IO Handle
+    mkHandleFromPortSock host port = do
+      let hints = defaultHints { addrSocketType = Stream }
+      addr:_ <- getAddrInfo (Just hints) (Just host) (Just (show port))
+
+      Control.Exception.bracketOnError
+        (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr))
+        close
+        (\sock -> do
+            -- Don't delay, avoids batching
+            setSocketOption sock NoDelay 1
+            connect sock (addrAddress addr)
+            h <- socketToHandle sock ReadWriteMode
+            hSetBuffering h NoBuffering
+            return h)
 
     -- When using the internal interpreter in DAP mode, we can't write to
     -- stdout directly because there will also be a thread forwarding the
