@@ -19,7 +19,7 @@ import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Exception
 import Control.Monad
-import Control.Monad.Catch
+import Control.Monad.Catch as MC
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Control.Retry
@@ -222,7 +222,9 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
   let dbgLog = liftLogIO l :: LogAction Debugger DebuggerLog
   thisProg <- getExecutablePath
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
-  GHC.runGhc (Just libdir) $ do
+  GHC.runGhc (Just libdir) $
+    flip MC.finally cleanupInterp $ -- See Note [Shutting down the external interpreter]
+      do
 #ifdef MIN_VERSION_unix
     -- Workaround #4162
     -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
@@ -472,6 +474,53 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
         -- Ext interp is running in user terminal, no need to forward output to logger
         mainGhcThread
 
+{-
+Note [Shutting down the external interpreter]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The Ghc monad execution (under `runGhc`) sometimes terminates abruptly:
+- When the DebugAdapter exits (e.g. disconnect, terminate, error, ...), it
+  calls `destroyDebugSession`, which will *kill* the thread running the
+  debugger/Ghc session.
+- When there is some exception thrown in the Ghc monad itself
+
+GHC wraps the `Ghc` action run with `withCleanupSession`, which is responsible
+for e.g. removing temporary files and cleanly terminating the external
+interpreter process, if one is being used.
+
+GHC first checks with `getProcessExitCode` the status of the external
+interpreter, does nothing if there is some exit status, and kills the external
+process otherwise.
+
+However, this check is incorrect(!) when the external interpreter process is
+not a child of this process (which will happen in the runInTerminal external
+interpreter case). `getProcessExitCode` should error with `ECHILD` in this case
+(see `man 2 wait`), even if it doesn't yet (see process#359).
+
+Therefore, the debugger must step in and make sure the external interpreter is
+exited cleanly, WITHOUT resorting to `getProcessExitCode`. To this effect, we
+add our own `MC.finally cleanupInterp` call which sends the `Shutdown` message
+to the external interpreter before propagating the exception further (to GHC's
+`withCleanupSession`, which will now do Nothing because we set `InterpPending`,
+and beyond).
+-}
+
+-- | See Note [Shutting down the external interpreter]
+cleanupInterp :: Ghc ()
+cleanupInterp = do
+  interp <- hscInterp <$> getSession
+  case interpInstance interp of
+    InternalInterp -> pure ()
+    ExternalInterp ext -> liftIO $ withExtInterpStatus ext $ \mstate -> do
+      MC.mask $ \_restore -> modifyMVar_ mstate $ \state -> do
+        case state of
+          InterpPending    -> pure state -- already stopped
+          InterpRunning i  -> do
+            -- Can't use  `getProcessExitCode` because the interp process is
+            -- not necessarily a child of this process (runInTerminal case).
+            -- Just unconditionally try to send the message.
+            sendMessage i Shutdown
+            pure InterpPending
+
 -- | WARNING: callback is not to be used from other threads.
 withUnliftGhc :: ((Ghc b -> IO b) -> IO a) -> Ghc a
 withUnliftGhc k = reifyGhc $ \ s -> k (flip reflectGhc s)
@@ -554,8 +603,8 @@ mkHandleFromPortSock port = do
         capDelay 250_000 $
           fibonacciBackoff 10_000
 
-    shouldRetry :: RetryStatus -> Control.Monad.Catch.Handler IO Bool
-    shouldRetry _ = Control.Monad.Catch.Handler $ \(e :: IOException) -> pure $ "Network.Socket.connect" `L.isInfixOf` show e
+    shouldRetry :: RetryStatus -> MC.Handler IO Bool
+    shouldRetry _ = MC.Handler $ \(e :: IOException) -> pure $ "Network.Socket.connect" `L.isInfixOf` show e
 
     connectOnce :: SockAddr -> IO Handle
     connectOnce addr =
