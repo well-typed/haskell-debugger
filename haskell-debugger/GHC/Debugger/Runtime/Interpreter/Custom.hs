@@ -168,7 +168,11 @@ lookupBCOBreakpoint Heap.BCOClosure{..}
     mod_name <- literalString info_mod_name_ix
     mod_id   <- literalString info_mod_id_ix
     pure $ Just $ evalBreakpointToId EvalBreakpoint
+#if MIN_VERSION_ghc(9,15,0)
+      { eb_info_mod      = utf8EncodeShortByteString mod_name
+#else
       { eb_info_mod      = mod_name
+#endif
       , eb_info_mod_unit = utf8EncodeShortByteString mod_id
       , eb_info_index    = fromIntegral $ brk_info_ix_hi .<<. 16 + brk_info_ix_lo
       }
