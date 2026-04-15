@@ -15,6 +15,9 @@ module GHC.Debugger.Session.Interactive where
 import Control.Monad.IO.Class
 import Data.Maybe
 
+#if MIN_VERSION_ghc(9,15,0)
+import GHC.Linker.Types (modifyHomePackageBytecodeState)
+#endif
 import GHC
 import GHC.Driver.Config
 import GHC.Driver.DynFlags as GHC
@@ -85,7 +88,11 @@ handleCompleted extendIC final_ids status = do
       let
         final_ic = extendIC (hsc_IC hsc_env) final_ids
         final_names = map getName final_ids
+#if MIN_VERSION_ghc(9,15,0)
+      liftIO $ Loader.extendLoadedEnv interp modifyHomePackageBytecodeState (zip final_names hvals)
+#else
       liftIO $ Loader.extendLoadedEnv interp (zip final_names hvals)
+#endif
       -- hsc_env' <- liftIO $ rttiEnvironment hsc_env{hsc_IC=final_ic}
       setSession $ hsc_env{hsc_IC=final_ic}
       return (Just $ ExecComplete (Right final_names) allocs)
