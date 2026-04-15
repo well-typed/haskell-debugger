@@ -156,7 +156,12 @@ handleServerTestDAP = do
           case mtxt of
             Just txt -> modifyTVar' clientFullOutput (txt:)
             Nothing  -> pure ()
-      Just "response" -> atomically $ writeTChan clientResponses payload
+      Just "response" ->
+        -- Fail immediately if the server reports failure, even if the test
+        -- is blocked waiting for some other specific message.
+        case parseMaybe parseSuccess payload of
+          Just errMsg -> assertFailure errMsg
+          Nothing     -> atomically $ writeTChan clientResponses payload
       Just "request"  -> atomically $ do writeTChan clientReverseRequests payload
       Just ty      -> assertFailure $ "handleServerTestDAP: Unsupported message type: " ++ show ty
       Nothing      -> assertFailure $ "Received message without type: " ++ show payload
@@ -171,3 +176,12 @@ handleServerTestDAP = do
     parseType = withObject "message" $ \o -> do
       typ <- o .: "type"
       pure ((typ :: String))
+
+    -- Returns an error message when success is False, Nothing when success is True.
+    parseSuccess = withObject "response" $ \o -> do
+      success <- o .: "success"
+      if success
+        then fail "success"
+        else do
+          msg <- o .:? "message" .!= "DAP response had success: false (no message)"
+          pure (msg :: String)
