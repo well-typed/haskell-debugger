@@ -57,6 +57,7 @@ import Development.Debug.Session.Setup
 import Development.Debug.Adapter.Proxy
 import System.Environment
 import Network.Socket (socketPort)
+import qualified Network.Socket as Socket
 
 --------------------------------------------------------------------------------
 -- * Client
@@ -158,6 +159,9 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
           = do
             sock <- openSocketAvailablePort
             port <- socketPort sock
+            -- Close socket again to make sure we can open the server socket
+            -- later again.
+            Socket.close sock
             pure RunExternalInterpreterInTerminal
               { extInterpPort  = port
               }

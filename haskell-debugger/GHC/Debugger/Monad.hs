@@ -22,7 +22,6 @@ import Control.Monad
 import Control.Monad.Catch as MC
 import Control.Monad.IO.Class
 import Control.Monad.Reader
-import Control.Retry
 import Data.Function
 import Data.Functor.Contravariant
 import Data.IORef
@@ -86,9 +85,9 @@ import Colog.Core as Logger
 
 import {-# SOURCE #-} GHC.Debugger.Runtime.Instances.Discover (RuntimeInstancesCache, emptyRuntimeInstancesCache)
 import GHCi.Message (mkPipeFromHandles)
-import System.IO (Handle, hGetLine)
-import GHC.IO.IOMode (IOMode(..))
+import System.IO (hGetLine, IOMode(..))
 import qualified GHC.Linker.Loader as Loader
+import GHC.Stack.Annotation
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Data.FastString.Env (emptyFsEnv)
@@ -217,7 +216,7 @@ runDebugger :: forall a
             -> RunDebuggerSettings -- ^ Other debugger run settings
             -> Debugger a -- ^ 'Debugger' action to run on the session constructed from this invocation
             -> IO a
-runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp conf (Debugger action) = do
+runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp conf (Debugger action) = annotateCallStackIO $ do
   let ghcLog = liftLogIO l :: LogAction Ghc DebuggerLog
   let dbgLog = liftLogIO l :: LogAction Debugger DebuggerLog
   thisProg <- getExecutablePath
@@ -322,7 +321,9 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
       -- Right: we supply our custom external interpreter process, which is
       -- already running and connected to the user's terminal.
       Right port -> do
-        extInterp <- liftIO $ extInterpFromTerminalProcess port
+        extInterp <- liftIO
+          $ annotateStackStringIO "Waiting for an external interpreter run-in-terminal process"
+          $ extInterpFromTerminalProcess port
         modifySession $ \h -> h
           { hsc_interp = Just extInterp -- set it directly!
           }
@@ -525,6 +526,13 @@ cleanupInterp = do
 withUnliftGhc :: ((Ghc b -> IO b) -> IO a) -> Ghc a
 withUnliftGhc k = reifyGhc $ \ s -> k (flip reflectGhc s)
 
+annotateDebuggerStackString :: String -> Debugger a -> Debugger a
+annotateDebuggerStackString s (Debugger m) = Debugger $ do
+  r <- ReaderT $ \val -> do
+    withUnliftGhc $ \ unlift ->
+      annotateStackStringIO s (unlift $ runReaderT m val)
+  pure r
+
 -- | Variant of GHC's parseDynamicFlags which interprets paths relative to first arg.
 parseDynamicFlagsWithRootDir
     :: MonadIO m
@@ -548,72 +556,77 @@ parseDynamicFlagsWithRootDir rootDir logger dflags cmdline = do
 -- begins.
 extInterpFromTerminalProcess :: PortNumber -> IO Interp
 extInterpFromTerminalProcess port = do
-  bi_h <- mkHandleFromPortSock port
-  pidLine <- hGetLine bi_h
-  pid <- case readMaybe pidLine :: Maybe Int of
-    Just pid -> pure pid
-    Nothing  -> fail $ "invalid external interpreter PID on socket: " ++ show pidLine
-  ph <- mkProcessHandle (fromIntegral pid) False
-  interpPipe <- mkPipeFromHandles bi_h bi_h
-  lock <- newMVar ()
-  let process = InterpProcess
-                  { interpHandle = ph
-                  , interpPipe
-                  , interpLock   = lock
-                  }
+  putStrLn $ "Trying to connect to " ++ show port
+  Control.Exception.bracketOnError
+    (openListener port >>= accept)
+    (\ (sock,_) -> close sock)
+    (\ (sock,_) -> do
+      bi_h <- socketToHandle sock ReadWriteMode
 
-  pending_frees <- newMVar []
-  let inst = ExtInterpInstance
-        { instProcess           = process
-        , instPendingFrees      = pending_frees
-        , instExtra             = ()
-        }
-      conf = IServConfig
-       { iservConfProgram  = "should never be used"
-       , iservConfOpts     = []
-       , iservConfProfiled = False
-       , iservConfDynamic  = False
-       , iservConfHook     = Nothing
-       , iservConfTrace    = pure ()
-       }
+      pidLine <- annotateCallStackIO $ hGetLine bi_h
 
-  lookup_cache <- mkInterpSymbolCache
-  s            <- newMVar $ InterpRunning inst
-  loader       <- Loader.uninitializedLoader
+      pid <- case readMaybe pidLine :: Maybe Int of
+        Just pid -> pure pid
+        Nothing  -> fail $ "invalid external interpreter PID on socket: " ++ show pidLine
+      ph <- mkProcessHandle (fromIntegral pid) False
+      interpPipe <- mkPipeFromHandles bi_h bi_h
+      lock <- newMVar ()
+      let process = InterpProcess
+                      { interpHandle = ph
+                      , interpPipe
+                      , interpLock   = lock
+                      }
+
+      pending_frees <- newMVar []
+      let inst = ExtInterpInstance
+            { instProcess           = process
+            , instPendingFrees      = pending_frees
+            , instExtra             = ()
+            }
+          conf = IServConfig
+            { iservConfProgram  = "should never be used"
+            , iservConfOpts     = []
+            , iservConfProfiled = False
+            , iservConfDynamic  = False
+            , iservConfHook     = Nothing
+            , iservConfTrace    = pure ()
+            }
+
+      lookup_cache <- mkInterpSymbolCache
+      s            <- newMVar $ InterpRunning inst
+      loader       <- Loader.uninitializedLoader
 #if MIN_VERSION_ghc(9,15,0)
-  fs_cache     <- newMVar emptyFsEnv
-  return (Interp (ExternalInterp (ExtIServ (ExtInterpState conf s))) loader lookup_cache fs_cache)
+      fs_cache     <- newMVar emptyFsEnv
+      return (Interp (ExternalInterp (ExtIServ (ExtInterpState conf s))) loader lookup_cache fs_cache)
 #else
-  return (Interp (ExternalInterp (ExtIServ (ExtInterpState conf s))) loader lookup_cache)
+      return (Interp (ExternalInterp (ExtIServ (ExtInterpState conf s))) loader lookup_cache)
 #endif
+      )
 
--- | Connect to the given port and return a ReadWriteHandle Handle
-mkHandleFromPortSock :: PortNumber -> IO Handle
-mkHandleFromPortSock port = do
-  addrs <- getAddrInfo (Just defaultHints { addrSocketType = Stream })
-                       (Just "127.0.0.1") (Just (show port))
+openListener :: PortNumber -> IO Socket
+openListener port = do
+  addr <- socketAddressFromPort port
+  sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+  -- Must set before bind!
+  setSocketOption sock ReuseAddr 1
+
+  bind sock (addrAddress addr)
+  listen sock maxListenQueue
+
+  return sock
+
+socketAddressFromPort :: PortNumber -> IO AddrInfo
+socketAddressFromPort port = do
+  let
+    hints = defaultHints
+      { addrSocketType = Stream
+      , addrFlags = [AI_PASSIVE]  -- For wildcard IP (0.0.0.0 or ::)
+      , addrFamily = AF_UNSPEC    -- Allow IPv4 or IPv6
+      }
+  addrs <- getAddrInfo (Just hints) Nothing (Just (show port))
   case addrs of
-    addr : _ -> recovering connectRetryPolicy [shouldRetry] $
-      const (connectOnce (addrAddress addr))
+    addr : _ -> pure addr
     [] -> fail ("Could not resolve address for external interpreter port " ++ show port)
-  where
-    connectRetryPolicy :: RetryPolicyM IO
-    connectRetryPolicy =
-      limitRetriesByCumulativeDelay 20_000_000 $
-        capDelay 250_000 $
-          fibonacciBackoff 10_000
-
-    shouldRetry :: RetryStatus -> MC.Handler IO Bool
-    shouldRetry _ = MC.Handler $ \(e :: IOException) -> pure $ "Network.Socket.connect" `L.isInfixOf` show e
-
-    connectOnce :: SockAddr -> IO Handle
-    connectOnce addr =
-      Control.Exception.bracketOnError
-        (socket AF_INET Stream defaultProtocol)
-        close
-        (\sock -> do
-            connect sock addr
-            socketToHandle sock ReadWriteMode)
 
 {-
 Note [Custom external interpreter]
