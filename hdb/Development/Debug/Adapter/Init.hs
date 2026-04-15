@@ -30,7 +30,7 @@ import Data.UUID.V4 qualified as UUID
 import System.IO
 import GHC.IO.Encoding
 import Control.Monad.Catch
-import Control.Exception (SomeAsyncException, throwIO, IOException)
+import Control.Exception (throwIO, IOException)
 import Control.Concurrent
 import Control.Monad
 import Data.Aeson as Aeson
@@ -287,28 +287,23 @@ debuggerThread l HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies w
       "units: " <> unwords units <> "\n" <>
       "args: " <> unwords (ghcInvocation ++ extraGhcArgs)
 
-  catches
-    (do
-      Debugger.runDebugger l rootDir componentDir libdir units ghcInvocation extraGhcArgs mainFp runConf $ do
-        liftIO $ do
-          tid <- myThreadId
-          labelThread tid "Main Debugger Thread"
-        forever $ do
+  Debugger.runDebugger l rootDir componentDir libdir units ghcInvocation extraGhcArgs mainFp runConf $ do
+    liftIO $ do
+      tid <- myThreadId
+      labelThread tid "Main Debugger Thread"
+    let loop = do
           req <- takeMVar requests & liftIO
           resp <- (Debugger.execute req <&> Right)
-                    `catch` \(e :: SomeException) ->
+                    `catch` \(e :: SomeException) -> do
                         pure (Left (displayExceptionWithContext e))
-          either bad reply resp
-    )
-    [ Handler $ \(e::SomeAsyncException) -> do
-        throwIO e
-    ]
-
-  where
-    reply = liftIO . putMVar replies
-    bad m = liftIO $ do
-      hPutStrLn stderr m
-      putMVar replies (Aborted ("Aborted debugger thread: " ++ m))
+          case resp of
+            Right x -> do
+              liftIO (putMVar replies x)
+              loop
+            Left m ->
+              -- don't loop in this case! just exit.
+              liftIO $ putMVar replies (Aborted ("Aborted debugger thread: " ++ m))
+    loop
 
 --------------------------------------------------------------------------------
 -- * Logging
