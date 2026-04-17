@@ -13,8 +13,6 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.ExpectedFailure
 import Test.Utils
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString.Lazy.Char8 as LB8
 import qualified Data.HashMap.Strict as H
 import qualified Data.Text as T
 import qualified System.Process as P
@@ -38,21 +36,32 @@ runInTerminal1 :: [String] -> IO ()
 runInTerminal1 flags = do
   withTestDAPServer "test/unit/T44" flags $ \ test_dir server -> do
 
+    let out_path = test_dir </> ("runInTerm" <.> "out")
+        err_path = test_dir </> ("runInTerm" <.> "err")
+
     withTestDAPServerClient True server $ do
 
       ctx <- ask
-      (rit_in, rit_out, rit_err, rit_p, invocation) <- liftIO $ snd <$>
+      (rit_in, rit_p) <- liftIO $ snd <$>
         concurrently
           (runTestDAP (defaultHitBreakpoint test_dir 6) ctx)
           (flip runTestDAP ctx $
             handleRunInTerminal $ \args -> do
               (ritEnv, ritArgs) <- liftIO $ wait args
               let invocation = T.unpack $ "/usr/bin/env " <> addRITEnv ritEnv <> " " <> T.unwords ritArgs
-              (Just rit_in, Just rit_out, Just rit_err, rit_p)
+              -- Redirect the child's stdout/stderr to files so logs are
+              -- persisted incrementally and survive test failures.
+              out_h <- liftIO $ openFile out_path WriteMode
+              err_h <- liftIO $ openFile err_path WriteMode
+              liftIO $ hPutStrLn out_h ("Invocation: " ++ invocation)
+              liftIO $ hPutStrLn err_h ("Invocation: " ++ invocation)
+              liftIO $ hFlush out_h
+              liftIO $ hFlush err_h
+              (Just rit_in, Nothing, Nothing, rit_p)
                 <- liftIO $ P.createProcess (P.shell invocation)
-                    {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.CreatePipe, P.std_err = P.CreatePipe}
+                    {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.UseHandle out_h, P.std_err = P.UseHandle err_h}
               Just rit_pid <- liftIO $ P.getPid rit_p
-              pure ((rit_in, rit_out, rit_err, rit_p, invocation), fromIntegral rit_pid))
+              pure ((rit_in, rit_p), fromIntegral rit_pid))
 
       -- Continue from "getLine" which will block waiting for input
       next
@@ -73,17 +82,11 @@ runInTerminal1 flags = do
       disconnect
 
       liftIO $ do
-        -- The contents of the rit_output should contain "hello" plus printing of what we wrote
-        out <- LBS.hGetContents rit_out
-        let out_str = LB8.unpack out
-
-        -- Disconnect should be handled cleanly (#268)
-        err <- LBS.hGetContents rit_err
-        let err_str = LB8.unpack err
-
-        -- Write stdout and stderr to file.
-        writeFile (test_dir </> ("runInTerm" <.> "out")) (invocation ++ "\n" ++ out_str)
-        writeFile (test_dir </> ("runInTerm" <.> "err")) (invocation ++ "\n" ++ err_str)
+        -- Wait for the child to exit so all buffered output lands on disk,
+        -- then read back the logs that were streamed to the files.
+        _ <- P.waitForProcess rit_p
+        out_str <- readFile out_path
+        err_str <- readFile err_path
 
         assertBool
           ("Expected output to contain 'hello', got: " ++ out_str)
