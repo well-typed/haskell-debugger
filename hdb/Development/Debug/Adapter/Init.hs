@@ -21,6 +21,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Encoding as T
 import qualified System.Process as P
+import Control.Exception (displayExceptionWithInfo)
 import Control.Monad.Except
 import Control.Monad.Trans
 import Data.Function
@@ -40,7 +41,6 @@ import System.FilePath
 import Data.Functor.Contravariant
 
 import Development.Debug.Adapter
-import Development.Debug.Adapter.Exit.Helpers
 import Colog.Core as Logger
 import qualified Development.Debug.Adapter.Output as Output
 
@@ -95,15 +95,11 @@ data DAPLog
 -- * Launch Debugger
 --------------------------------------------------------------------------------
 
-
--- | Exception type for when hie-bios initialization fails
-newtype InitFailed = InitFailed String deriving Show
-
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
 initDebugger :: LogAction IO DAPLog -> Bool -> Bool
-             -> LaunchArgs -> ExceptT InitFailed DebugAdaptor ()
+             -> LaunchArgs -> DebugAdaptor ()
 initDebugger l supportsRunInTerminal preferInternalInterpreter
                LaunchArgs{ __sessionId
                          , projectRoot = givenRoot
@@ -116,7 +112,7 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
   syncResponses <- liftIO newEmptyMVar
 
   entryFile <- case entryFileMaybe of
-    Nothing -> throwError $ InitFailed "Missing \"entryFile\" key in debugger configuration"
+    Nothing -> throwError ("Missing \"entryFile\" key in debugger configuration", Nothing)
     Just ef -> pure ef
 
   projectRoot <- maybe (liftIO getCurrentDirectory) pure givenRoot
@@ -142,8 +138,8 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
           | otherwise -> mempty
 
   liftIO (runExceptT (hieBiosSetup hieBiosLogger projectRoot entryFile)) >>= \case
-    Left e              -> throwError $ InitFailed e
-    Right (Left e)      -> lift       $ terminateWithError e
+    Left e              -> throwError (ErrorMessage (T.pack e), Nothing)
+    Right (Left e)      -> throwError (ErrorMessage (T.pack e), Nothing)
     Right (Right flags) -> do
 
       let
@@ -177,7 +173,7 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
       dbgLog <- liftIO $
         createDebuggerLogger l dapLogger writeDAPOutput runInTerminalProc
 
-      (runInTerminalThreads, afterRegisterActions) <- lift $
+      (runInTerminalThreads, afterRegisterActions) <-
         mkRunInTerminalThreads l runInTerminalProc preferInternalInterpreter
 
       let
@@ -194,7 +190,7 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
         daState = DAS{entryFile=absEntryFile,..}
 
       sessionId <- liftIO $ maybe (("debug-session:" <>) . T.show <$> UUID.nextRandom) (pure . T.pack) __sessionId
-      lift $ registerNewDebugSession sessionId daState $
+      registerNewDebugSession sessionId daState $
         [ debuggerThread dbgLog flags extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
         , \withAdaptor -> forwardHandleToLogger readDAPOutput $
             LogAction (\msg -> withAdaptor (Output.neutral msg))
@@ -202,7 +198,7 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
         ++
         runInTerminalThreads
 
-      lift afterRegisterActions
+      afterRegisterActions
 
 -- | Additional threads to register for this session depending on the process
 -- we're running through `runInTerminal` (see 'RunInTerminalProc').
@@ -299,7 +295,7 @@ debuggerThread l HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies w
           req <- takeMVar requests & liftIO
           resp <- (Debugger.execute req <&> Right)
                     `catch` \(e :: SomeException) -> do
-                        pure (Left (displayExceptionWithContext e))
+                        pure (Left (displayExceptionWithInfo e))
           case resp of
             Right x -> do
               liftIO (putMVar replies x)
