@@ -11,7 +11,6 @@ import Text.Read
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
-import Control.Monad.Except
 import Control.Exception (bracket, uninterruptibleMask, bracketOnError)
 import Control.Exception.Backtrace
 
@@ -283,19 +282,14 @@ talk l support_rit_var prefer_internal_interpreter = \ case
     -- Wrong-ish. See above where this variable is written
     supportsRunInTerminalRequest <- liftIO $ readIORef support_rit_var
 
-    merror <- runExceptT $
-      initDebugger (contramap DAPLog l)
-        supportsRunInTerminalRequest prefer_internal_interpreter
-        launch_args
-    case merror of
-      Right () -> do
-        sendLaunchResponse   -- ack
-        sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
+    initDebugger (contramap DAPLog l)
+      supportsRunInTerminalRequest prefer_internal_interpreter
+      launch_args
 
-        liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "Debugger launched successfully.") Info)
+    sendLaunchResponse   -- ack
+    sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
 
-      Left (InitFailed err) ->
-        terminateWithError err
+    liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "Debugger launched successfully.") Info)
 --------------------------------------------------------------------------------
   CommandAttach -> do
     sendTerminatedEvent (TerminatedEvent False)

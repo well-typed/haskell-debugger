@@ -5,8 +5,6 @@ import Data.Function
 import System.IO
 import Control.Monad
 import Control.Monad.IO.Class
-import Control.Exception
-import Control.Exception.Context
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
@@ -47,12 +45,3 @@ terminateWithError msg = do
   destroyDebugSession
   sendTerminatedEvent (TerminatedEvent False)
   sendError (ErrorMessage (T.pack msg)) Nothing
-
---- Utils ----------------------------------------------------------------------
-
--- | Display an exception with its context
-displayExceptionWithContext :: SomeException -> String
-displayExceptionWithContext ex = do
-  case displayExceptionContext (someExceptionContext ex) of
-    "" -> displayException ex
-    cx -> displayException ex ++ "\n\n" ++ cx
