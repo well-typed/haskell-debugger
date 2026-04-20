@@ -1,0 +1,8 @@
+break Main.hs 9
+break Main.hs 3
+run
+print print (sort xs)
+print import Data.List
+print print (sort xs)
+continue
+print print (sort xs)

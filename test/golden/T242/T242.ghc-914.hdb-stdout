@@ -1,0 +1,14 @@
+[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, interpreted )[main]
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Main 4], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/Main.hs", startLine = 9, endLine = 9, startCol = 3, endCol = 10}}
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Main 11], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/Main.hs", startLine = 3, endLine = 3, startCol = 3, endCol = 10}}
+(hdb) Stopped at breakpoint
+(hdb) Aborted: <interactive>:1:8: error: [GHC-88464]
+    Variable not in scope: sort :: [Integer] -> a0
+(hdb) 
+(hdb) [4,5,6]
+()
+(hdb) Stopped at breakpoint
+(hdb) [1,2,3]
+()
+(hdb) Exiting...
