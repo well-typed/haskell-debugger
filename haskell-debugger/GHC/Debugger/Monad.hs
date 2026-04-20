@@ -88,6 +88,7 @@ import GHCi.Message (mkPipeFromHandles)
 import System.IO (hGetLine, IOMode(..))
 import qualified GHC.Linker.Loader as Loader
 import GHC.Stack.Annotation
+import GHC.Platform.Ways
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Data.FastString.Env (emptyFsEnv)
@@ -584,11 +585,12 @@ extInterpFromTerminalProcess port = do
             , instExtra             = ()
             }
           conf = IServConfig
-            { iservConfProgram  = "should never be used"
+            { iservConfProgram  = "the process is already running, we should never need to run it again"
             , iservConfOpts     = []
-            , iservConfProfiled = False
-            , iservConfDynamic  = False
-            , iservConfHook     = Nothing
+              -- VERY IMPORTANT: See Note [Dynamic dependencies for dynamic debugger]
+            , iservConfDynamic  = hostIsDynamic
+            , iservConfProfiled = hostIsProfiled
+            , iservConfHook     = Nothing -- it's already running!
             , iservConfTrace    = pure ()
             }
 
@@ -710,6 +712,24 @@ When launching the external interpreter directly attached to the user's
 terminal (via runInTerminal), the handles will indeed be connected to a TTY.
 
 [1] https://ftp.gnu.org/old-gnu/Manuals/glibc-2.2.5/html_node/Buffering-Concepts.html
+
+Note [Dynamic dependencies for dynamic debugger]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+When the external interpreter running the debuggee is a dynamically-linked
+program compiled with -fPIC, it is of utmost importance that the libraries we
+load (e.g. base, ghc-internal, etc) are ALSO compiled with -fPIC. Otherwise, we
+end up with the same SIGILL scenario of Note [Dynamic Debuggee for dynamic debugger].
+
+In #260, we battled with another SIGILL for over a week because of this.
+Namely, we forgot to configure the external interpreter's
+IServConfig.iservConfDynamic (and had hardcoded it to False!!).
+
+When loading a package to the external interpreter, GHC will consult
+`iservConfDynamic` on whether to LoadDLL (dynamic lib) or LoadArchive (static
+archive). This setting must definitely match the way in which the external
+interpreter was compiled (checked with `hostIsDynamic`, since the external
+interpreter and the debugger, while not necessarily the same process, are the
+same executable). Ditto for `iservConfProfiled` (with `hostIsProfiled`).
 -}
 --------------------------------------------------------------------------------
 
