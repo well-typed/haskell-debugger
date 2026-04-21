@@ -6,8 +6,12 @@ import Control.Monad.IO.Class (liftIO)
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
+#ifdef mingw32_HOST_OS
 import Test.Tasty.ExpectedFailure
-import Test.Utils (withHermeticDir)
+#endif
+import DAP (threadId, stackFrameId, scopeName, scopeExpensive)
+import Data.List (find)
+import qualified Data.Text as T
 
 scopesTests :: TestTree
 scopesTests =
@@ -26,11 +30,11 @@ scopesExpensiveTest = withTestDAPServer "test/unit/T44" ["--disable-ipe-backtrac
 
       _ <- defaultHitBreakpoint test_dir 6
 
-      threadId:_ <- threads
-      frameId:_ <- stackTrace threadId
-      scps <- scopes frameId
+      thread:_ <- threads
+      frame:_  <- stackTrace (threadId thread)
+      scps     <- scopes (stackFrameId frame)
 
-      let lookupExpensive n = lookup n scps
+      let lookupExpensive n = scopeExpensive <$> find ((== T.pack n) . scopeName) scps
       liftIO $ assertEqual "Locals should not be expensive" (Just False) (lookupExpensive "Locals")
       liftIO $ assertEqual "Module should be expensive" (Just True) (lookupExpensive "Module")
       liftIO $ assertEqual "Globals should be expensive" (Just True) (lookupExpensive "Globals")

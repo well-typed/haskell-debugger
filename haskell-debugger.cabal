@@ -214,6 +214,7 @@ test-suite haskell-debugger-test
                       Test.DAP.Init,
                       Test.DAP.Messages,
                       Test.DAP.Messages.Parser,
+                      Test.DAP.Orphans,
                       Test.Utils,
 
                       Test.Unit.DAP.RunInTerminal,

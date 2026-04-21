@@ -1,18 +1,16 @@
 -- | 'logMessage'/'logPoints' tests
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE CPP #-}
-module Test.Unit.DAP.LogMessage (logMessageTests,setupBreakpoints) where
+module Test.Unit.DAP.LogMessage (logMessageTests, setupBreakpoints, mkBP) where
 
 import Control.Monad.IO.Class (liftIO)
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
-import Test.Utils
-import Test.DAP.Messages.Parser
-import Data.Maybe (mapMaybe)
+import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
+import DAP (SourceBreakpoint(..), defaultSourceBreakpoint, OutputEvent (..))
+import Test.DAP.Messages.Parser (Event(..))
 
 logMessageTests :: TestTree
 logMessageTests =
@@ -44,13 +42,13 @@ logMessageTests =
 
 simpleTest :: String -> String -> IO ()
 simpleTest tmpl expected =
-  logMessageTestSetup [] [(18,Nothing,Just tmpl)] $ do
+  logMessageTestSetup [] [mkBP 18 Nothing (Just tmpl)] $ do
     assertOutput (T.pack expected)
 
 conditionTest :: IO ()
 conditionTest = logMessageTestSetup [] bps $ do
-  events <- waitAccumulating Event "output"
-  let output = T.concat $ mapMaybe parseOutput events
+  events <- waitAccumulating EventTy "output"
+  let output = T.concat $ map (outputEventOutput . fromMaybe (error "conditionTest:fromMaybe") . eventBody) events
 
   liftIO $ assertBool "logged when False" $
     not $ "DO NOT LOG" `T.isInfixOf` output
@@ -58,11 +56,18 @@ conditionTest = logMessageTestSetup [] bps $ do
     "DO LOG" `T.isInfixOf` output
   return ()
   where
-    bps = [(18,Just "False", Just "DO NOT LOG")
-          ,(19,Just "True", Just "DO LOG")
+    bps = [ mkBP 18 (Just "False") (Just "DO NOT LOG")
+          , mkBP 19 (Just "True")  (Just "DO LOG")
           ]
 
-logMessageTestSetup :: [String] -> [(Int, Maybe String, Maybe String)] -> TestDAP a -> IO ()
+mkBP :: Int -> Maybe String -> Maybe String -> SourceBreakpoint
+mkBP line cond logMsg = defaultSourceBreakpoint
+  { sourceBreakpointLine       = line
+  , sourceBreakpointCondition  = T.pack <$> cond
+  , sourceBreakpointLogMessage = T.pack <$> logMsg
+  }
+
+logMessageTestSetup :: [String] -> [SourceBreakpoint] -> TestDAP a -> IO ()
 logMessageTestSetup flags bps check = do
   withTestDAPServer "test/unit/T113" flags $ \test_dir server-> do
 
@@ -73,10 +78,10 @@ logMessageTestSetup flags bps check = do
 
 -- | Let's you setup multiple breakpoints, with conditions and logs.
 --   Any events after configurationDone are left unconsumed.
-setupBreakpoints :: FilePath -> [(Int, Maybe String, Maybe String)] -> TestDAP ()
+setupBreakpoints :: FilePath -> [SourceBreakpoint] -> TestDAP ()
 setupBreakpoints testDir bps = do
   _ <- sync $ defaultLaunch testDir
-  _ <- waitFiltering Event "initialized"
+  waitFiltering_ EventTy "initialized"
   _ <- sync $ defaultSetBreakpoints testDir bps
   _ <- sync configurationDone
   pure ()

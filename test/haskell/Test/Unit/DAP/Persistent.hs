@@ -1,6 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ViewPatterns #-}
 module Test.Unit.DAP.Persistent (persistentTests) where
@@ -10,10 +7,9 @@ import qualified Data.Text as T
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
-import Test.Tasty.ExpectedFailure
 import Test.Utils
-import Test.Unit.DAP.LogMessage (setupBreakpoints)
-import qualified System.Process as P
+import Test.Unit.DAP.LogMessage (setupBreakpoints, mkBP)
+import qualified DAP
 import Control.Exception (bracket)
 import System.Environment (lookupEnv)
 
@@ -60,7 +56,7 @@ withServerTestSetup' dirs0@(d0:_) flags check = do
     go keep acc (d:ds) server = withHermeticDir keep d $ \test_dir ->
       go keep (test_dir:acc) ds server
 
-withBreakPoints :: [(Int, Maybe String, Maybe String)] -> TestDAP a -> (FilePath, TestDAPServer) -> IO ()
+withBreakPoints :: [DAP.SourceBreakpoint] -> TestDAP () -> (FilePath, TestDAPServer) -> IO ()
 withBreakPoints bps check (test_dir,server) =
      withTestDAPServerClient False server $ do
       () <- setupBreakpoints test_dir bps
@@ -101,24 +97,24 @@ testParallel' (unzip -> (dirs,bps)) flags k
 
 simpleSessions :: Int -> (FilePath, TestDAPServer) -> [IO ()]
 simpleSessions n x =
-  [withBreakPoints [(18,Nothing,Just msg)] check x
+  [withBreakPoints [mkBP 18 Nothing (Just msg)] check x
       | i <- [(0::Int)..n]
       , let msg = "MSG_" ++ show i
       , let
           check = do
             assertOutput (T.pack msg)
-            waitFiltering Event "exited"
+            waitFiltering_ EventTy "exited"
       ]
 
 simpleSessions' :: [Int] -> ([FilePath], TestDAPServer) -> [IO ()]
 simpleSessions' ls (dirs,server) =
-  [ withBreakPoints [ (line,Nothing,Just msg)
-                    , (line+1,Nothing,Nothing)
+  [ withBreakPoints [ mkBP line     Nothing (Just msg)
+                    , mkBP (line+1) Nothing Nothing
                     ] check (d,server)
       | (i,(line,d)) <- zip [(0::Int)..] $ zip ls dirs
       , let msg = "MSG_" ++ show i
       , let
           check = do
             assertOutput (T.pack msg)
-            waitFiltering Event "stopped"
+            waitFiltering_ EventTy "stopped"
       ]

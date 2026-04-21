@@ -19,7 +19,9 @@ import System.Environment
 import Control.Exception
 
 import Test.Tasty
+#ifdef mingw32_HOST_OS
 import Test.Tasty.ExpectedFailure
+#endif
 import Test.Tasty.Golden as G
 import Test.Tasty.Golden.Advanced as G
 

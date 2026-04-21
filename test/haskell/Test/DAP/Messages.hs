@@ -18,6 +18,7 @@ import           Data.IORef
 import           DAP.Utils
 import Control.Concurrent.STM
 import qualified Data.Text as T
+import Test.DAP.Messages.Parser
 ----------------------------------------------------------------------------
 
 ----------------------------------------------------------------------------
@@ -56,16 +57,17 @@ newtype TestDAP a = TestDAP { runTestDAP :: TestDAPClientContext -> IO a }
 -- * Message primitives
 --------------------------------------------------------------------------------
 
-type ResponseCont b a = Async b -> TestDAP a
+type AsyncCont b a = Async b -> TestDAP a
+type ResponseCont b a = Async (Response b) -> TestDAP a
 
 -- | Run an action with an Async in the continuation synchronously by simply
 -- waiting for the response.
-sync :: (ResponseCont b b -> TestDAP b) -> TestDAP b
+sync :: (ResponseCont b (Response b) -> TestDAP (Response b)) -> TestDAP (Response b)
 sync k = k (liftIO . wait)
 
 -- | Send message with next sequence number and expect a response (response
 -- value is given as async in continuation)
-send :: [Pair] -> ResponseCont Value a -> TestDAP a
+send :: forall b r. FromJSON b => [Pair] -> ResponseCont b r -> TestDAP r
 send message k = do
   ctx@TestDAPClientContext{..} <- ask
   seqNum <- liftIO $ atomicModifyIORef' clientNextSeqRef (\n -> (n + 1, n))
@@ -74,7 +76,10 @@ send message k = do
       encodeBaseProtocolMessage (object ("seq" .= seqNum : filter ((/= "seq") . fst) message))
 
     withAsync (runTestDAP waitForResponse ctx) $ \v ->
-      runTestDAP (k v) ctx
+      runTestDAP (k $ (\r -> unwrap (fromJSON @(Response b) r) r) <$> v) ctx
+        where
+          unwrap (Error e) r = error ("send: Parsing 'Response' failed with " ++ show e ++ " for message: " ++ show r)
+          unwrap (Success x) _ = x
 
 -- | Reply to reverse request of given seq number
 reply :: Int -> [Pair] -> TestDAP ()

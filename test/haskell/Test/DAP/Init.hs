@@ -9,7 +9,6 @@ module Test.DAP.Init where
 ----------------------------------------------------------------------------
 import Data.Maybe
 import Data.List (isInfixOf)
-import           Control.Concurrent
 import           Control.Exception hiding (handle)
 import qualified Control.Exception as E
 import           Network.Run.TCP
@@ -30,8 +29,9 @@ import Data.Aeson.Types
 import Test.Tasty.HUnit (assertFailure)
 import DAP.Server (readPayload)
 import qualified Control.Monad.Catch
-import Test.DAP.Messages.Parser
 import Test.Utils (withHermeticDir)
+import DAP.Types (OutputEvent (..))
+import Test.DAP.Messages.Parser
 
 --------------------------------------------------------------------------------
 -- * Launch the DAP server process (what we're testing)
@@ -82,12 +82,12 @@ startTestDAPServer testDir flags = do
 
 -- | Prefer this to startTestDAPServer
 withTestDAPServer :: FilePath -> [String] -> (FilePath -> TestDAPServer -> IO a) -> IO a
-withTestDAPServer dir flags check = do
+withTestDAPServer dir flags check' = do
   keep_tmp_dirs <- maybe False read <$> lookupEnv "KEEP_TEMP_DIRS"
   withHermeticDir keep_tmp_dirs dir $ \test_dir ->
     bracket (startTestDAPServer test_dir flags)
       testDAPServerCleanup
-      (check test_dir)
+      (check' test_dir)
 
 getAvailablePort :: IO Int
 getAvailablePort =
@@ -150,12 +150,12 @@ handleServerTestDAP = do
     payload <- nextPayload
     liftIO $ case parseMaybe parseType payload of
       Just "event"    -> do
-        let mtxt = parseOutput payload
+        let mtxt = fromJSON @(Event OutputEvent) payload
         atomically $ do
           writeTChan clientEvents payload
           case mtxt of
-            Just txt -> modifyTVar' clientFullOutput (txt:)
-            Nothing  -> pure ()
+            Success (Event _ (Just txt)) -> modifyTVar' clientFullOutput (outputEventOutput txt:)
+            _ -> pure ()
       Just "response" ->
         -- Fail immediately if the server reports failure, even if the test
         -- is blocked waiting for some other specific message.
