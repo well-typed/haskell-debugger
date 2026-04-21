@@ -21,7 +21,26 @@ import Data.Maybe
 import System.FilePath
 import System.Directory
 
-import GHC
+import GHC qualified
+import GHC (
+  ExecOptions (..),
+  ExecResult (..),
+  execStmt',
+  ForeignHValue,
+  GhciLStmt,
+  GhcPs,
+  InteractiveImport (..),
+  mkHsString,
+  ModSummary (..),
+  Name,
+  nlHsLit,
+  nlList,
+  parseImportDecl,
+  SingleStep (..),
+  SrcSpan (..),
+  StmtLR (..),
+  unLoc,
+  )
 import GHC.Plugins (SourceError)
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Unit.Types
@@ -45,7 +64,7 @@ import GHC.Debugger.Interface.Messages
 import Colog.Core as Logger
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import GHC.Debugger.Runtime.Thread
-import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags)
+import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
 
 --------------------------------------------------------------------------------
 -- * Evaluation
@@ -126,13 +145,13 @@ debugExecution entryFile entry args = do
 -- | Resume execution of the stopped debuggee program
 doContinue :: Debugger EvalResult
 doContinue = do
-  GHC.resumeExec RunToCompletion Nothing
+  resumeExec RunToCompletion Nothing
     >>= handleExecResult
 
 -- | Resume execution but only take a single step.
 doSingleStep :: Debugger EvalResult
 doSingleStep = do
-  GHC.resumeExec SingleStep Nothing
+  resumeExec SingleStep Nothing
     >>= handleExecResult
 
 doStepOut :: Debugger EvalResult
@@ -140,13 +159,13 @@ doStepOut = do
   mb_span <- getCurrentBreakSpan
   case mb_span of
     Nothing ->
-      GHC.resumeExec (GHC.StepOut Nothing) Nothing
+      resumeExec (GHC.StepOut Nothing) Nothing
         >>= handleExecResult
     Just loc -> do
       md <- fromMaybe (error "doStepOut") <$> getCurrentBreakModule
       ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
       let current_toplevel_decl = enclosingTickSpan ticks loc
-      GHC.resumeExec (GHC.StepOut (Just (RealSrcSpan current_toplevel_decl Strict.Nothing))) Nothing
+      resumeExec (GHC.StepOut (Just (RealSrcSpan current_toplevel_decl Strict.Nothing))) Nothing
         >>= handleExecResult
 
 -- | Resume execution but stop at the next tick within the same function.
@@ -162,13 +181,13 @@ doLocalStep = do
     Nothing -> error "not stopped at a breakpoint?!"
     Just (UnhelpfulSpan _) -> do
       liftIO $ putStrLn "Stopped at an exception. Forcing step into..."
-      GHC.resumeExec SingleStep Nothing >>= handleExecResult
+      resumeExec SingleStep Nothing >>= handleExecResult
     Just loc -> do
       md <- fromMaybe (error "doLocalStep") <$> getCurrentBreakModule
       -- TODO: Cache moduleLineMap?
       ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
       let current_toplevel_decl = enclosingTickSpan ticks loc
-      GHC.resumeExec (LocalStep (RealSrcSpan current_toplevel_decl mempty)) Nothing >>= handleExecResult
+      resumeExec (LocalStep (RealSrcSpan current_toplevel_decl mempty)) Nothing >>= handleExecResult
 
 -- | Generalized `doEval` that also handles `imports`
 doEvalCommand :: String -> Debugger EvalResult
@@ -226,7 +245,7 @@ doEval expr = withCurrentBreakExtensions $ do
 -- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
 continueToCompletion :: Debugger GHC.ExecResult
 continueToCompletion = do
-  execr <- GHC.resumeExec GHC.RunToCompletion Nothing
+  execr <- resumeExec GHC.RunToCompletion Nothing
   case execr of
     GHC.ExecBreak{} -> continueToCompletion
     GHC.ExecComplete{} -> return execr
@@ -324,7 +343,7 @@ handleExecResult = \case
             EvalAbortedWith e -> do
               logSDoc Logger.Warning (evalFailedMsg e)
               resume
-    resume = GHC.resumeExec GHC.RunToCompletion Nothing >>= handleExecResult
+    resume = resumeExec GHC.RunToCompletion Nothing >>= handleExecResult
 
 -- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
 inspectName :: Name -> Debugger (Maybe VarInfo)

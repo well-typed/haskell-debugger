@@ -27,6 +27,7 @@ module GHC.Debugger.Session (
   setPgmI, addOptI,
   setDynFlagWays,
   makeDynFlagsAbsoluteOverall,
+  resumeExec,
   )
   where
 
@@ -69,6 +70,7 @@ import qualified GHC.Unit.Home.Graph as HUG
 import qualified Data.Set as Set
 import Data.Maybe
 import GHC.Types.Target (InputFileBuffer)
+import GHC (SingleStep, ExecResult)
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -481,6 +483,41 @@ addWay' w dflags0 =
        dflags3 = foldr GHC.unSetGeneralFlag' dflags2
                        (wayUnsetGeneralFlags platform w)
    in dflags3
+
+-- ----------------------------------------------------------------------------
+-- Wrappers around GHC's odd behavior
+-- ----------------------------------------------------------------------------
+
+resumeExec :: GhcMonad m => SingleStep -> Maybe Int -> m ExecResult
+resumeExec a b = do
+  -- IC's ic_imports field is not kept in sync with ic_gre_cache, so we could do
+  -- this call later, but why rely on that.
+  imports <- GHC.getContext
+
+  v <- GHC.resumeExec a b
+
+  -- To have interactive imports persist after a `continue` command we have to
+  -- work around how GHC.resumeExec handles the InteractiveContext (IC).
+  --
+  -- GHC.resumeExec resets the scope of the IC (i.e. ic_gre_cache) to what it
+  -- was before the last ExecBreak.
+  --
+  -- It makes sense for GHC.resumeExec to remove from the IC scope the
+  -- breakpoint locals and anything that could have been defined with them, in
+  -- fact they are also unloaded.
+  --
+  -- The way it's done though also rollbacks any import statements that were
+  -- executed since the last ExecBreak. The only fix is to reimport everything
+  -- again.
+  --
+  -- Note: GHC.setContext recomputes the scope of the interactive imports from
+  -- scratch everytime. Considering `runDebugger` adds the whole home unit to
+  -- the interactive imports this might become a bottleneck. GHC does not keep
+  -- any reference to the scope containing just the imports, so we would have to
+  -- cache it ourselves (and then extend it with the cached scope of
+  -- ic_tythings, i.e. igre_prompt_env (c.f. replaceImportEnv)).
+  GHC.setContext imports
+  pure v
 
 -- ----------------------------------------------------------------------------
 -- Utils that we need, but don't want to incur an additional dependency for.
