@@ -6,9 +6,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 
--- TODO: We should be using ToJSON/FromJSON for all messages which `dap` has.
--- It's just we'd have to derive those instances as orphans or patch upstream.
--- (Upstream is better. Otherwise very long compile times)
 module Test.DAP
   ( module Test.DAP
   , module Test.DAP.Init
@@ -31,6 +28,10 @@ import System.FilePath
 import qualified Data.Text as T
 import Data.Aeson.Types
 import Test.Tasty.HUnit
+import DAP (ScopesArguments(..), StackTraceArguments(..), DisconnectArguments(..))
+import qualified DAP
+import Test.DAP.Orphans ()
+import DAP.Types
 
 --------------------------------------------------------------------------------
 -- * Highest level DSL
@@ -49,52 +50,50 @@ defaultLaunch testDir =
       , "request" .= ("launch" :: String)
       ]
 
-defaultSetBreakpoints :: FilePath -> [(Int, Maybe String, Maybe String)] {- use `dap` types... -} -> ResponseCont Value a -> TestDAP a
+defaultSetBreakpoints :: FilePath -> [SourceBreakpoint] -> ResponseCont Value a -> TestDAP a
 defaultSetBreakpoints testDir bps = do
-  setBreakpointsRequest $
-    object
-      [ "source" .= object
-        [ "name" .= ("Main.hs" :: String)
-        , "path" .= T.pack (testDir </> "Main.hs")
-        ]
-      , "breakpoints" .=
-        [ object
-          [ "line" .= line
-          , "logMessage" .= logMessage
-          , "condition" .= condition
-          ]
-        | (line,condition, logMessage) <- bps
-        ]
-      , "lines" .= [line | (line,_,_) <- bps ]
-      , "sourceModified" .= False
-      ]
+  setBreakpointsRequest DAP.SetBreakpointsArguments
+    { DAP.setBreakpointsArgumentsSource = DAP.defaultSource
+        { DAP.sourceName = Just "Main.hs"
+        , DAP.sourcePath = Just (T.pack (testDir </> "Main.hs"))
+        }
+    , DAP.setBreakpointsArgumentsBreakpoints = Just bps
+    , DAP.setBreakpointsArgumentsLines = Just [sourceBreakpointLine bp | bp <- bps]
+    , DAP.setBreakpointsArgumentsSourceModified = Just False
+    }
 
 defaultSetLineBreakpoints :: FilePath -> [Int] -> ResponseCont Value a -> TestDAP a
-defaultSetLineBreakpoints testDir bps = defaultSetBreakpoints testDir [(b, Nothing, Nothing) | b <- bps]
+defaultSetLineBreakpoints testDir bps =
+  defaultSetBreakpoints testDir
+    [ defaultSourceBreakpoint { sourceBreakpointLine = line }
+    | line <- bps
+    ]
 
 next, stepIn :: TestDAP ()
-next   = void . sync $ nextRequest Null
-stepIn = void . sync $ stepInRequest Null
+next   = void . sync $ nextRequest @Value @Value Null
+stepIn = void . sync $ stepInRequest @Value @Value Null
 
-threads :: TestDAP [Int]
+threads :: TestDAP [Thread]
 threads = do
-  v <- sync threadsRequest
-  return $ fromMaybe [] $ parseThreadIds v
+  Response{responseBody=Just ThreadsResponse{threads=ts}} <- sync threadsRequest
+  return ts
 
-stackTrace :: Int -> TestDAP [Int {-stack frame id-}]
-stackTrace threadId = do
-  v <- sync $ stackTraceRequest $ object [ "threadId" .= threadId ]
-  return $ fromMaybe [] $ parseFramesIds v
+stackTrace :: Int -> TestDAP [StackFrame]
+stackTrace tid = do
+  Response{responseBody=Just StackTraceResponse{stackFrames=fs}} <- sync $ stackTraceRequest $
+    StackTraceArguments
+      { DAP.stackTraceArgumentsThreadId = tid
+      , DAP.stackTraceArgumentsStartFrame = Nothing
+      , DAP.stackTraceArgumentsLevels = Nothing
+      , DAP.stackTraceArgumentsFormat = Nothing
+      }
+  return fs
 
--- | Request scopes and parse (name, expensive) pairs.
---
--- todo: please, use FromJSON/ToJSON of `dap` library datatypes. this is madness!
-scopes :: Int {- stack frame id -} -> TestDAP [(String, Bool)]
-scopes stackFrameId = do
-  v <- sync $ scopesRequest $ object [ "frameId" .= stackFrameId ]
-  case parseScopes v of
-    Nothing -> fail $ "Could not parse scopes from: " ++ show v
-    Just scs -> pure scs
+scopes :: Int {- stack frame id -} -> TestDAP [Scope]
+scopes frameId = do
+  Response{responseBody=Just ScopesResponse{scopes=scs}} <- sync $ scopesRequest $
+    ScopesArguments { DAP.scopesArgumentsFrameId = frameId }
+  return scs
 
 configurationDone :: ResponseCont Value a -> TestDAP a
 configurationDone = configurationDoneRequest Nothing
@@ -104,7 +103,7 @@ configurationDone = configurationDoneRequest Nothing
 --------------------------------------------------------------------------------
 
 -- | Register handler that will reply to runInTerminal reverse request
-handleRunInTerminal :: ResponseCont (Maybe (H.HashMap T.Text T.Text), [T.Text]) (a, Int)
+handleRunInTerminal :: AsyncCont (Maybe (H.HashMap T.Text T.Text), [T.Text]) (a, Int)
                     -- ^ Continuation receives async with args of runInTerm req.
                     --
                     -- - Waiting means block waiting for reverse request to be received
@@ -141,31 +140,30 @@ defaultHitBreakpoint testDir line = do
   ctx <- ask
   liftIO $ mapConcurrently_
     (`runTestDAP` ctx)
-    [ do _ <- waitFiltering Event "initialized"
+    [ do waitFiltering_ EventTy "initialized"
          _ <- sync $ defaultSetLineBreakpoints testDir [line]
          _ <- sync $ configurationDone
-         _ <- assertStoppedLocation "breakpoint" line
+         _ <- assertStoppedLocation DAP.StoppedEventReasonBreakpoint line
          return ()
     , void $ sync $ defaultLaunch testDir
     ]
 
 disconnect :: TestDAP ()
 disconnect = do
-  -- wait for disconnect response
-  r <- sync $ disconnectRequest $ Just $ object
-    [ "restart" .= False
-    , "terminateDebuggee" .= True
-    , "suspendDebuggee" .= False
-    ]
-  liftIO $ assertBool "disconnect response should indicate success" $
-    fromMaybe False $ parseMaybe (withObject "disconnect response" $ \o -> o .: "success") r
+  Response{responseSuccess} <- sync $ disconnectRequest @_ @Value $ Just
+    DisconnectArguments
+      { DAP.disconnectArgumentsRestart = False
+      , DAP.disconnectArgumentsTerminateDebuggee = True
+      , DAP.disconnectArgumentsSuspendDebuggee = False
+      }
+  liftIO $ assertBool "disconnect response should indicate success" responseSuccess
   return ()
 
 --------------------------------------------------------------------------------
 -- ** Convenience methods (based on vscode-debugadapter-node/testSupport)
 --------------------------------------------------------------------------------
 
-launch :: Value {-^ Launch args -} -> ResponseCont Value a {- LaunchResponse, todo: use `dap` types w Aeson -} -> TestDAP a
+launch :: Value {-^ Launch args -} -> ResponseCont Value a -> TestDAP a
 launch args = runContT $
   ContT initializeRequest
     >>= liftIO . wait
@@ -173,16 +171,15 @@ launch args = runContT $
 
 configurationSequence :: ResponseCont Value a -> TestDAP a
 configurationSequence k = do
-  _ <- waitFiltering Event "initialized"
+  waitFiltering_ EventTy "initialized"
   configurationDone k
 
 -- | Assert that a "stopped" event with the given reason is received
-assertStoppedLocation :: String -> Int -> TestDAP ()
+assertStoppedLocation :: DAP.StoppedEventReason -> Int -> TestDAP ()
 assertStoppedLocation reason expectedLine = do
-  -- TODO: Timeouts on waiting!!
-  v <- waitFiltering Event "stopped"
+  Event{eventBody = Just StoppedEvent{stoppedEventReason}} <- waitFiltering EventTy "stopped"
   liftIO $
-    assertBool "" (maybe False (==reason) (parseStoppedEventReason v))
+    assertBool "Stopped reason matches expected reason" (stoppedEventReason == reason)
   -- TODO: Validate expected line and potentially path too
   -- (see assertStoppedLocation in debugClient.ts)
 
@@ -190,8 +187,8 @@ assertStoppedLocation reason expectedLine = do
 -- events (until any other event is found) contain a certain string
 assertOutput :: T.Text -> TestDAP ()
 assertOutput expected = do
-  events <- waitAccumulating Event "output"
-  let outputs = mapMaybe parseOutput events
+  events <- waitAccumulating EventTy "output"
+  let outputs = map (outputEventOutput . fromMaybe (error "assertOutput:fromMaybe") . eventBody) events
   liftIO $
     assertBool
       ("assertOutput: expecting " ++ show expected ++ " but got " ++ show outputs)
@@ -210,30 +207,37 @@ assertFullOutput expected = do
 -- * Waiting for messages
 --------------------------------------------------------------------------------
 
-data MsgType = Event | Response | ReverseRequest
+data MsgType = EventTy | ResponseTy | ReverseRequestTy
+  deriving Show
 
 msgChan :: MsgType -> TestDAPClientContext -> TChan Value
 msgChan ty TestDAPClientContext{..} = case ty of
-  Event          -> clientEvents
-  Response       -> clientResponses
-  ReverseRequest -> clientReverseRequests
+  EventTy          -> clientEvents
+  ResponseTy       -> clientResponses
+  ReverseRequestTy -> clientReverseRequests
 
 msgMatch :: MsgType -> String -> MessageMatch
 msgMatch ty s = case ty of
-  Event          -> eventMatch s
-  Response       -> responseMatch s
-  ReverseRequest -> reverseRequestMatch s
+  EventTy         -> eventMatch s
+  ResponseTy      -> responseMatch s
+  ReverseRequestTy -> reverseRequestMatch s
+
+waitFiltering_ :: MsgType -> String -> TestDAP ()
+waitFiltering_ ty s = void $ waitFiltering @Value ty s
 
 -- | Drop messages of the given type until a message with the given
 -- eventType/command is found. The matching message is returned.
-waitFiltering :: MsgType -> String -> TestDAP Value
+-- FIXME: Timeouts on waiting, to avoid hanging forever in the testsuite!!
+waitFiltering :: forall a. FromJSON a => MsgType -> String -> TestDAP a
 waitFiltering ty s = do
   ch <- asks (msgChan ty)
   let mm = msgMatch ty s
   let loop = do
         v <- atomically $ readTChan ch -- block waiting for input
         if messageMatchMatches mm v
-          then return v
+          then case fromJSON @a v of
+            Error e -> error $ "waitFiltering: Failed to parse message MATCHING " ++ s ++ ":" ++ show ty ++ " with error: " ++ e ++ "\nFull message was: " ++ show v
+            Success x -> return x
           else loop
   liftIO loop
 
@@ -242,7 +246,7 @@ waitFiltering ty s = do
 --
 -- The non-matching message is not consumed, nor returned, and will be kept in
 -- the messages buffer.
-waitAccumulating :: MsgType -> String -> TestDAP [Value]
+waitAccumulating :: forall a. FromJSON a => MsgType -> String -> TestDAP [a]
 waitAccumulating ty s = do
   ch <- asks (msgChan ty)
   let mm = msgMatch ty s
@@ -250,7 +254,9 @@ waitAccumulating ty s = do
         r <- atomically $ do
           v <- readTChan ch
           if messageMatchMatches mm v
-            then pure (Just v)
+            then case fromJSON @a v of
+              Error e -> error $ "waitAccumulating: Failed to parse MATCHING message body with error: " ++ e ++ "\nFull message was: " ++ show v
+              Success x -> pure (Just x)
             else Nothing <$ unGetTChan ch v
         case r of
           Nothing -> return (reverse acc)
@@ -287,7 +293,7 @@ launchRequest, attachRequest, restartRequest, setBreakpointsRequest,
   gotoRequest, pauseRequest, stackTraceRequest, scopesRequest, variablesRequest,
   setVariableRequest, sourceRequest, modulesRequest, evaluateRequest,
   disassembleRequest, stepInTargetsRequest, gotoTargetsRequest, completionsRequest,
-  exceptionInfoRequest, readMemoryRequest, writeMemoryRequest :: Value -> ResponseCont Value a -> TestDAP a
+  exceptionInfoRequest, readMemoryRequest, writeMemoryRequest :: (ToJSON a, FromJSON b) => a -> ResponseCont b r -> TestDAP r
 
 launchRequest                    = requestWithArgs "launch"
 attachRequest                    = requestWithArgs "attach"
@@ -322,7 +328,7 @@ exceptionInfoRequest             = requestWithArgs "exceptionInfo"
 readMemoryRequest                = requestWithArgs "readMemory"
 writeMemoryRequest               = requestWithArgs "writeMemory"
 
-terminateRequest, disconnectRequest :: Maybe Value -> ResponseCont Value a -> TestDAP a
+terminateRequest, disconnectRequest :: (ToJSON a, FromJSON b) => Maybe a -> ResponseCont b r -> TestDAP r
 terminateRequest  = customRequest "terminate"
 -- example:
 --  object
@@ -335,10 +341,10 @@ terminateRequest  = customRequest "terminate"
 -- waitEventFiltering $ eventMatch "terminated"
 disconnectRequest = customRequest "disconnect"
 
-threadsRequest :: ResponseCont Value a -> TestDAP a
-threadsRequest = customRequest "threads" Nothing
+threadsRequest :: FromJSON b => ResponseCont b r -> TestDAP r
+threadsRequest = customRequest "threads" (Nothing :: Maybe ())
 --------------------------------------------------------------------------------
-requestWithArgs :: String -> Value -> ResponseCont Value a -> TestDAP a
+requestWithArgs :: (ToJSON a, FromJSON b) => String -> a -> ResponseCont b r -> TestDAP r
 requestWithArgs command args = customRequest command (Just args)
 
 -- example: respondWithBody revReqNum [ "shellProcessId" .= ... ]
@@ -351,7 +357,7 @@ respondWithBody seqNum command body =
     , "body" .= body
     ]
 --------------------------------------------------------------------------------
-customRequest :: String -> Maybe Value -> ResponseCont Value a -> TestDAP a
+customRequest :: (ToJSON a, FromJSON b) => String -> Maybe a -> ResponseCont b r -> TestDAP r
 customRequest command args = do
   send $
     [ "type" .= ("request" :: String)

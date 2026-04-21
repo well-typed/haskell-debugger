@@ -11,8 +11,9 @@ import System.IO
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
+#ifdef mingw32_HOST_OS
 import Test.Tasty.ExpectedFailure
-import Test.Utils
+#endif
 import qualified Data.HashMap.Strict as H
 import qualified Data.Text as T
 import qualified System.Process as P
@@ -73,7 +74,7 @@ runInTerminal1 flags = do
       liftIO $ hPutStrLn rit_in secret_in
 
       -- Only after writing should we receive the next "stopped" event
-      _ <- waitFiltering Event "stopped"
+      waitFiltering_ EventTy "stopped"
 
       -- To next line, which should be the "putStrLn" after the "getLine"
       next
