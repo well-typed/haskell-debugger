@@ -24,11 +24,11 @@ scopesTests =
     ]
 
 scopesExpensiveTest :: Assertion
-scopesExpensiveTest = withTestDAPServer "test/unit/T44" ["--disable-ipe-backtraces"] $ \ test_dir server ->
+scopesExpensiveTest = withTestDAPServer "test/unit/T44" [] $ \ test_dir server ->
 
-  withTestDAPServerClient False server $ do
+  withTestDAPServerClient server $ do
 
-      _ <- defaultHitBreakpoint test_dir 6
+      _ <- hitBreakpointWith (mkLaunchConfig test_dir "Main.hs") 6
 
       thread:_ <- threads
       frame:_  <- stackTrace (threadId thread)

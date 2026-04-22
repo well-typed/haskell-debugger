@@ -29,6 +29,16 @@ import Test.Unit.DAP.LogMessage
 import Test.Unit.DAP.Persistent (persistentTests)
 import Test.Unit.DAP.RunInTerminal
 import Test.Unit.DAP.Scopes
+import Test.Integration.Basic (basicTests)
+import Test.Integration.Exceptions (exceptionTests)
+import Test.Integration.MultiMain (multiMainTests)
+import Test.Integration.MultiHomeUnit (multiHomeUnitTests)
+import Test.Integration.Variables (variableTests)
+import Test.Integration.StepOut (stepOutTests)
+import Test.Integration.Stdout (stdoutTests)
+import Test.Integration.Conditional (conditionalTests)
+import Test.Integration.Evaluate (evaluateTests)
+import Test.Integration.StackTrace (stackTraceTests)
 import Test.Utils
 
 main :: IO ()
@@ -75,6 +85,16 @@ unitTests =
   , scopesTests
   , logMessageTests
   , persistentTests
+  , basicTests
+  , exceptionTests
+  , multiMainTests
+  , multiHomeUnitTests
+  , variableTests
+  , stepOutTests
+  , stdoutTests
+  , conditionalTests
+  , evaluateTests
+  , stackTraceTests
   ]
 
 -- | Receives as an argument the path to the @*.hdb-test@ which contains the

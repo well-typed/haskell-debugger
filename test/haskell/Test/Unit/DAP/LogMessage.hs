@@ -1,7 +1,7 @@
 -- | 'logMessage'/'logPoints' tests
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
-module Test.Unit.DAP.LogMessage (logMessageTests, setupBreakpoints, mkBP) where
+module Test.Unit.DAP.LogMessage (logMessageTests, mkBP) where
 
 import Control.Monad.IO.Class (liftIO)
 import Test.DAP
@@ -68,20 +68,12 @@ mkBP line cond logMsg = defaultSourceBreakpoint
   }
 
 logMessageTestSetup :: [String] -> [SourceBreakpoint] -> TestDAP a -> IO ()
-logMessageTestSetup flags bps check = do
-  withTestDAPServer "test/unit/T113" flags $ \test_dir server-> do
-
-    withTestDAPServerClient False server $ do
-      () <- setupBreakpoints test_dir bps
+logMessageTestSetup flags bps check =
+  withTestDAPServer "test/unit/T113" flags $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      _ <- sync $ launchWith (mkLaunchConfig test_dir "Main.hs")
+      waitFiltering_ EventTy "initialized"
+      _ <- sync $ setBreakpointsIn test_dir "Main.hs" bps
+      _ <- sync configurationDone
       _ <- check
       disconnect
-
--- | Let's you setup multiple breakpoints, with conditions and logs.
---   Any events after configurationDone are left unconsumed.
-setupBreakpoints :: FilePath -> [SourceBreakpoint] -> TestDAP ()
-setupBreakpoints testDir bps = do
-  _ <- sync $ defaultLaunch testDir
-  waitFiltering_ EventTy "initialized"
-  _ <- sync $ defaultSetBreakpoints testDir bps
-  _ <- sync configurationDone
-  pure ()

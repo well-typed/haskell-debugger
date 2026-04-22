@@ -105,19 +105,26 @@ getAvailablePort =
 -- * Launch the client connecting to the server (the test driver)
 --------------------------------------------------------------------------------
 
+-- | Like 'withTestDAPServerClientWith' but default:
+--  - @RunInTerminal = False@
+--  - @clientHandleNoSuccess = \_ _ -> pure Nothing@ (by default, success: false FAILS test)
+withTestDAPServerClient :: TestDAPServer -> TestDAP a -> IO a
+withTestDAPServerClient = withTestDAPServerClientWith False (\_ _ -> pure Nothing)
+
 --- | Connect a test client to a running 'TestDAPServer', with retry semantics
 --- and server log flushing on failure.
-withTestDAPServerClient :: Bool {-^ Announce support for runInTerminal? -} -> TestDAPServer -> TestDAP a -> IO a
-withTestDAPServerClient clientSupportsRunInTerminal server continue = do
+withTestDAPServerClientWith :: Bool {-^ Announce support for runInTerminal? -} -> (String -> Value -> IO (Maybe Value))
+                            -> TestDAPServer -> TestDAP a -> IO a
+withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess server continue = do
   runClient `E.onException` testDAPServerFlushOutput server
   where
     runClient = do
       withNewClient (testDAPServerPort server) $ \clientHandle -> do
-        clientNextSeqRef      <- newIORef 1
-        clientReverseRequests <- newTChanIO
-        clientResponses       <- newTChanIO
-        clientEvents          <- newTChanIO
-        clientFullOutput      <- newTVarIO []
+        clientNextSeqRef           <- newIORef 1
+        clientReverseRequests      <- newTChanIO
+        clientResponses            <- newTChanIO
+        clientEvents               <- newTChanIO
+        clientFullOutput           <- newTVarIO []
         let ctx = TestDAPClientContext{..}
         either id (\() -> error "handleServerTestDAP unexpectedly returned") <$> race
           (runTestDAP continue ctx)
@@ -158,9 +165,12 @@ handleServerTestDAP = do
             _ -> pure ()
       Just "response" ->
         -- Fail immediately if the server reports failure, even if the test
-        -- is blocked waiting for some other specific message.
+        -- is blocked waiting for some other specific message --
+        -- unless the test has opted into handling failed responses itself.
         case parseMaybe parseSuccess payload of
-          Just errMsg -> assertFailure errMsg
+          Just errMsg -> clientHandleNoSuccess errMsg payload >>= \case
+            Just v    -> atomically $ writeTChan clientResponses v
+            Nothing   -> assertFailure errMsg
           Nothing     -> atomically $ writeTChan clientResponses payload
       Just "request"  -> atomically $ do writeTChan clientReverseRequests payload
       Just ty      -> assertFailure $ "handleServerTestDAP: Unsupported message type: " ++ show ty

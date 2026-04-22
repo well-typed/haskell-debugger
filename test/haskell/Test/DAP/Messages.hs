@@ -48,6 +48,10 @@ data TestDAPClientContext = TestDAPClientContext
     -- output and not care about ordering.
   , clientSupportsRunInTerminal :: Bool
     -- ^ Run test with runInTerminal support?
+  , clientHandleNoSuccess :: String -> Value -> IO (Maybe Value)
+    -- ^ How to handle a response with success: false? If this function returns
+    -- @Just val@ something then execution will resume with the returned @val@
+    -- rather than aborting.
   }
 
 newtype TestDAP a = TestDAP { runTestDAP :: TestDAPClientContext -> IO a }

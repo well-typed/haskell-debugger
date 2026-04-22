@@ -40,12 +40,12 @@ runInTerminal1 flags = do
     let out_path = test_dir </> ("runInTerm" <.> "out")
         err_path = test_dir </> ("runInTerm" <.> "err")
 
-    withTestDAPServerClient True server $ do
+    withTestDAPServerClientWith True (\_ _ -> pure Nothing) server $ do
 
       ctx <- ask
       (rit_in, rit_p) <- liftIO $ snd <$>
         concurrently
-          (runTestDAP (defaultHitBreakpoint test_dir 6) ctx)
+          (runTestDAP (hitBreakpointWith (mkLaunchConfig test_dir "Main.hs") 6) ctx)
           (flip runTestDAP ctx $
             handleRunInTerminal $ \args -> do
               (ritEnv, ritArgs) <- liftIO $ wait args
