@@ -25,10 +25,10 @@ import Test.Tasty.ExpectedFailure
 import Test.Tasty.Golden as G
 import Test.Tasty.Golden.Advanced as G
 
-import Test.Unit.DAP.LogMessage
-import Test.Unit.DAP.Persistent (persistentTests)
-import Test.Unit.DAP.RunInTerminal
-import Test.Unit.DAP.Scopes
+import Test.Integration.LogMessage (logMessageTests)
+import Test.Integration.Persistent (persistentTests)
+import Test.Integration.RunInTerminal (runInTerminalTests)
+import Test.Integration.Scopes (scopesTests)
 import Test.Integration.Basic (basicTests)
 import Test.Integration.Exceptions (exceptionTests)
 import Test.Integration.MultiMain (multiMainTests)

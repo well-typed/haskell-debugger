@@ -1,6 +1,6 @@
 -- | 'scopes' request tests
 {-# LANGUAGE OverloadedStrings, CPP #-}
-module Test.Unit.DAP.Scopes (scopesTests) where
+module Test.Integration.Scopes (scopesTests) where
 
 import Control.Monad.IO.Class (liftIO)
 import Test.DAP
@@ -24,7 +24,7 @@ scopesTests =
     ]
 
 scopesExpensiveTest :: Assertion
-scopesExpensiveTest = withTestDAPServer "test/unit/T44" [] $ \ test_dir server ->
+scopesExpensiveTest = withTestDAPServer "test/integration/T44" [] $ \ test_dir server ->
 
   withTestDAPServerClient server $ do
 

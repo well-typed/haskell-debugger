@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE CPP #-}
-module Test.Unit.DAP.RunInTerminal (runInTerminalTests) where
+module Test.Integration.RunInTerminal (runInTerminalTests) where
 
 import Data.List (isInfixOf)
 import System.FilePath
@@ -35,7 +35,7 @@ runInTerminalTests =
 
 runInTerminal1 :: [String] -> IO ()
 runInTerminal1 flags = do
-  withTestDAPServer "test/unit/T44" flags $ \ test_dir server -> do
+  withTestDAPServer "test/integration/T44" flags $ \ test_dir server -> do
 
     let out_path = test_dir </> ("runInTerm" <.> "out")
         err_path = test_dir </> ("runInTerm" <.> "err")

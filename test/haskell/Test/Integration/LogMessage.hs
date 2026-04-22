@@ -1,7 +1,7 @@
 -- | 'logMessage'/'logPoints' tests
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
-module Test.Unit.DAP.LogMessage (logMessageTests, mkBP) where
+module Test.Integration.LogMessage (logMessageTests) where
 
 import Control.Monad.IO.Class (liftIO)
 import Test.DAP
@@ -41,8 +41,11 @@ logMessageTests =
     ]
 
 simpleTest :: String -> String -> IO ()
-simpleTest tmpl expected =
-  logMessageTestSetup [] [mkBP 18 Nothing (Just tmpl)] $ do
+simpleTest tmpl expected = do
+  let bp = defaultSourceBreakpoint
+        { sourceBreakpointLine = 18
+        , sourceBreakpointLogMessage = Just (T.pack tmpl) }
+  logMessageTestSetup [] [bp] $ do
     assertOutput (T.pack expected)
 
 conditionTest :: IO ()
@@ -56,20 +59,20 @@ conditionTest = logMessageTestSetup [] bps $ do
     "DO LOG" `T.isInfixOf` output
   return ()
   where
-    bps = [ mkBP 18 (Just "False") (Just "DO NOT LOG")
-          , mkBP 19 (Just "True")  (Just "DO LOG")
-          ]
-
-mkBP :: Int -> Maybe String -> Maybe String -> SourceBreakpoint
-mkBP line cond logMsg = defaultSourceBreakpoint
-  { sourceBreakpointLine       = line
-  , sourceBreakpointCondition  = T.pack <$> cond
-  , sourceBreakpointLogMessage = T.pack <$> logMsg
-  }
+    bps =
+      [ defaultSourceBreakpoint
+          { sourceBreakpointLine = 18
+          , sourceBreakpointCondition = Just "False"
+          , sourceBreakpointLogMessage = Just "DO NOT LOG" }
+      , defaultSourceBreakpoint
+          { sourceBreakpointLine = 19
+          , sourceBreakpointCondition = Just "True"
+          , sourceBreakpointLogMessage = Just "DO LOG" }
+      ]
 
 logMessageTestSetup :: [String] -> [SourceBreakpoint] -> TestDAP a -> IO ()
 logMessageTestSetup flags bps check =
-  withTestDAPServer "test/unit/T113" flags $ \test_dir server ->
+  withTestDAPServer "test/integration/T113" flags $ \test_dir server ->
     withTestDAPServerClient server $ do
       _ <- sync $ launchWith (mkLaunchConfig test_dir "Main.hs")
       waitFiltering_ EventTy "initialized"

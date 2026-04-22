@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ViewPatterns #-}
-module Test.Unit.DAP.Persistent (persistentTests) where
+module Test.Integration.Persistent (persistentTests) where
 
 import Control.Concurrent.Async
 import qualified Data.Text as T
@@ -8,7 +8,6 @@ import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Utils
-import Test.Unit.DAP.LogMessage (mkBP)
 import qualified DAP
 import Control.Exception (bracket)
 import System.Environment (lookupEnv)
@@ -26,14 +25,14 @@ persistentTests =
         , testCase "parallel" $
           testParallel [] $ simpleSessions 2
         , testGroup "cwd /= test_dir" $ do
-            let units = replicate 2 ("test/unit/T113",18)
+            let units = replicate 2 ("test/integration/T113",18)
             [ testCase "sequential" $ testSequential' units [] $ simpleSessions'
              , testCase "parallel" $ testParallel' units [] $ simpleSessions'
              ]
         , testGroup "multiple test_dirs" $ do
             let units = concat $ replicate 2
-                  [ ("test/unit/T113",18)
-                  , ("test/unit/T44" ,5)
+                  [ ("test/integration/T113",18)
+                  , ("test/integration/T44" ,5)
                   ]
             [  testCase "sequential" $ testSequential' units [] $ simpleSessions'
              , testCase "parallel" $ testParallel' units [] $ simpleSessions'
@@ -68,7 +67,7 @@ withBreakPoints bps check (test_dir, server) =
 
 testSequential :: Foldable t => [String] -> ((FilePath, TestDAPServer) -> t (IO a)) -> IO ()
 testSequential flags k
-  = withTestDAPServer "test/unit/T113" flags
+  = withTestDAPServer "test/integration/T113" flags
       (curry $ \ x -> sequence_ $ k x)
 
 testSequential' :: Foldable t =>
@@ -82,7 +81,7 @@ testSequential' (unzip -> (dirs,bps)) flags k
 
 testParallel :: Foldable f => [String] -> ((FilePath, TestDAPServer) -> f (IO b)) -> IO ()
 testParallel flags k
-  = withTestDAPServer "test/unit/T113" flags
+  = withTestDAPServer "test/integration/T113" flags
       (curry $ \ x -> mapConcurrently_ id (k x))
 
 testParallel' :: Foldable f =>
@@ -95,8 +94,11 @@ testParallel' (unzip -> (dirs,bps)) flags k
       (curry $ \ x -> mapConcurrently_ id (k bps x))
 
 simpleSessions :: Int -> (FilePath, TestDAPServer) -> [IO ()]
-simpleSessions n x =
-  [withBreakPoints [mkBP 18 Nothing (Just msg)] check x
+simpleSessions n x = do
+  let bp msg = DAP.defaultSourceBreakpoint
+        { DAP.sourceBreakpointLine = 18
+        , DAP.sourceBreakpointLogMessage = Just (T.pack msg) }
+  [ withBreakPoints [bp msg] check x
       | i <- [(0::Int)..n]
       , let msg = "MSG_" ++ show i
       , let
@@ -106,10 +108,15 @@ simpleSessions n x =
       ]
 
 simpleSessions' :: [Int] -> ([FilePath], TestDAPServer) -> [IO ()]
-simpleSessions' ls (dirs,server) =
-  [ withBreakPoints [ mkBP line     Nothing (Just msg)
-                    , mkBP (line+1) Nothing Nothing
-                    ] check (d,server)
+simpleSessions' ls (dirs,server) = do
+  let bps line msg =
+        [ DAP.defaultSourceBreakpoint
+            { DAP.sourceBreakpointLine = line
+            , DAP.sourceBreakpointLogMessage = Just (T.pack msg) }
+        , DAP.defaultSourceBreakpoint
+            { DAP.sourceBreakpointLine = line + 1 }
+        ]
+  [ withBreakPoints (bps line msg) check (d,server)
       | (i,(line,d)) <- zip [(0::Int)..] $ zip ls dirs
       , let msg = "MSG_" ++ show i
       , let
