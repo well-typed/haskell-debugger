@@ -8,7 +8,7 @@ import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Utils
-import Test.Unit.DAP.LogMessage (setupBreakpoints, mkBP)
+import Test.Unit.DAP.LogMessage (mkBP)
 import qualified DAP
 import Control.Exception (bracket)
 import System.Environment (lookupEnv)
@@ -57,15 +57,14 @@ withServerTestSetup' dirs0@(d0:_) flags check = do
       go keep (test_dir:acc) ds server
 
 withBreakPoints :: [DAP.SourceBreakpoint] -> TestDAP () -> (FilePath, TestDAPServer) -> IO ()
-withBreakPoints bps check (test_dir,server) =
-     withTestDAPServerClient False server $ do
-      () <- setupBreakpoints test_dir bps
-      _ <- check
-      disconnect
-        -- FIXME: we re-send the terminated event in response to disconnect,
-        -- even if we already sent it once before above. probably not very
-        -- correct
-      pure ()
+withBreakPoints bps check (test_dir, server) =
+  withTestDAPServerClient server $ do
+    _ <- sync $ launchWith (mkLaunchConfig test_dir "Main.hs")
+    waitFiltering_ EventTy "initialized"
+    _ <- sync $ setBreakpointsIn test_dir "Main.hs" bps
+    _ <- sync configurationDone
+    _ <- check
+    disconnect
 
 testSequential :: Foldable t => [String] -> ((FilePath, TestDAPServer) -> t (IO a)) -> IO ()
 testSequential flags k

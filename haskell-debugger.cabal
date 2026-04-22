@@ -220,7 +220,18 @@ test-suite haskell-debugger-test
                       Test.Unit.DAP.RunInTerminal,
                       Test.Unit.DAP.Scopes,
                       Test.Unit.DAP.LogMessage,
-                      Test.Unit.DAP.Persistent
+                      Test.Unit.DAP.Persistent,
+
+                      Test.Integration.Basic,
+                      Test.Integration.Exceptions,
+                      Test.Integration.MultiMain,
+                      Test.Integration.MultiHomeUnit,
+                      Test.Integration.Variables,
+                      Test.Integration.StepOut,
+                      Test.Integration.Stdout,
+                      Test.Integration.Conditional,
+                      Test.Integration.Evaluate,
+                      Test.Integration.StackTrace
     build-depends:
         base >=4.14,
         async,

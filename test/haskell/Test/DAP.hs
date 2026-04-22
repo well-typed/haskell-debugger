@@ -12,6 +12,7 @@ module Test.DAP
   , module Test.DAP.Messages
   ) where
 
+import qualified Data.Map as M
 import Control.Concurrent.STM
 import Control.Monad.IO.Class
 import Data.Aeson
@@ -33,41 +34,12 @@ import qualified DAP
 import Test.DAP.Orphans ()
 import DAP.Types
 
+import qualified Data.List as List
+
 --------------------------------------------------------------------------------
--- * Highest level DSL
+-- * DSL
 --------------------------------------------------------------------------------
 -- fill as needed; some parts of the highest level DSL will prefer NOT to be sync.
-
-defaultLaunch :: FilePath -> ResponseCont Value a -> TestDAP a
-defaultLaunch testDir =
-  launch $
-    object
-      [ "entryFile" .= (testDir </> "Main.hs")
-      , "entryPoint" .= ("main" :: String)
-      , "projectRoot" .= testDir
-      , "extraGhcArgs" .= ([] :: [String])
-      , "entryArgs" .= ([] :: [String])
-      , "request" .= ("launch" :: String)
-      ]
-
-defaultSetBreakpoints :: FilePath -> [SourceBreakpoint] -> ResponseCont Value a -> TestDAP a
-defaultSetBreakpoints testDir bps = do
-  setBreakpointsRequest DAP.SetBreakpointsArguments
-    { DAP.setBreakpointsArgumentsSource = DAP.defaultSource
-        { DAP.sourceName = Just "Main.hs"
-        , DAP.sourcePath = Just (T.pack (testDir </> "Main.hs"))
-        }
-    , DAP.setBreakpointsArgumentsBreakpoints = Just bps
-    , DAP.setBreakpointsArgumentsLines = Just [sourceBreakpointLine bp | bp <- bps]
-    , DAP.setBreakpointsArgumentsSourceModified = Just False
-    }
-
-defaultSetLineBreakpoints :: FilePath -> [Int] -> ResponseCont Value a -> TestDAP a
-defaultSetLineBreakpoints testDir bps =
-  defaultSetBreakpoints testDir
-    [ defaultSourceBreakpoint { sourceBreakpointLine = line }
-    | line <- bps
-    ]
 
 next, stepIn :: TestDAP ()
 next   = void . sync $ nextRequest @Value @Value Null
@@ -134,19 +106,258 @@ handleRunInTerminal k = do
         pure (env, args)
         ) argsObj
 
--- | Uses defaultLaunch and defaultSetBreakpoints
-defaultHitBreakpoint :: FilePath -> Int -> TestDAP ()
-defaultHitBreakpoint testDir line = do
-  ctx <- ask
-  liftIO $ mapConcurrently_
-    (`runTestDAP` ctx)
-    [ do waitFiltering_ EventTy "initialized"
-         _ <- sync $ defaultSetLineBreakpoints testDir [line]
-         _ <- sync $ configurationDone
-         _ <- assertStoppedLocation DAP.StoppedEventReasonBreakpoint line
-         return ()
-    , void $ sync $ defaultLaunch testDir
-    ]
+-- | Launch a config, run to completion and assert the exit code.
+runToEnd :: LaunchConfig -> TestDAP ()
+runToEnd cfg = do
+  _ <- sync $ launchWith cfg
+  waitFiltering_ EventTy "initialized"
+  _ <- sync configurationDone
+  waitForExitCode 0
+
+--------------------------------------------------------------------------------
+-- ** Custom launch configs
+--------------------------------------------------------------------------------
+
+-- | Launch configuration for the debugger. Mirrors the NodeJS test config.
+data LaunchConfig = LaunchConfig
+  { lcProjectRoot :: FilePath
+  , lcEntryFile :: Maybe FilePath
+  , lcEntryPoint :: Maybe String
+  , lcEntryArgs :: [String]
+  , lcExtraGhcArgs :: [String]
+  , lcInternalInterpreter :: Maybe Bool
+  }
+
+-- | A launch config with the given project root and entry file. @entryPoint@
+-- defaults to @main@ and there are no extra args.
+mkLaunchConfig :: FilePath -> FilePath -> LaunchConfig
+mkLaunchConfig projectRoot entryFile = LaunchConfig
+  { lcProjectRoot = projectRoot
+  , lcEntryFile = Just entryFile
+  , lcEntryPoint = Just "main"
+  , lcEntryArgs = []
+  , lcExtraGhcArgs = []
+  , lcInternalInterpreter = Nothing
+  }
+
+-- | Launch the debugger with a 'LaunchConfig'.
+launchWith :: LaunchConfig -> ResponseCont Value a -> TestDAP a
+launchWith LaunchConfig{..} = launch $ object $
+  [ "projectRoot" .= lcProjectRoot
+  , "request" .= ("launch" :: String)
+  ] ++
+  [ "entryFile" .= (lcProjectRoot </> ef) | Just ef <- [lcEntryFile] ] ++
+  [ "entryPoint" .= ep | Just ep <- [lcEntryPoint] ] ++
+  [ "entryArgs" .= lcEntryArgs ] ++
+  [ "extraGhcArgs" .= lcExtraGhcArgs ] ++
+  [ "internalInterpreter" .= b | Just b <- [lcInternalInterpreter] ]
+
+-- | Set breakpoints in a particular source file of a project at the given
+-- lines.
+setLineBreakpoints :: FilePath -- ^ project root
+                   -> FilePath -- ^ entry file (relative to project root)
+                   -> [Int]
+                   -> ResponseCont Value a -> TestDAP a
+setLineBreakpoints projectRoot entryFile lines_ =
+  setBreakpointsIn projectRoot entryFile
+    [ defaultSourceBreakpoint { sourceBreakpointLine = l } | l <- lines_ ]
+
+-- | Set breakpoints (with arbitrary 'SourceBreakpoint's) in a particular
+-- source file of a project.
+setBreakpointsIn :: FilePath -- ^ project root
+                 -> FilePath -- ^ source file (relative to project root)
+                 -> [SourceBreakpoint]
+                 -> ResponseCont Value a -> TestDAP a
+setBreakpointsIn projectRoot entryFile bps =
+  setBreakpointsRequest DAP.SetBreakpointsArguments
+    { DAP.setBreakpointsArgumentsSource = DAP.defaultSource
+        { DAP.sourceName = Just (T.pack (takeFileName entryFile))
+        , DAP.sourcePath = Just (T.pack (projectRoot </> entryFile))
+        }
+    , DAP.setBreakpointsArgumentsBreakpoints = Just bps
+    , DAP.setBreakpointsArgumentsLines = Just [sourceBreakpointLine bp | bp <- bps]
+    , DAP.setBreakpointsArgumentsSourceModified = Just False
+    }
+
+-- | Launch, configure breakpoint, hit breakpoint.
+hitBreakpointWith :: LaunchConfig -> Int -> TestDAP ()
+hitBreakpointWith cfg@LaunchConfig{..} line = do
+  entryFile <- maybe (fail "hitBreakpointWith: missing entryFile") pure lcEntryFile
+  hitBreakpointIn cfg entryFile line
+
+-- | Launch, configure a breakpoint in the given source file (relative to
+-- the project root) at the given line, then wait for it to be hit.
+hitBreakpointIn :: LaunchConfig -> FilePath -> Int -> TestDAP ()
+hitBreakpointIn cfg@LaunchConfig{..} bpFile line = do
+  _ <- sync $ launchWith cfg
+  waitFiltering_ EventTy "initialized"
+  _ <- sync $ setLineBreakpoints lcProjectRoot bpFile [line]
+  _ <- sync configurationDone
+  _ <- assertStoppedLocation DAP.StoppedEventReasonBreakpoint line
+  return ()
+
+--------------------------------------------------------------------------------
+-- ** Variable inspection
+--------------------------------------------------------------------------------
+data VarsView = VarsView
+  { varsViewDesc :: String
+  , varsViewVars :: M.Map T.Text [Variable] }
+
+mkVarsView :: String -> [Variable] -> VarsView
+mkVarsView ctxDesc vs = VarsView
+  { varsViewDesc = ctxDesc
+  , varsViewVars = M.fromListWith (++) [(variableName v, [v]) | v <- vs] }
+
+-- | Get variable by name
+(%) :: VarsView -> String -> Variable
+(%) vv n = case vv %% n of
+  [v] -> v
+  what -> error $ "Unexpected *many* variables by name " ++ show n ++ ": " ++ show what
+
+-- | Get variables by name (there may be more than one with the same name; e.g. consider punning)
+(%%) :: VarsView -> String -> [Variable]
+(%%) VarsView{..} n
+  | Just vs <- M.lookup (T.pack n) varsViewVars = vs
+  | otherwise = error $
+      "Variable " ++ show n ++ " not found in " ++ varsViewDesc ++ ": " ++ show (M.keys varsViewVars)
+--------------------------------------------------------------------------------
+-- | Fetch all variables from the scope with the given name in the top-most
+-- frame of the first thread.
+fetchScopeVars :: T.Text -> TestDAP VarsView
+fetchScopeVars scopeName_ = do
+  Response{responseBody=Just ThreadsResponse{threads=t:_}} <- sync threadsRequest
+  Response{responseBody=Just StackTraceResponse{stackFrames=fr:_}} <- sync $ stackTraceRequest $
+    StackTraceArguments
+      { DAP.stackTraceArgumentsThreadId = threadId t
+      , DAP.stackTraceArgumentsStartFrame = Nothing
+      , DAP.stackTraceArgumentsLevels = Nothing
+      , DAP.stackTraceArgumentsFormat = Nothing
+      }
+  Response{responseBody=Just ScopesResponse{scopes=scs}} <- sync $ scopesRequest $
+    ScopesArguments { DAP.scopesArgumentsFrameId = stackFrameId fr }
+  case List.find ((== scopeName_) . scopeName) scs of
+    Nothing -> liftIO $ assertFailure $
+      "fetchScopeVars: scope " ++ show scopeName_
+        ++ " not found (" ++ show (map scopeName scs) ++ ")"
+    Just sc -> do
+      vs <- fetchChildren (scopeVariablesReference sc)
+      pure $ mkVarsView ("scope " ++ show scopeName_) vs
+
+fetchLocalVars :: TestDAP VarsView
+fetchLocalVars = fetchScopeVars "Locals"
+
+fetchModuleVars :: TestDAP VarsView
+fetchModuleVars = fetchScopeVars "Module"
+
+-- | Get the children of a variable by its variablesReference.
+fetchChildren :: Int -> TestDAP [Variable]
+fetchChildren ref = do
+  Response{responseBody=Just (VariablesResponse vs)} <- sync $ variablesRequest $
+    VariablesArguments
+      { DAP.variablesArgumentsVariablesReference = ref
+      , DAP.variablesArgumentsFilter = Nothing
+      , DAP.variablesArgumentsStart = Nothing
+      , DAP.variablesArgumentsCount = Nothing
+      , DAP.variablesArgumentsFormat = Nothing
+      }
+  return vs
+
+-- | Force a lazy variable by sending a 'variables' request for its reference
+-- and returning the first child.
+forceLazy :: HasCallStack => Variable -> TestDAP Variable
+forceLazy v = do
+  liftIO $ do
+    assertEqual ("Variable " ++ show (variableName v) ++ " should be lazy")
+      (Just True) (variablePresentationHintLazy =<< variablePresentationHint v)
+    assertEqual ("Variable " ++ show (variableName v) ++ " should be \"_\" because it is lazy") "_" (variableValue v)
+    assertBool ("Variable " ++ show (variableName v) ++ " should be expandable (because it is a lazy var)") $
+      variableVariablesReference v /= 0 -- if it is expandable we get a reference to use to expand here
+
+  -- Force the lazy variable by using its reference
+  vs <- fetchChildren (variableVariablesReference v)
+  case vs of
+    (v':_) -> pure v'
+    [] -> liftIO $ assertFailure $ "forceLazy: no children for forced variable " ++ show (variableName v)
+
+-- | Expand a structured variable.
+expandVar :: HasCallStack => Variable -> TestDAP VarsView
+expandVar v = do
+  liftIO $
+    assertBool ("Variable " ++ show (variableName v) ++ " should be expandable (it should have structure)") $
+      variableVariablesReference v /= 0
+  vs <- fetchChildren (variableVariablesReference v)
+  pure $ mkVarsView ("children of " ++ T.unpack (variableName v)) vs
+
+-- | Assert that a variable has a given String value.
+assertIsString :: HasCallStack => Variable -> T.Text -> TestDAP ()
+assertIsString v expected = liftIO $ do
+  assertEqual ("Variable " ++ show (variableName v) ++ " should be a String")
+    (Just "String") (variableType v)
+  assertEqual ("Variable " ++ show (variableName v) ++ " should be " ++ show expected)
+    expected (variableValue v)
+  assertEqual ("Variable " ++ show (variableName v) ++ " should not be expandable (because it is a String)")
+    0 (variableVariablesReference v)
+
+-- | Assert the value of some variable.
+-- e.g. @var \@==? "\"hello\""@
+(@==?) :: HasCallStack => Variable -> T.Text -> TestDAP ()
+(@==?) v expected = liftIO $ assertEqual (T.unpack (variableValue v) ++ " @==? " ++ T.unpack expected) expected (variableValue v)
+
+--------------------------------------------------------------------------------
+-- ** Exception info & other requests
+--------------------------------------------------------------------------------
+
+exceptionInfo :: Int -> TestDAP ExceptionInfoResponse
+exceptionInfo tid = do
+  Response{responseBody=Just r} <- sync $ exceptionInfoRequest $
+    ExceptionInfoArguments { DAP.exceptionInfoArgumentsThreadId = tid }
+  return r
+
+setBreakOnException :: TestDAP ()
+setBreakOnException = do
+  _ <- sync $ setExceptionBreakpointsRequest @_ @Value
+    SetExceptionBreakpointsArguments
+      { DAP.setExceptionBreakpointsArgumentsFilters = ["break-on-exception"]
+      , DAP.setExceptionBreakpointsArgumentsFilterOptions = Nothing
+      , DAP.setExceptionBreakpointsArgumentsExceptionOptions = Nothing
+      }
+  pure ()
+
+continueThread :: Int -> TestDAP ()
+continueThread tid = do
+  _ <- sync $ continueRequest @_ @Value
+    ContinueArguments
+      { DAP.continueArgumentsThreadId = tid
+      , DAP.continueArgumentsSingleThread = False
+      }
+  pure ()
+
+evaluate :: T.Text -> TestDAP EvaluateResponse
+evaluate expr = do
+  Response{responseBody=Just r} <- sync $ evaluateRequest $
+    EvaluateArguments
+      { DAP.evaluateArgumentsExpression = expr
+      , DAP.evaluateArgumentsFrameId = Nothing
+      , DAP.evaluateArgumentsContext = Nothing
+      , DAP.evaluateArgumentsFormat = Nothing
+      }
+  return r
+
+stepOut :: Int -> TestDAP ()
+stepOut tid = do
+  _ <- sync $ stepOutRequest @_ @Value
+    StepOutArguments
+      { DAP.stepOutArgumentsThreadId = tid
+      , DAP.stepOutArgumentsSingleThread = False
+      , DAP.stepOutArgumentsGranularity = Nothing
+      }
+  pure ()
+
+-- | Wait for an "exited" event and assert the exit code.
+waitForExitCode :: Int -> TestDAP ()
+waitForExitCode expected = do
+  Event{eventBody = Just ExitedEvent{exitedEventExitCode}} <- waitFiltering EventTy "exited"
+  liftIO $ assertEqual ("exit code should be " ++ show expected) expected exitedEventExitCode
 
 disconnect :: TestDAP ()
 disconnect = do
@@ -174,18 +385,20 @@ configurationSequence k = do
   waitFiltering_ EventTy "initialized"
   configurationDone k
 
--- | Assert that a "stopped" event with the given reason is received
-assertStoppedLocation :: DAP.StoppedEventReason -> Int -> TestDAP ()
+-- | Assert that a "stopped" event with the given reason is received, then
+-- fetch the stack trace and assert the top frame is at the expected line.
+assertStoppedLocation :: HasCallStack => DAP.StoppedEventReason -> Int -> TestDAP ()
 assertStoppedLocation reason expectedLine = do
-  Event{eventBody = Just StoppedEvent{stoppedEventReason}} <- waitFiltering EventTy "stopped"
-  liftIO $
-    assertBool "Stopped reason matches expected reason" (stoppedEventReason == reason)
-  -- TODO: Validate expected line and potentially path too
-  -- (see assertStoppedLocation in debugClient.ts)
+  Event{eventBody = Just StoppedEvent{stoppedEventReason, stoppedEventThreadId}} <- waitFiltering EventTy "stopped"
+  liftIO $ assertBool "Stopped reason matches expected reason" (stoppedEventReason == reason)
+  frames <- maybe (pure []) stackTrace stoppedEventThreadId
+  case frames of
+    (frame:_) -> liftIO $ assertEqual "stopped location: line mismatch" expectedLine (stackFrameLine frame)
+    []        -> liftIO $ assertFailure "assertStoppedLocation: no stack frames"
 
 -- | Assert that all *pending*(not yet taken from channel) accumulated output
 -- events (until any other event is found) contain a certain string
-assertOutput :: T.Text -> TestDAP ()
+assertOutput :: HasCallStack => T.Text -> TestDAP ()
 assertOutput expected = do
   events <- waitAccumulating EventTy "output"
   let outputs = map (outputEventOutput . fromMaybe (error "assertOutput:fromMaybe") . eventBody) events
@@ -194,14 +407,20 @@ assertOutput expected = do
       ("assertOutput: expecting " ++ show expected ++ " but got " ++ show outputs)
       (any (T.isInfixOf expected) outputs)
 
--- | Assert that the full output up until now contains any given string
-assertFullOutput :: T.Text -> TestDAP ()
-assertFullOutput expected = do
+assertFullOutput :: HasCallStack => T.Text -> TestDAP ()
+assertFullOutput expected = assertFullOutputWith (expected <> " \\in full_output") (T.isInfixOf expected)
+
+assertNotFullOutput :: HasCallStack => T.Text -> TestDAP ()
+assertNotFullOutput expected = assertFullOutputWith (expected <> " \\notin full_output") (not . T.isInfixOf expected)
+
+-- | Assert that the full output up until now matches any given string with the given function
+assertFullOutputWith :: HasCallStack => T.Text -> (T.Text -> Bool) -> TestDAP ()
+assertFullOutputWith assertStr test = do
   TestDAPClientContext{..} <- ask
   fullOut <- liftIO $ readTVarIO clientFullOutput
   liftIO $ assertBool
-    ("assertFullOutput: expecting " ++ show expected ++ " but got " ++ show fullOut)
-    (any (T.isInfixOf expected) fullOut)
+    ("assertFullOutputWith: asserting '" ++ show assertStr ++ "' but got " ++ show fullOut)
+    (any test fullOut)
 
 --------------------------------------------------------------------------------
 -- * Waiting for messages

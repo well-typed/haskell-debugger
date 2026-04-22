@@ -182,15 +182,10 @@ nix-build
 ## Testing and Debugging
 
 ```
-# Main testsuite
+# Main testsuite (includes the golden tests, unit tests, and the integration
+# tests that used to be run via the NodeJS @vscode-debugadapter-testsupport@
+# library).
 cabal run haskell-debugger-test
-
-# Integration testsuite which uses vscode dap adapter library
-# (Ideally, we'd migrate this by extending the main testsuite until we had an
-# equivalent to lsp-test but for dap; dap-test)
-cd test/integration-tests
-make GHC=/path/to/recent/ghc \
-     DEBUGGER=$(cd ../.. && cabal list-bin -w /path/to/ghc-9.14 exe:hdb)
 ```
 
 ### Debugging the debugger with the debugger

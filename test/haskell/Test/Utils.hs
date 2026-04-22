@@ -1,5 +1,8 @@
 module Test.Utils where
 
+import Control.Monad (when)
+import Data.List (isInfixOf)
+import System.Directory (doesFileExist)
 import System.FilePath
 import System.IO.Temp
 import qualified System.Process as P
@@ -13,7 +16,13 @@ withHermeticDir :: Bool               -- ^ Whether to keep the temp dir around f
 withHermeticDir keep src k = do
   withTmpDir "hdb-test" $ \dest -> do
     P.callCommand $ "cp -r " ++ src ++ " " ++ dest
-    k (dest </> takeBaseName src)
+    let destTestDir = dest </> takeBaseName src
+    -- Some test projects reference @./haskell-debugger-view@ in their
+    -- @cabal.project@. If such a dir is expected, copy the in-tree
+    -- @haskell-debugger-view@ there so that cabal can resolve it when
+    -- building the test project from its hermetic copy.
+    cpHaskellDebuggerViewIfNeeded destTestDir
+    k destTestDir
   where
     withTmpDir | keep      = withPersistentSystemTempDirectory
                | otherwise = withSystemTempDirectory
@@ -22,4 +31,13 @@ withHermeticDir keep src k = do
     withPersistentSystemTempDirectory template k' = do
       dir <- flip createTempDirectory template =<< getCanonicalTemporaryDirectory
       k' dir
+
+    cpHaskellDebuggerViewIfNeeded testDir = do
+      let cabalProject = testDir </> "cabal.project"
+      existsCP <- doesFileExist cabalProject
+      when existsCP $ do
+        contents <- readFile cabalProject
+        when ("haskell-debugger-view" `isInfixOf` contents) $
+          P.callCommand $
+            "cp -r haskell-debugger-view " ++ testDir </> "haskell-debugger-view"
 

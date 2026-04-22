@@ -1,8 +1,10 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 module Test.DAP.Orphans () where
 
 import Data.Aeson
+import qualified Data.Text as T
 import DAP.Utils (genericParseJSONWithModifier, genericToJSONWithModifier)
 import DAP
 
@@ -76,6 +78,86 @@ instance FromJSON EventGroup where
 instance FromJSON OutputEvent where
   parseJSON = genericParseJSONWithModifier
 
+instance FromJSON Variable where
+  parseJSON = genericParseJSONWithModifier
+
+instance FromJSON VariablePresentationHint where
+  parseJSON = genericParseJSONWithModifier
+
+instance FromJSON PresentationHintKind where
+  parseJSON = withText "PresentationHintKind" $ \t -> pure $ case t of
+    "property"          -> PresentationHintKindProperty
+    "method"            -> PresentationHintKindMethod
+    "class"             -> PresentationHintKindClass
+    "data"              -> PresentationHintKindData
+    "event"             -> PresentationHintKindEvent
+    "baseClass"         -> PresentationHintKindBaseClass
+    "innerClass"        -> PresentationHintKindInnerClass
+    "interface"         -> PresentationHintKindInterface
+    "mostDerivedClass"  -> PresentationHintKindMostDerivedClass
+    "virtual"           -> PresentationHintKindVirtual
+    "dataBreakpoint"    -> PresentationHintKindDataBreakpoint
+    other               -> PresentationHintKind other
+
+instance FromJSON PresentationHintVisibility where
+  parseJSON = withText "PresentationHintVisibility" $ \t -> pure $ case t of
+    "public"    -> PresentationHintVisibilityPublic
+    "private"   -> PresentationHintVisibilityPrivate
+    "protected" -> PresentationHintVisibilityProtected
+    "internal"  -> PresentationHintVisibilityInternal
+    "final"     -> PresentationHintVisibilityFinal
+    other       -> PresentationHintVisibility (T.unpack other)
+
+instance FromJSON PresentationHintAttributes where
+  parseJSON = withText "PresentationHintAttributes" $ \t -> pure $ case t of
+    "static"            -> PresentationHintAttributesStatic
+    "constant"          -> PresentationHintAttributesConstant
+    "readOnly"          -> PresentationHintAttributesReadOnly
+    "rawText"           -> PresentationHintAttributesRawText
+    "hasObjectId"       -> PresentationHintAttributesHasObjectId
+    "canHaveObjectId"   -> PresentationHintAttributesCanHaveObjectId
+    "hasSideEffects"    -> PresentationHintAttributesHasSideEffects
+    "hasDataBreakpoint" -> PresentationHintAttributesHasDataBreakpoint
+    other               -> PresentationHintAttributes (T.unpack other)
+
+instance FromJSON VariablesResponse where
+  parseJSON = withObject "fromJSON:VariablesResponse" $ \o -> do
+    vs <- o .: "variables"
+    pure $ VariablesResponse vs
+
+instance FromJSON EvaluateResponse where
+  parseJSON = genericParseJSONWithModifier
+
+instance FromJSON ExceptionInfoResponse where
+  -- NB: we parse 'breakMode' manually because the stock 'genericParseJSON'
+  -- of the 'ExceptionBreakMode' sum type (as defined in DAP.Types) does not
+  -- correctly map the JSON tag "never"/"always"/"unhandled"/"userUnhandled"
+  -- to the corresponding constructors when the constructor name lacks a
+  -- common prefix.
+  parseJSON = withObject "ExceptionInfoResponse" $ \o -> do
+    exceptionId  <- o .: "exceptionId"
+    description  <- o .:? "description"
+    breakModeTxt <- o .: "breakMode"
+    bm <- case (breakModeTxt :: T.Text) of
+      "never"         -> pure Never
+      "always"        -> pure Always
+      "unhandled"     -> pure Unhandled
+      "userUnhandled" -> pure UserUnhandled
+      other           -> fail $ "Unknown ExceptionBreakMode: " ++ show other
+    details      <- o .:? "details"
+    pure ExceptionInfoResponse
+      { exceptionInfoResponseExceptionId = exceptionId
+      , exceptionInfoResponseDescription = description
+      , exceptionInfoResponseBreakMode   = bm
+      , exceptionInfoResponseDetails     = details
+      }
+
+instance FromJSON ExceptionDetails where
+  parseJSON = genericParseJSONWithModifier
+
+instance FromJSON ExitedEvent where
+  parseJSON = genericParseJSONWithModifier
+
 --------------------------------------------------------------------------------
 -- * ToJSON instances for request argument types (client sends requests)
 --------------------------------------------------------------------------------
@@ -113,4 +195,43 @@ instance ToJSON ValueFormat where
   toJSON = genericToJSONWithModifier
 
 instance ToJSON DisconnectArguments where
+  toJSON = genericToJSONWithModifier
+
+instance ToJSON VariablesArguments where
+  toJSON VariablesArguments{..} = object $
+    [ "variablesReference" .= variablesArgumentsVariablesReference
+    ] ++
+    [ "start" .= v | Just v <- [variablesArgumentsStart] ] ++
+    [ "count" .= v | Just v <- [variablesArgumentsCount] ] ++
+    [ "format" .= v | Just v <- [variablesArgumentsFormat] ]
+
+instance ToJSON StepOutArguments where
+  toJSON StepOutArguments{..} = object $
+    [ "threadId" .= stepOutArgumentsThreadId
+    , "singleThread" .= stepOutArgumentsSingleThread
+    ] ++
+    [ "granularity" .= g | Just g <- [stepOutArgumentsGranularity] ]
+
+instance ToJSON ContinueArguments where
+  toJSON ContinueArguments{..} = object
+    [ "threadId" .= continueArgumentsThreadId
+    , "singleThread" .= continueArgumentsSingleThread
+    ]
+
+instance ToJSON EvaluateArguments where
+  toJSON = genericToJSONWithModifier
+
+instance ToJSON SetExceptionBreakpointsArguments where
+  toJSON = genericToJSONWithModifier
+
+instance ToJSON ExceptionFilterOptions where
+  toJSON = genericToJSONWithModifier
+
+instance ToJSON ExceptionOptions where
+  toJSON = genericToJSONWithModifier
+
+instance ToJSON ExceptionPathSegment where
+  toJSON = genericToJSONWithModifier
+
+instance ToJSON ExceptionInfoArguments where
   toJSON = genericToJSONWithModifier

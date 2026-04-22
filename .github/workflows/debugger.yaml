@@ -68,19 +68,16 @@ jobs:
           # This will catch both haskell-debugger and haskell-debugger-view
           path: dist-newstyle/sdist/haskell-debugger*.tar.gz
 
-  # Building and testing are done on the distributed sdist: not on the full git repo.
+  # Tests run on the distributed sdist to catch packaging issues.
   build-n-test-haskell-debugger:
-    name: Build and Run Integration Tests
+    name: Build and Run Tests on Sdist
     needs: sdist-haskell-debugger
-    runs-on: ubuntu-latest
-    # Run all jobs in the matrix to the end (IF NOT ON RELEASE)
+    runs-on: ubuntu-latest # just one is fine here, we test more machines on the checkout
     continue-on-error: ${{ inputs.is-release == false }}
     strategy:
       matrix:
-        version: [9.14.1] #, latest-nightly] disable nightly while its broken
+        version: [9.14.1]
         include:
-          # - channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
-          #   version: latest-nightly
           - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
             version: 9.14.1
     steps:
@@ -88,7 +85,6 @@ jobs:
         with:
           submodules: recursive
 
-      # Cabal store cache (main speed-up)
       - uses: actions/cache@v3
         with:
           path: |
@@ -103,10 +99,6 @@ jobs:
           cabal-version: 3.16
           ghcup-release-channel: ${{ matrix.channel }}
 
-      - uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
       - name: Download hdb source dist
         uses: actions/download-artifact@v4
         with:
@@ -120,23 +112,18 @@ jobs:
       - name: Setup local version of haskell-debugger-view
         if: env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE
         run: |
-          (cd ${{ runner.temp }}/dist && tar xzf "haskell-debugger-view-${{env.haskellDebuggerViewVersion}}.tar.gz")
-          (cd ${{ runner.temp }}/dist && cd haskell-debugger-${{env.haskellDebuggerVersion}} && echo 'packages: . ../haskell-debugger-view-${{env.haskellDebuggerViewVersion}}' > cabal.project)
+          (cd ${{ runner.temp }}/dist && tar xzf "haskell-debugger-view-${{env.haskellDebuggerViewVersion}}.tar.gz" && mv "haskell-debugger-view-${{env.haskellDebuggerViewVersion}}" "haskell-debugger-${{env.haskellDebuggerVersion}}/haskell-debugger-view")
+          (cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}} && echo 'packages: . ./haskell-debugger-view' > cabal.project)
 
-      - name: Build and Run integration tests
+      - name: Build and Run tests
         run: |
           echo "Using haskell-debugger-view from hackage: ${{env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE}}"
-          (cd ${{ runner.temp }}/dist && cd haskell-debugger-${{env.haskellDebuggerVersion}} && cabal build exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell --ghc-options=-Werror)
-          export DEBUGGER=$(cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}} && cabal list-bin exe:hdb --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell --ghc-options=-Werror)
-          echo "DEBUGGER: $DEBUGGER"
-          cd test/integration-tests/
-          make clean
-          make node_modules
-          make test
+          cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}}
+          cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell --ghc-options=-Werror
 
-  # Golden+Haskell tests are run on the git checkout
+  # Tests run on the git checkout
   build-n-more-test-haskell-debugger:
-    name: Build and Run Haskell Tests (${{ matrix.runner }})
+    name: Build and Run Tests on checkout (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     # Run all jobs in the matrix to the end (IF RELEASE, STOP ON FAILURE)
     continue-on-error: ${{ inputs.is-release == false }}
