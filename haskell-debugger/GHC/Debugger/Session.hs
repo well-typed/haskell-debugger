@@ -156,7 +156,7 @@ createUnitEnvFromFlags initialDynFlags unitDflags = do
           , importPaths = []
           , packageFlags =
               [ ExposePackage
-                  ("-package-id " ++ unitIdString unitId)
+                  (unitIdString unitId)
                   (UnitIdArg $ RealUnit (Definite unitId))
                   (ModRenaming True [])
               | (unitId, _) <- unitEnvList

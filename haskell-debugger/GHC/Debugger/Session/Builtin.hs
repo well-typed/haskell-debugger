@@ -100,7 +100,7 @@ addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
         , importPaths = []
         , packageFlags =
           [ ExposePackage
-                  ("-package-id " ++ unitIdString unitId)
+                  (unitIdString unitId)
                   (UnitIdArg $ RealUnit (Definite unitId))
                   (ModRenaming True [])
           | unitId <- base_uids
