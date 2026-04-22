@@ -37,9 +37,21 @@ extra-source-files: haskell-debugger-view/src/GHC/Debugger/View/Class.hs
                     haskell-debugger-view/src/GHC/Debugger/View/Containers.hs
                     haskell-debugger-view/src/GHC/Debugger/View/Text.hs
                     haskell-debugger-view/src/GHC/Debugger/View/ByteString.hs
+                    haskell-debugger-view/haskell-debugger-view.cabal
+                    haskell-debugger-view/LICENSE
+                    haskell-debugger-view/CHANGELOG.md
 
                     -- Should probably be extra extra-files but that requires cabal 3.14
                     test/golden/**/*.hs
+                    test/golden/**/*.cabal
+                    test/golden/**/*.yaml
+                    test/golden/**/*.project
+
+                    test/integration/**/*.hs
+                    test/integration/**/*.cabal
+                    test/integration/**/*.yaml
+                    test/integration/**/*.project
+
                     test/golden/**/*.hdb-stdin
                     test/golden/**/*.hdb-stdout
                     test/golden/**/*.hdb-test
