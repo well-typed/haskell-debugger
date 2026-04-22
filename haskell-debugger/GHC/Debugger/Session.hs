@@ -71,6 +71,8 @@ import qualified Data.Set as Set
 import Data.Maybe
 import GHC.Types.Target (InputFileBuffer)
 import GHC (SingleStep, ExecResult)
+import Data.Set (Set)
+import qualified GHC.Unit as GHC
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -141,31 +143,21 @@ setupHomeUnitGraph flagsAndTargets = do
 
 -- | Set up the 'HomeUnitGraph' with empty 'HomeUnitEnv's.
 -- The first 'DynFlags' are the 'DynFlags' for the interactive session.
-createUnitEnvFromFlags :: DynFlags -> [DynFlags] -> IO HomeUnitGraph
-createUnitEnvFromFlags initialDynFlags unitDflags = do
-  let
-    newInternalUnitEnv dflags hpt = mkHomeUnitEnv State.emptyUnitState Nothing dflags hpt Nothing
+createHomeUnitGraph :: GHC.Logger -> [DynFlags] -> IO HomeUnitGraph
+createHomeUnitGraph logger unitDflags = do
+  let home_units = Set.fromList $ map homeUnitId_ unitDflags
+  unitEnvList <- flip traverse unitDflags $ \ dflags -> do
+    hue <- setupNewHomeUnitEnv logger dflags Nothing home_units
+    pure (homeUnitId_ dflags, hue)
 
-  unitEnvList <- traverse (\dflags -> do
-    emptyHpt <- emptyHomePackageTable
-    pure (homeUnitId_ dflags, newInternalUnitEnv dflags emptyHpt)) unitDflags
+  pure $ unitEnv_new (Map.fromList unitEnvList)
 
-  interactiveHomeUnit <- do
-    let interactiveDynFlags = initialDynFlags
-          { homeUnitId_ = interactiveGhcDebuggerUnitId
-          , importPaths = []
-          , packageFlags =
-              [ ExposePackage
-                  (unitIdString unitId)
-                  (UnitIdArg $ RealUnit (Definite unitId))
-                  (ModRenaming True [])
-              | (unitId, _) <- unitEnvList
-              ]
-          }
-    emptyHpt <- emptyHomePackageTable
-    pure (homeUnitId_ interactiveDynFlags, newInternalUnitEnv interactiveDynFlags emptyHpt)
-
-  pure $ unitEnv_new (Map.fromList (interactiveHomeUnit : unitEnvList))
+setupNewHomeUnitEnv :: GHC.Logger -> DynFlags -> Maybe [GHC.UnitDatabase UnitId] -> Set UnitId -> IO HomeUnitEnv
+setupNewHomeUnitEnv logger dflags cached_dbs other_home_units = do
+  emptyHpt <- emptyHomePackageTable
+  (dbs,unit_state,home_unit,mconstants) <- State.initUnits logger dflags cached_dbs other_home_units
+  updated_dflags <- GHC.updatePlatformConstants dflags mconstants
+  pure $ mkHomeUnitEnv unit_state (Just dbs) updated_dflags emptyHpt (Just home_unit)
 
 -- | Given a set of 'DynFlags', set up the 'UnitEnv' and 'HomeUnitEnv' for this
 -- 'HscEnv'.
@@ -174,50 +166,38 @@ createUnitEnvFromFlags initialDynFlags unitDflags = do
 initHomeUnitEnv :: [DynFlags] -> HscEnv -> IO HscEnv
 initHomeUnitEnv unitDflags env = do
   let dflags0         = hsc_dflags env
-  -- additionally, set checked dflags so we don't lose fixes
-  initial_home_graph <- createUnitEnvFromFlags dflags0 unitDflags
-  let home_units = unitEnv_keys initial_home_graph
-  init_home_unit_graph <- forM initial_home_graph $ \homeUnitEnv -> do
-    let dflags = homeUnitEnv_dflags homeUnitEnv
-        old_hpt = homeUnitEnv_hpt homeUnitEnv
-    (dbs,unit_state,home_unit,mconstants) <- State.initUnits (hsc_logger env) dflags Nothing home_units
-    updated_dflags <- GHC.updatePlatformConstants dflags mconstants
-    pure HomeUnitEnv
-      { homeUnitEnv_units = unit_state
-      , homeUnitEnv_unit_dbs = Just dbs
-      , homeUnitEnv_dflags = updated_dflags
-      , homeUnitEnv_hpt = old_hpt
-      , homeUnitEnv_home_unit = Just home_unit
-      }
 
-  let cached_unit_dbs = concat . catMaybes . fmap homeUnitEnv_unit_dbs $ Foldable.toList init_home_unit_graph
+  initial_home_graph <- createHomeUnitGraph (hsc_logger env) unitDflags
 
-  let homeUnitEnv = fromJust $ HUG.unitEnv_lookup_maybe interactiveGhcDebuggerUnitId init_home_unit_graph
-      dflags = homeUnitEnv_dflags homeUnitEnv
-      old_hpt = homeUnitEnv_hpt homeUnitEnv
-  (dbs,unit_state,home_unit,mconstants) <- State.initUnits (hsc_logger env) dflags (Just cached_unit_dbs) home_units
+  -- We set up the interactive debugger home unit after the other home units
+  -- have been initialised.
+  -- This allows us to reuse the package databases and their respective visibilities.
+  interactiveHomeUnit <- do
+    let
+      home_units = unitEnv_keys initial_home_graph
 
-  updated_dflags <- GHC.updatePlatformConstants dflags mconstants
-  let ie = HomeUnitEnv
-       { homeUnitEnv_units = unit_state
-       , homeUnitEnv_unit_dbs = Just dbs
-       , homeUnitEnv_dflags = updated_dflags
-       , homeUnitEnv_hpt = old_hpt
-       , homeUnitEnv_home_unit = Just home_unit
-       }
-
-  let home_unit_graph = HUG.unitEnv_insert interactiveGhcDebuggerUnitId ie init_home_unit_graph
-
-  let dflags1 = homeUnitEnv_dflags $ unitEnv_lookup interactiveGhcDebuggerUnitId home_unit_graph
-  let unit_env = UnitEnv
-        { ue_platform        = targetPlatform dflags1
-        , ue_namever         = GHC.ghcNameVersion dflags1
-        , ue_home_unit_graph = home_unit_graph
-        , ue_current_unit    = interactiveGhcDebuggerUnitId
-        , ue_module_graph    = ue_module_graph (hsc_unit_env env)
-        , ue_eps             = ue_eps (hsc_unit_env env)
+      interactiveDynFlags = dflags0
+        { homeUnitId_ = interactiveGhcDebuggerUnitId
+        , importPaths = []
+        , packageFlags =
+            [ ExposePackage
+                (unitIdString home_unit_id)
+                (UnitIdArg $ RealUnit (Definite home_unit_id))
+                (ModRenaming True [])
+            | home_unit_id <- Set.toList home_units
+            ]
         }
-  pure $ hscSetFlags dflags1 $ hscSetUnitEnv unit_env env
+
+    let cached_unit_dbs = concat . catMaybes . fmap homeUnitEnv_unit_dbs $ Foldable.toList initial_home_graph
+    setupNewHomeUnitEnv (hsc_logger env) interactiveDynFlags (Just cached_unit_dbs) home_units
+
+  let home_unit_graph =
+        HUG.unitEnv_insert interactiveGhcDebuggerUnitId interactiveHomeUnit initial_home_graph
+
+  let interactiveDFlags = homeUnitEnv_dflags interactiveHomeUnit
+  unit_env <-
+    initUnitEnv interactiveGhcDebuggerUnitId home_unit_graph (GHC.ghcNameVersion interactiveDFlags) (targetPlatform interactiveDFlags)
+  pure $ hscSetFlags interactiveDFlags $ hscSetUnitEnv unit_env env
 
 
 -- | Setup the given 'HscEnv' to hold a 'UnitEnv'
