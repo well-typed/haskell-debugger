@@ -217,11 +217,10 @@ test-suite haskell-debugger-test
                       Test.DAP.Orphans,
                       Test.Utils,
 
-                      Test.Unit.DAP.RunInTerminal,
-                      Test.Unit.DAP.Scopes,
-                      Test.Unit.DAP.LogMessage,
-                      Test.Unit.DAP.Persistent,
-
+                      Test.Integration.RunInTerminal,
+                      Test.Integration.Scopes,
+                      Test.Integration.LogMessage,
+                      Test.Integration.Persistent,
                       Test.Integration.Basic,
                       Test.Integration.Exceptions,
                       Test.Integration.MultiMain,
