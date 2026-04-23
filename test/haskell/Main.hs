@@ -46,6 +46,12 @@ main = do
   env <- getEnvironment
   let mkTest = mkGoldenTest False env
   golden_tests_paths <- findByExtension [".hdb-test"] "test/golden"
+    `catch` \(e::IOException) -> do
+       hPutStrLn stderr "-- !! ERROR !! -----------------------------------------------------------------"
+       hPutStrLn stderr "Failed to find golden tests by `*.hdb-test` extension."
+       hPutStrLn stderr "Make sure that the testsuite is being run from the project root (where the relative path `test/golden` is valid)."
+       hPutStrLn stderr "--------------------------------------------------------------------------------"
+       throwIO e
 
   let internalOnlyTests = filter (\p -> ".internal" `isSuffixOf` takeBaseName p) golden_tests_paths
   let externalOnlyTests = filter (\p -> ".external" `isSuffixOf` takeBaseName p) golden_tests_paths
