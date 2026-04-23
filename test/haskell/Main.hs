@@ -44,7 +44,7 @@ import Test.Utils
 main :: IO ()
 main = do
   env <- getEnvironment
-  let mkTest = mkGoldenTest False env
+  let mkTest = mkGoldenTest (maybe False read (lookup "KEEP_TEMP_DIRS" env)) env
   golden_tests_paths <- findByExtension [".hdb-test"] "test/golden"
     `catch` \(e::IOException) -> do
        hPutStrLn stderr "-- !! ERROR !! -----------------------------------------------------------------"
