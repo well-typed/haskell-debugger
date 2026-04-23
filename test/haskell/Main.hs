@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase, OverloadedStrings, ViewPatterns, QuasiQuotes, CPP #-}
 module Main (main) where
 
-import Data.List (isSuffixOf)
+import Data.List (isSuffixOf, isInfixOf)
 import qualified Data.Set as Set
 import Text.RE.TDFA.Text.Lazy
 import Text.Printf
@@ -10,6 +10,7 @@ import qualified Data.Text.Lazy.Encoding as LT
 import qualified Data.Text.Lazy.IO as LT
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified System.Process as P
+import System.Directory
 import System.FilePath
 import qualified System.FilePath.Posix as Posix
 import System.IO.Temp
@@ -71,8 +72,8 @@ main = do
   -- (since they run as separate processes). To use a single golden test file for
   -- both modes, we disable IPE backtraces by default in tests.
   let baseFlags = "--disable-ipe-backtraces"
-  default_goldens   <- mapM (mkTest baseFlags) testsForExternal
-  intinterp_goldens <- mapM (mkTest ("--internal-interpreter " ++ baseFlags)) testsForInternal
+  let default_goldens   = map (mkTest baseFlags) testsForExternal
+  let intinterp_goldens = map (mkTest ("--internal-interpreter " ++ baseFlags)) testsForInternal
 
   defaultMain $
     testGroup "Tests"
@@ -105,30 +106,36 @@ unitTests =
 
 -- | Receives as an argument the path to the @*.hdb-test@ which contains the
 -- shell invocation for running
-mkGoldenTest :: Bool -> [(String, String)] -> FilePath -> String -> IO TestTree
-mkGoldenTest keepTmpDirs inheritedEnv flags path = do
-  let testName   = takeBaseName     path
-  let goldenPath = replaceExtension path (".ghc-" ++ ghcVersionTag ++ ".hdb-stdout")
-  return $ goldenVsStringComparing testName goldenPath action
+mkGoldenTest :: Bool -> [(String, String)] -> FilePath -> String -> TestTree
+mkGoldenTest keepTmpDirs inheritedEnv flags path = goldenVsStringComparing testName goldenPath topAction
   where
     ghcVersionTag :: String
     ghcVersionTag = show (__GLASGOW_HASKELL__ :: Int)
 
-    action :: IO LBS.ByteString
-    action = do
-      withHermeticDir keepTmpDirs (takeDirectory path) $ \test_dir -> do
-        (_, Just hout, _, p)
-          <- P.createProcess (P.proc "sh" [takeFileName path])
-            { P.cwd = Just test_dir, P.std_out = P.CreatePipe
-            , P.env = Just $
-              inheritedEnv ++
-              [ ("HDB_CACHE_DIR", test_dir </> ".hdb-cache") ] ++
-              [ ("HDB", "hdb " ++ flags)
-              ]
-            }
-        P.waitForProcess p >>= \case
-          ExitSuccess   -> LBS.hGetContents hout
-          ExitFailure c -> error $ "Test script in " ++ test_dir ++ " failed with exit code: " ++ show c
+    testName   = takeBaseName     path
+    goldenPath = replaceExtension path (".ghc-" ++ ghcVersionTag ++ ".hdb-stdout")
+
+    noTmpDir = ".no-tmp-dir" `isInfixOf` testName
+
+    topAction :: IO LBS.ByteString
+    topAction | noTmpDir  = testAction path =<< getCurrentDirectory -- a bit dangerous! used in the self-debug-cli test
+              | otherwise = withHermeticDir keepTmpDirs (takeDirectory path) (testAction (takeFileName path))
+
+
+    testAction :: FilePath -> FilePath -> IO LBS.ByteString
+    testAction test_path test_dir = do
+      (_, Just hout, _, p)
+        <- P.createProcess (P.proc "sh" [test_path])
+          { P.cwd = Just test_dir, P.std_out = P.CreatePipe
+          , P.env = Just $
+            inheritedEnv ++
+            [ ("HDB_CACHE_DIR", test_dir </> ".hdb-cache")
+            , ("HDB", "hdb " ++ flags)
+            ]
+          }
+      P.waitForProcess p >>= \case
+        ExitSuccess   -> LBS.hGetContents hout
+        ExitFailure c -> error $ "Test script in " ++ test_dir ++ " failed with exit code: " ++ show c
 
 --------------------------------------------------------------------------------
 -- Tasty Golden Advanced wrapper
@@ -172,6 +179,7 @@ goldenVsStringComparing name ref act =
   -- Normalise the action producing the output
   normalisingAct = do
     tmpDir <- getCanonicalTemporaryDirectory
+    cwd    <- getCurrentDirectory
     let
       winTempDirWithForwardSlashes = useForwardSlashes tmpDir
     let posixTempDirRegex =
@@ -190,6 +198,8 @@ goldenVsStringComparing name ref act =
         , "<TEMPORARY-DIRECTORY>" )
       , ( "\\.hdb-cache/[^/]+/"
         , ".hdb-cache/<CACHE-ENTRY>/" )
+      , ( escapeRegex cwd
+        , "<PROJECT-ROOT>" )
      ]
 
     let normalising (LT.decodeUtf8 -> txt) = LT.filter (/= '\r') $ foldl' (*=~/) txt replaceREs

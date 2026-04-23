@@ -159,8 +159,9 @@ jobs:
 
       - name: Configure the build
         run: |
-          cabal configure --enable-tests --enable-benchmarks --disable-documentation
-          cabal build all --dry-run
+          cabal build all --dry-run \
+            --enable-executable-dynamic --enable-tests \
+            --enable-benchmarks --disable-documentation
         # The last step generates dist-newstyle/cache/plan.json for the cache key.
 
       - name: Restore cached dependencies
