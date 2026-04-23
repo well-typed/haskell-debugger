@@ -421,6 +421,9 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
         when (GHC.failed success) $ liftIO $
           throwM DebuggerFailedToLoad
 
+        -- See Note [Must explicitly expose module graph units]
+        setExposedInUnit interactiveGhcDebuggerUnitId (graphUnits final_mod_graph)
+
         -- Set interactive context to import all loaded modules
         let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
         -- dbgView should always be available, either because we manually loaded it
@@ -504,6 +507,32 @@ add our own `MC.finally cleanupInterp` call which sends the `Shutdown` message
 to the external interpreter before propagating the exception further (to GHC's
 `withCleanupSession`, which will now do Nothing because we set `InterpPending`,
 and beyond).
+-}
+
+{-
+Note [Must explicitly expose module graph units]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+`interactiveGhcDebugger` is our "current home unit", so its
+`UnitState{moduleNameProvidersMap}` will determine which modules we can import
+interactively (i.e. with GHC.setContext).
+
+The `moduleNameProvidersMap` has so far only been required to expose, with
+`ExposePackage` flags, the other home units. However, exposing a package **does
+not** imply exposing its dependencies, so `mkUnitState` was free to choose
+versions/abis for us, e.g., expose haskell-debugger-view-0.2.1.0-... and hide
+haskell-debugger-view-0.2.0.0-..., while the latter is the one in the graph. We
+noticed with `hdv` but the above can happen with any dep of the debuggee,
+causing problems at the prompt.
+
+Here we explicitly grab the units from the graph and make them exposed, so if we
+find a unit in the graph we should be able to import exposed modules from it,
+and importing modules at the prompt should use the versions the debuggee depends
+on.
+
+An alternative, closer to what ghci does, would be to copy the `packageFlags`
+from the debuggee units, however doing so doesn't take care of fixing a unitId
+for dependencies of dependencies.
+
 -}
 
 -- | See Note [Shutting down the external interpreter]
@@ -821,11 +850,7 @@ findHsDebuggerViewUnitId mod_graph = do
   let unitState = hsc_units hsc_env
 
   -- Note: linear in the module graph but only happens once.
-  let potential_units = (`mapMaybe` mg_mss mod_graph) $ \case
-         UnitNode _deps uid -> Just uid
-         ModuleNode _ modl -> Just $ mnkUnitId $ mnKey modl
-         InstantiationNode uid _ -> Just uid
-         LinkNode _ _ -> Nothing
+  let potential_units = graphUnits mod_graph
   -- Note: the intermediate set is expected to be small (<= 2).
   let hskl_dbgr_vws = Set.toList . Set.fromList $
         [ uid

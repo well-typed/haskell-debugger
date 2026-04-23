@@ -1,4 +1,5 @@
 {-# LANGUAGE DerivingStrategies, CPP, RecordWildCards #-}
+{-# LANGUAGE LambdaCase #-}
 
 -- | Initialise the GHC session for one or more home units.
 --
@@ -28,6 +29,8 @@ module GHC.Debugger.Session (
   setDynFlagWays,
   makeDynFlagsAbsoluteOverall,
   resumeExec,
+  setExposedInUnit,
+  graphUnits,
   )
   where
 
@@ -73,6 +76,7 @@ import GHC.Types.Target (InputFileBuffer)
 import GHC (SingleStep, ExecResult)
 import Data.Set (Set)
 import qualified GHC.Unit as GHC
+import GHC.Unit.Module.Graph (mg_mss, ModuleGraphNode (..), ModNodeKeyWithUid (mnkUnitId), mnKey)
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -199,6 +203,61 @@ initHomeUnitEnv unitDflags env = do
     initUnitEnv interactiveGhcDebuggerUnitId home_unit_graph (GHC.ghcNameVersion interactiveDFlags) (targetPlatform interactiveDFlags)
   pure $ hscSetFlags interactiveDFlags $ hscSetUnitEnv unit_env env
 
+-- | Extracts @UnitId@s from the graph.
+graphUnits :: GHC.ModuleGraph -> [UnitId]
+graphUnits mod_graph = L.nubOrd .
+  (`mapMaybe` mg_mss mod_graph) $ \case
+         UnitNode _deps uid -> Just uid
+         ModuleNode _ modl -> Just $ mnkUnitId $ mnKey modl
+         InstantiationNode uid _ -> Just uid
+         LinkNode _ _ -> Nothing
+
+-- | Rebuilds the UnitState of the unit, exposing the given packages.
+--
+--   Takes care of updating hsc_dflags, ue_platform, and ue_namever if this is the ue_currentUnit.
+setExposedInUnit :: UnitId -> [UnitId] -> Ghc ()
+setExposedInUnit unitId exposed = do
+  env <- GHC.getSession
+  let old_ie = case lookupHugUnitId unitId (hsc_HUG env) of
+        Just hue -> hue
+        Nothing -> error $ "setExposedInUnit: unit not found " ++ unitIdString unitId
+
+  let dflags = (homeUnitEnv_dflags old_ie) { packageFlags = [ExposePackage
+                  (unitIdString uid)
+                  (UnitIdArg $ RealUnit (Definite uid))
+                  (ModRenaming True [])
+              | uid <- exposed
+              , uid /= rtsUnitId
+              , uid /= ghcInternalUnitId
+              , unitIdString uid /= "haskell-debugger-view-in-memory"
+              -- FIXME: any other to filter out?
+              ]}
+  let cached_dbs = homeUnitEnv_unit_dbs old_ie
+  let home_units = Set.fromList $ State.homeUnitDepends $ homeUnitEnv_units old_ie
+  (dbs,unit_state,home_unit,mconstants) <- liftIO $ State.initUnits (hsc_logger env) dflags cached_dbs home_units
+
+  updated_dflags <- liftIO $ GHC.updatePlatformConstants dflags mconstants
+  let ie = old_ie
+       { homeUnitEnv_units = unit_state
+       , homeUnitEnv_unit_dbs = Just dbs
+       , homeUnitEnv_dflags = updated_dflags
+       , homeUnitEnv_home_unit = Just home_unit
+       }
+
+  let home_unit_graph = HUG.unitEnv_insert unitId ie (hsc_HUG env)
+  let ue0 = hsc_unit_env env
+  let ue1 = ue0 {ue_home_unit_graph = home_unit_graph}
+  let
+    new_env
+      | ue_currentUnit ue1 /= unitId = hscSetUnitEnv ue1 env
+      | otherwise = hscSetFlags dflags1 $ hscSetUnitEnv ue2 env
+      where
+        dflags1 = homeUnitEnv_dflags $ unitEnv_lookup unitId (ue_home_unit_graph ue1)
+        ue2 = ue1
+          { ue_platform        = targetPlatform dflags1
+          , ue_namever         = GHC.ghcNameVersion dflags1
+          }
+  GHC.setSession new_env
 
 -- | Setup the given 'HscEnv' to hold a 'UnitEnv'
 -- with all the given components.
