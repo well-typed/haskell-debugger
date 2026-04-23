@@ -89,12 +89,11 @@ import System.IO (hGetLine, IOMode(..))
 import qualified GHC.Linker.Loader as Loader
 import GHC.Stack.Annotation
 import GHC.Platform.Ways
-
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Data.FastString.Env (emptyFsEnv)
 #endif
-
 import GHC.Unit.Home.Graph
+import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything which uses `Debugger`
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }

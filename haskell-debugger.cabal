@@ -105,6 +105,7 @@ library
 
                       GHC.Debugger.Monad,
                       GHC.Debugger.Utils,
+                      GHC.Debugger.Utils.Orphans,
 
                       GHC.Debugger.Session,
                       GHC.Debugger.Session.Builtin,

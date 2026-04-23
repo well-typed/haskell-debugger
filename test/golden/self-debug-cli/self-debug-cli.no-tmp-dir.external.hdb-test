@@ -1,0 +1,31 @@
+#!/bin/sh
+
+# 1) Run only in .external mode because there are some issues in loading ghc into
+# itself with the internal interpreter. Didn't investigate thoroughly.
+#
+# 2) Since this test is named `....no-tmp-dir....` then it will be run in the root of the tree
+#
+# 3) Grep out the `BreakFound` word. It doesn't matter for the test and it is
+# too prone to changing because it reports source lines of the actual debugger
+# source, which we change all the time (unlike testsuite programs).
+#
+# 4) Normalize cabal autogen paths (e.g. `Paths_haskell_debugger.hs`).
+# It's not immediately clear why these go in .cache/hie-bios/... rather than in
+# $HDB_CACHE_DIR, but I guess it's an autogen thing rather than the actual
+# compilation artifacts cache (.hi, ...)
+#
+# 5) When testing the sdist (just the packaged things), the root doesn't have a hie.yaml.
+#    Add one temporarily
+created_yaml=false
+if [ ! -f hie.yaml ]; then
+    echo 'cradle:\n  cabal:\n    component: "all"' > hie.yaml
+    created_yaml=true;
+fi
+
+$HDB -v0 hdb/Main.hs < "test/golden/self-debug-cli/self-debug-cli.hdb-stdin" 2>&1 \
+  | grep -v "BreakFound" \
+  | sed 's|[^ ]*/Paths_haskell_debugger.hs|<AUTOGEN-DIR>/Paths_haskell_debugger.hs|g'
+
+if [ $created_yaml = true ]; then
+    rm hie.yaml
+fi

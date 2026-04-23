@@ -1,0 +1,5 @@
+break --name runDebugger
+run cli test/golden/self-debug-cli/Main.hs
+print mkFastString "this FastString should be displayed pretty as a string (SHOULD NOT SEE ITS FULL INTERNALS)."
+print mkFastString "We have a DebugView FastString instance at this breakpoint."
+exit
