@@ -1,0 +1,4 @@
+p import Main
+p main
+p import "T283" Main
+p "If an older version of T283 was installed, we'd now shadow the home-unit Main with the outdated installed Main!"

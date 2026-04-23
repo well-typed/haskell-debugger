@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Witnesses that package-qualified imports bypass home units (#283)
+$HDB -v0 app/Main.hs 2>&1 < T283.hdb-stdin
