@@ -876,6 +876,10 @@ findHsDebuggerViewUnitId mod_graph = do
           if any (\(l,h) -> l <= version && version < h) supported_ranges
             then return (Just hdv_uid)
             else throwM UnsupportedHsDbgViewVersion{supportedVersions=supported_ranges, actualVersion=version}
+        Nothing
+          | "inplace" `L.isSuffixOf` unitIdString hdv_uid
+          -- will be built as a target later
+          -> return (Just hdv_uid)
         Nothing ->
           error "Could not find unit info for haskell-debugger-view"
     [] -> do
