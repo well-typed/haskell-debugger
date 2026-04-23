@@ -79,6 +79,11 @@ runInTerminal1 flags = do
       -- To next line, which should be the "putStrLn" after the "getLine"
       next
 
+      -- Wait for the program to actually execute `print arg` and pause at the
+      -- next line before disconnecting; without this wait, disconnect can kill
+      -- the process before the output is flushed.
+      waitFiltering_ EventTy "stopped"
+
       -- Send disconnect
       disconnect
 
