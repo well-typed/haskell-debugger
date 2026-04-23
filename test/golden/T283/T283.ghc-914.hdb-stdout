@@ -1,0 +1,10 @@
+[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/app/Main.hs, interpreted )[T283-0.1.0.0-inplace-T283]
+(hdb) 
+(hdb) THIS IS A PACKAGE
+()
+(hdb) Aborted: <interactive>:1:1: error: [GHC-35235]
+    Could not find module `Main'.
+    It is not a module in the current program, or in any known package.
+(hdb) "If an older version of T283 was installed, we'd now shadow the home-unit Main with the outdated installed Main!"
+(hdb) Exiting...
