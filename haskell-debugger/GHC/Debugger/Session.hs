@@ -189,7 +189,7 @@ initHomeUnitEnv unitDflags env = do
         }
 
     let cached_unit_dbs = concat . catMaybes . fmap homeUnitEnv_unit_dbs $ Foldable.toList initial_home_graph
-    setupNewHomeUnitEnv (hsc_logger env) interactiveDynFlags (Just cached_unit_dbs) home_units
+    setupNewHomeUnitEnv (hsc_logger env) interactiveDynFlags (Just cached_unit_dbs) (Set.insert interactiveGhcDebuggerUnitId home_units)
 
   let home_unit_graph =
         HUG.unitEnv_insert interactiveGhcDebuggerUnitId interactiveHomeUnit initial_home_graph
