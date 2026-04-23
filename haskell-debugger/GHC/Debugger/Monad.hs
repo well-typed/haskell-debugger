@@ -94,6 +94,8 @@ import GHC.Platform.Ways
 import GHC.Data.FastString.Env (emptyFsEnv)
 #endif
 
+import GHC.Unit.Home.Graph
+
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
   deriving ( Functor, Applicative, Monad, MonadIO
@@ -428,11 +430,13 @@ runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp co
         let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
         -- dbgView should always be available, either because we manually loaded it
         -- or because it's in the transitive closure.
+        hug <- hsc_HUG <$> getSession
         let dbgViewImps
-              -- Using in-memory hs-dbg-view. It's a home-unit, so refer to it directly
-              | hdv_uid == hsDebuggerViewInMemoryUnitId
+              -- If hs-dbg-view is a home-unit, refer to it directly
+              -- See Note [Do not package-qualify imports for home units]
+              | memberHugUnitId hdv_uid hug
               = map (GHC.IIModule . mkModule (RealUnit (Definite hdv_uid))) loadedBuiltinModNames
-              -- It's available in a unit in the transitive closure. Resolve it.
+              -- It's available in an exposed unit in the transitive closure. Resolve it
               | otherwise
               = map (\mn ->
                   GHC.IIDecl (GHC.simpleImportDecl mn)
@@ -507,9 +511,7 @@ add our own `MC.finally cleanupInterp` call which sends the `Shutdown` message
 to the external interpreter before propagating the exception further (to GHC's
 `withCleanupSession`, which will now do Nothing because we set `InterpPending`,
 and beyond).
--}
 
-{-
 Note [Must explicitly expose module graph units]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 `interactiveGhcDebugger` is our "current home unit", so its
@@ -533,6 +535,33 @@ An alternative, closer to what ghci does, would be to copy the `packageFlags`
 from the debuggee units, however doing so doesn't take care of fixing a unitId
 for dependencies of dependencies.
 
+Note [Do not package-qualify imports for home units]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+A package-qualified module import will be looked up directly in the exposed
+packages, IGNORING the home units modules.
+
+This can lead to two scenarios:
+
+  1) a package-import of a loaded unit fails, because that unit, despite being
+  loaded, is not installed
+
+  2) a package-import of a loaded unit succeeds, because a unit with the same
+  name (but not necessarily the same unit-id!), is installed.
+
+The second case can result in subtly wrong interactive sessions, where the
+package-qualified imported module shadows the loaded module. Perhaps GHC could
+warn about this. Cabal-repl and ghci also suffer from this subtle interaction.
+
+In light of this, when the debugger imports the `haskell-debugger-view` modules,
+it is imperative that if the `haskell-debugger-view` unit is in the home units
+(e.g. if `haskell-debugger-view` is listed in the cabal.project, like it is in
+the debugger tree), we do not use a package-qualified import.
+
+On the other hand, if the `haskell-debugger-view` package is not in the
+home-units, we *should* package-qualify it to make sure we reference the right
+one.
+
+See also #283
 -}
 
 -- | See Note [Shutting down the external interpreter]
