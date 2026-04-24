@@ -1,4 +1,4 @@
--- | Evaluate request tests (issue #116) ported from the NodeJS testsuite.
+-- | Evaluate request tests ported from the NodeJS testsuite.
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Test.Integration.Evaluate (evaluateTests) where
@@ -20,6 +20,8 @@ evaluateTests =
   testGroup "DAP.Integration.Evaluate"
     [ testCase "Return structured representation for evaluated expressions (issue #116)"
         evaluateStructured
+    , testCase "Imported module bindings available in evaluate context (issue #233)"
+        evaluateImportedBindings
     ]
 
 evaluateStructured :: Assertion
@@ -37,4 +39,27 @@ evaluateStructured =
         (v1:_) -> v1 @==? "\'b\'"
         []     -> liftIO $ assertFailure $
           "No variable named 1 in evaluation result: " ++ show respChildren
+      disconnect
+
+-- | Test that bindings from imported modules are available when evaluating
+-- expressions at a breakpoint (issue #233).
+evaluateImportedBindings :: Assertion
+evaluateImportedBindings =
+  withTestDAPServer "test/integration/T233" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "T233.hs"
+      hitBreakpointWith cfg 14
+
+      -- sort is imported from Data.List
+      sortResp <- evaluate "show (sort xs)"
+      liftIO $ assertEqual "sort xs result" "\"[1,1,2,3,4,5,6,9]\"" (DAP.evaluateResponseResult sortResp)
+
+      -- nub is imported from Data.List
+      nubResp <- evaluate "show (nub xs)"
+      liftIO $ assertEqual "nub xs result" "\"[3,1,4,5,9,2,6]\"" (DAP.evaluateResponseResult nubResp)
+
+      -- Map is a qualified import
+      mapResp <- evaluate "show (Map.lookup \"a\" m)"
+      liftIO $ assertEqual "Map.lookup result" "\"Just 1\"" (DAP.evaluateResponseResult mapResp)
+
       disconnect
