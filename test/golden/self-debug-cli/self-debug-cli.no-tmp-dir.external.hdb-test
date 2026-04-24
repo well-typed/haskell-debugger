@@ -24,7 +24,10 @@ fi
 
 $HDB -v0 hdb/Main.hs < "test/golden/self-debug-cli/self-debug-cli.hdb-stdin" 2>&1 \
   | grep -v "BreakFound" \
-  | sed 's|[^ ]*/Paths_haskell_debugger.hs|<AUTOGEN-DIR>/Paths_haskell_debugger.hs|g'
+  | sed \
+      -e 's|[^ ]*/Paths_haskell_debugger.hs|<AUTOGEN-DIR>/Paths_haskell_debugger.hs|g' \
+      -e 's|haskell-debugger-[0-9.][0-9.]*-inplace|haskell-debugger-<VERSION>-inplace|g' \
+      -e 's|haskell-debugger-view-[0-9.][0-9.]*-inplace|haskell-debugger-view-<VERSION>-inplace|g'
 
 if [ $created_yaml = true ]; then
     rm hie.yaml
