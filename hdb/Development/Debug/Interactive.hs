@@ -103,10 +103,11 @@ debugInteractive = withInterrupt loop
               printResponse out
         Just input -> do
           mcmd <- parseCmd input
-          lift $ modify (\ o -> o { runLastCommand = mcmd })
           case mcmd of
             Nothing -> return ()
-            Just cmd -> do
+            Just Exit -> outputStrLn "Exiting..." >> liftIO (exitWith ExitSuccess)
+            Just (Do cmd) -> do
+              lift $ modify (\ o -> o { runLastCommand = Just cmd })
               out <- lift . lift $ execute cmd
               printResponse out
       loop
@@ -379,7 +380,7 @@ cmdParserInfo opts ctx = info (cmdParser opts ctx)
   ( fullDesc )
 
 -- | Parse command line arguments
-parseCmd :: String -> InteractiveDM (Maybe Command)
+parseCmd :: String -> InteractiveDM (Maybe (OrExit Command))
 parseCmd input = do
   opts <- lift ask
   ctx <- lift get
@@ -389,10 +390,8 @@ parseCmd input = do
      (cmdParserInfo opts ctx)
      (words input)
    in case res of
-    Success (Do x) ->
-      return (Just x)
-    Success Exit ->
-      return Nothing -- exit!
+    Success cmd ->
+      return (Just cmd)
     Failure bad ->
       let (msg, _exit) = renderFailure bad "(hdb)"
        in outputStrLn msg >> pure Nothing
