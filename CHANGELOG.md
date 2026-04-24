@@ -1,5 +1,32 @@
 # Revision history for haskell-debugger
 
+## 0.13.0.0 -- 2026-04-24
+
+Features:
+
+* Launch the external-interpreter directly in User's Terminal. That is, VSCode
+  terminal will run the external interpreter, which is evaluating the debuggee
+  directly, directly (rather than a proxy program).
+    * When using the internal interpreter, falls back to running `hdb proxy`.
+* Add support for `import Module` statements at the debug REPL.
+* Add [logpoints](https://code.visualstudio.com/docs/debugtest/debugging#_logpoints) support.
+* Support for nightly GHC 9.15, leveraging external interpreter commands.
+
+Bug fixes:
+* Fix: Import failed where depended-upon package was incorrectly considered hidden
+* Fix: Respond cleanly to DAP client with ErrorResponse on exceptions, rather than crashing the session.
+* Fix: terminate/disconnect/terminated wasn't following DAP properly, resulting in premature exiting crashes
+* Fix: Debugger.View.Class cannot be found in certain multi-repl sessions
+* Fix: Make custom DebugViews instances work for `newtypes`
+* Fix: Display more unevaluatable closures as `<fn>` rather than as thunks `_`
+* Fix: Inherit the language extensions at any given breakpoint source to the REPL
+* Fix: Don't print certain evaluation results in duplicate
+* Fix: Set scopeExpensive=true for Module and Global
+
+Additionally, the debugger internals and the testsuite were considerably
+refactored and improved, paving the way for better, faster changes, with more
+confidence.
+
 ## 0.12.3.0 -- 2026-03-11
 
 * Updated extension logo to be Haskell's logo
