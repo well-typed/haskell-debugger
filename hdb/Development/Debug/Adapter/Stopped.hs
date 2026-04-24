@@ -148,7 +148,6 @@ commandVariables = do
         ForcedVariable _
           -> sendInvalidatedEvent defaultInvalidatedEvent
               { invalidatedEventAreas = [InvalidatedAreasVariables]
-              , invalidatedEventStackFrameId = Just 0 -- TODO: REVERSE LOOKUP OF (StackFrameIx threadId frameIx)
               }
         VariableFields _ -> return ()
 
