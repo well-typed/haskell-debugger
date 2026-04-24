@@ -19,9 +19,7 @@ import System.Environment
 import Control.Exception
 
 import Test.Tasty
-#ifdef mingw32_HOST_OS
 import Test.Tasty.ExpectedFailure
-#endif
 import Test.Tasty.Golden as G
 import Test.Tasty.Golden.Advanced as G
 
@@ -40,6 +38,8 @@ import Test.Integration.Conditional (conditionalTests)
 import Test.Integration.Evaluate (evaluateTests)
 import Test.Integration.StackTrace (stackTraceTests)
 import Test.Utils
+import qualified Data.Char as C
+import qualified Data.Text as T
 
 main :: IO ()
 main = do
@@ -144,10 +144,11 @@ goldenVsStringComparing
   -- ^ action that returns a string
   -> TestTree
   -- ^ the test verifies that the returned string is the same as the golden file contents
-goldenVsStringComparing name ref act = do
+goldenVsStringComparing name ref act =
 
-  -- Normalise the output. The test file should already be saved normalised.
-  goldenTest name (LT.decodeUtf8 <$> readFileStrict ref) normalisingAct cmpNormalising upd
+  maybeExpectFail $
+    -- Normalise the output. The test file should already be saved normalised.
+    goldenTest name (LT.decodeUtf8 <$> readFileStrict ref) normalisingAct cmpNormalising upd
 
   where
   upd = createDirectoriesAndWriteFile ref . LT.encodeUtf8
@@ -203,6 +204,13 @@ goldenVsStringComparing name ref act = do
 
   forceLbs :: LBS.ByteString -> ()
   forceLbs = LBS.foldr seq ()
+
+  -- if testname contains `.fails-234` we expect a failure described by ticket #234
+  maybeExpectFail = case T.breakOn ".fails-" (T.pack name) of
+    (_, rest)
+      | let num = T.takeWhile C.isDigit (T.drop (T.length ".fails-") rest)
+      , not (T.null num) -> expectFailBecause ("#" ++ T.unpack num)
+      | otherwise -> id
 
 --------------------------------------------------------------------------------
 -- Normalisation
