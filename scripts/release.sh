@@ -53,6 +53,19 @@ if ! git diff --staged --quiet; then
   exit 1
 fi
 
+# Ensure HEAD points to origin/master
+echo "Fetching origin master to validate HEAD..."
+git fetch origin master
+HEAD_SHA=$(git rev-parse HEAD)
+MASTER_SHA=$(git rev-parse origin/master)
+
+if [ "$HEAD_SHA" != "$MASTER_SHA" ]; then
+  echo "Error: HEAD does not point to the tip of origin/master."
+  echo "HEAD SHA:    $HEAD_SHA"
+  echo "Master SHA:  $MASTER_SHA"
+  exit 1
+fi
+
 echo "Tagging latest commit..."
 git tag "v$PKG_VERSION" -m "Release: $PKG_VERSION"
 
@@ -60,3 +73,4 @@ echo "Please don't forget to push with --tags"
 echo "Few more things:"
 echo "  - Make sure haskell-debugger-view was manually uploaded if there should be a new release."
 echo "  - And that haskellDebuggerViewVersion is updated too"
+echo "  - Did you read RELEASE.md?"
