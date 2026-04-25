@@ -285,9 +285,9 @@ setupMultiHomeUnitGhcSession exts hsc_env cis = do
 
 -- | Find and return the ways in which the home units are built.
 -- INVARIANT: All home units are built with the same 'Ways'
-validateUnitsWays :: NonEmpty.NonEmpty (DynFlags, [GHC.Target]) -> IO Ways
-validateUnitsWays flagsAndTargets = do
-    let unitWays  = NonEmpty.map (ways . fst) flagsAndTargets
+validateUnitsWays :: NonEmpty.NonEmpty DynFlags -> IO Ways
+validateUnitsWays flags = do
+    let unitWays  = NonEmpty.map ways flags
         firstWays = NonEmpty.head unitWays
         restWays  = NonEmpty.tail unitWays
     if all (== firstWays) restWays
