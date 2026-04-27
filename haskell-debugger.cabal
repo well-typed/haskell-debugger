@@ -243,7 +243,8 @@ test-suite haskell-debugger-test
                       Test.Integration.Stdout,
                       Test.Integration.Conditional,
                       Test.Integration.Evaluate,
-                      Test.Integration.StackTrace
+                      Test.Integration.StackTrace,
+                      Test.Integration.SelfDebug
     build-depends:
         base >=4.14,
         async,
