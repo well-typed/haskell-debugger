@@ -27,6 +27,10 @@ basicTests =
             , testCase "accepts internalInterpreter launch option" internalInterpreterOption
             ]
         ]
+    , testGroup "Multi-module standalone (no cabal/hie.yaml)"
+        [ testCase "breakpoints in two modules (#297)" multiModuleStandaloneBreakpoints
+        , testCase "breakpoints in two modules (flipped) (#297)" multiModuleStandaloneBreakpoints2
+        ]
     ]
 
 basicForConfig :: TestName -> FilePath -> FilePath -> TestTree
@@ -88,4 +92,38 @@ internalInterpreterOption =
       let cfg = (mkLaunchConfig test_dir "Main.hs")
             { lcInternalInterpreter = Just True } -- TODO: Automatically run all tests with internal interpreter too?
       hitBreakpointWith cfg 6
+      disconnect
+
+-- | Two-module standalone project (no cabal, no hie.yaml): set a breakpoint in
+-- each module, run, hit the first (Main.hs), continue, hit the second (Helper.hs).
+-- (#297)
+multiModuleStandaloneBreakpoints :: Assertion
+multiModuleStandaloneBreakpoints =
+  withTestDAPServer "test/integration/standalone-multi-module" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "Main.hs"
+      _ <- sync $ launchWith cfg
+      waitFiltering_ EventTy "initialized"
+      _ <- sync $ setLineBreakpoints test_dir "Main.hs"   [7]
+      _ <- sync $ setLineBreakpoints test_dir "Helper.hs" [5]
+      _ <- sync configurationDone
+      assertStoppedLocation DAP.StoppedEventReasonBreakpoint 7
+      continueThread 0
+      assertStoppedLocation DAP.StoppedEventReasonBreakpoint 5
+      disconnect
+
+-- | Same as above, but flip the order of the setLineBreakpoints calls (#297)
+multiModuleStandaloneBreakpoints2 :: Assertion
+multiModuleStandaloneBreakpoints2 =
+  withTestDAPServer "test/integration/standalone-multi-module" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "Main.hs"
+      _ <- sync $ launchWith cfg
+      waitFiltering_ EventTy "initialized"
+      _ <- sync $ setLineBreakpoints test_dir "Helper.hs" [5]
+      _ <- sync $ setLineBreakpoints test_dir "Main.hs"   [7]
+      _ <- sync configurationDone
+      assertStoppedLocation DAP.StoppedEventReasonBreakpoint 7
+      continueThread 0
+      assertStoppedLocation DAP.StoppedEventReasonBreakpoint 5
       disconnect

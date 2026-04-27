@@ -1,0 +1,9 @@
+[1 of 4] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[2 of 4] Compiling Helper           ( <TEMPORARY-DIRECTORY>/Helper.hs, interpreted )[main]
+[3 of 4] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, interpreted )[main]
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Main 5], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/Main.hs", startLine = 7, endLine = 7, startCol = 3, endCol = 25}}
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Helper 4], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/./Helper.hs", startLine = 5, endLine = 5, startCol = 3, endCol = 38}}
+(hdb) Stopped at breakpoint
+(hdb) Starting...
+Stopped at breakpoint
+(hdb) Exiting...
