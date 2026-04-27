@@ -17,6 +17,8 @@ import GHC.Unit.Module.Env
 import GHC.ByteCode.Breakpoints
 import GHC.Utils.Outputable (Outputable)
 import qualified Data.IntMap as IM
+import GHC.Debugger.View.Class
+import GHC.Debugger.Utils (showModule)
 
 -- | A map keyed by 'InternalBreakpointId'
 newtype BreakpointMap a = BreakpointMap (ModuleEnv (IM.IntMap a))
@@ -77,3 +79,10 @@ toList (BreakpointMap bm) =
   | (m, im)  <- moduleEnvToList bm
   , (bix, a) <- IM.toList im
   ]
+
+instance DebugView (BreakpointMap a) where
+  debugValue (BreakpointMap b) = simpleValue "BreakpointMap" (not $ isEmptyModuleEnv b)
+  debugFields bm = pure $ VarFields
+    [ (showModule ibi_info_mod ++ "(" ++ show ibi_info_index ++ ")", VarFieldValue v)
+    | (InternalBreakpointId{ibi_info_mod, ibi_info_index}, v) <- toList bm
+    ]

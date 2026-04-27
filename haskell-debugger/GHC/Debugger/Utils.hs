@@ -105,3 +105,9 @@ srcSpanStringToSourceSpan s = parseOnly pSrcSpan (T.pack s)
     num :: Parser Int
     num = decimal
 
+--------------------------------------------------------------------------------
+-- * DebugView utils
+--------------------------------------------------------------------------------
+
+showModule :: Module -> String
+showModule = showSDocUnsafe . withPprStyle (PprDump alwaysQualify) . ppr
