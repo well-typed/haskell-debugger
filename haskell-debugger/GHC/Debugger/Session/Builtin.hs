@@ -147,16 +147,16 @@ makeInMemoryHsDebuggerViewTarget modName sb = do
 
 -- | The contents of GHC.Debugger.View.Class in memory
 debuggerViewClassContents :: StringBuffer
-debuggerViewClassContents = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/Class.hs")
+debuggerViewClassContents = stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger-view/src/GHC/Debugger/View/Class.hs")
 
 -- | The contents of GHC.Debugger.View.Containers in memory
 debuggerViewContainersContents :: StringBuffer
-debuggerViewContainersContents = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/Containers.hs")
+debuggerViewContainersContents = stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger-view/src/GHC/Debugger/View/Containers.hs")
 
 -- | GHC.Debugger.View.Text
 debuggerViewTextContents :: StringBuffer
-debuggerViewTextContents = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/Text.hs")
+debuggerViewTextContents = stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger-view/src/GHC/Debugger/View/Text.hs")
 
 -- | GHC.Debugger.View.ByteString
 debuggerViewByteStringContents :: StringBuffer
-debuggerViewByteStringContents = stringToStringBuffer $(embedStringFile "haskell-debugger-view/src/GHC/Debugger/View/ByteString.hs")
+debuggerViewByteStringContents = stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger-view/src/GHC/Debugger/View/ByteString.hs")
