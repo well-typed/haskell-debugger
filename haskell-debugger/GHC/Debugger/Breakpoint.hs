@@ -33,6 +33,7 @@ import GHC.Debugger.Session
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Breakpoint.Map as BM
+import Data.Function
 
 --------------------------------------------------------------------------------
 -- * Breakpoints
@@ -192,14 +193,14 @@ getActiveBreakpoints mfile = do
       mms <- getModuleByPath file
       case mms of
         Right ms -> do
-          hsc_env    <- getSession
-          imodBreaks <- liftIO $ expectJust <$> readIModBreaksMaybe (hsc_HUG hsc_env) (ms_mod ms)
-          return
-            [ ibi
-            | ibi <- BM.keys bm
-            , getBreakSourceMod ibi imodBreaks == ms_mod ms
-            -- assert: status is always > disabled
-            ]
+          hug <- hsc_HUG <$> getSession
+          -- Return all active IBIs whose occurrence (source) module
+          -- matches the argument source module.
+          map fst <$> filterM (\(ibi, info)  -> do
+            ibi_occ_mod <- getBreakSourceMod ibi <$> readIModBreaks hug ibi & liftIO
+            assert (bpInfoStatus info /= BreakpointDisabled) $
+              return (ibi_occ_mod == ms_mod ms)
+            ) (BM.toList bm)
         Left e -> do
           logSDoc Logger.Warning e
           return []
