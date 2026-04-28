@@ -9,6 +9,9 @@
 # too prone to changing because it reports source lines of the actual debugger
 # source, which we change all the time (unlike testsuite programs).
 #
+# 3.1) Grep out all `[27 of 53] Compiling ...` lines. Everytime we added a
+# module it would force the test to be updated and was prone to conflicts.
+#
 # 4) Normalize cabal autogen paths (e.g. `Paths_haskell_debugger.hs`).
 # It's not immediately clear why these go in .cache/hie-bios/... rather than in
 # $HDB_CACHE_DIR, but I guess it's an autogen thing rather than the actual
@@ -24,6 +27,7 @@ fi
 
 $HDB -v0 hdb/Main.hs < "test/golden/self-debug-cli/self-debug-cli.hdb-stdin" 2>&1 \
   | grep -v "BreakFound" \
+  | grep -v "] Compiling" \
   | sed \
       -e 's|[^ ]*/Paths_haskell_debugger.hs|<AUTOGEN-DIR>/Paths_haskell_debugger.hs|g' \
       -e 's|haskell-debugger-[0-9.][0-9.]*-inplace|haskell-debugger-<VERSION>-inplace|g' \
