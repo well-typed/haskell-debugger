@@ -1,5 +1,11 @@
 # Revision history for haskell-debugger
 
+## 0.13.1.0 -- 2026-04-28
+
+* Fix critical bug which caused certain breakpoints to be overwritten by or
+  confused with breakpoints from separate modules.
+* Fix: Make forcing a thunk invalidate all threads
+
 ## 0.13.0.0 -- 2026-04-24
 
 Features:
