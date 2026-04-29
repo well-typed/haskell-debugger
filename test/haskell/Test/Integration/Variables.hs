@@ -33,6 +33,7 @@ variableTests =
     , testCase "hdv with containers (issue #47c)" hdvContainersDepTest
     , testCase "hdv in-memory with containers (issue #47d)" hdvContainersMemTest
     , testCase "hdv in-memory with text (issue #47e)" hdvTextMemTest
+    , testCase "force thunk in IntMap value persists (issue #47f)" thunkIntMapTest
     ]
 
 intsAndStringsTest :: Assertion
@@ -319,3 +320,27 @@ hdvTextMemTest =
       action <- forceLazy (locals % "action")
       action @==? "\"this should be displayed as a simple string\""
       disconnect
+
+-- | An IntMap with lazy thunk values. The field value is the actual IntMap
+-- elem heap value, so forcing it is persisted across refreshes (because we're
+-- still referring to the same heap value, and now it happens to be forced)
+thunkIntMapTest :: Assertion
+thunkIntMapTest =
+  withTestDAPServer "test/integration/T47f" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "Main.hs"
+      hitBreakpointWith cfg 12
+      locals <- fetchLocalVars
+      action <- forceLazy (locals % "action")
+      action @==? "IntMap"
+      ac <- expandVar action
+      v1 <- forceLazy (ac % "1")
+      v1 @==? "5050"
+
+      -- Re-request the parent and check the previously-forced value remains
+      -- evaluated (no force needed).
+      locals2 <- fetchLocalVars
+      ac2 <- expandVar (locals2 % "action")
+      (ac2 % "1") @==? "5050"
+      disconnect
+
