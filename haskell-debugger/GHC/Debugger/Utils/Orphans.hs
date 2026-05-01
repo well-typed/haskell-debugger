@@ -20,3 +20,11 @@ instance DebugView (ModuleEnv a) where
     [ (showModule k, VarFieldValue v)
     | (k, v) <- moduleEnvToList m
     ]
+
+instance DebugView ModuleName where
+  debugValue  t = simpleValue (moduleNameString t) False
+  debugFields _ = pure (VarFields [])
+
+instance DebugView UnitId where
+  debugValue  t = simpleValue (unitIdString t) False
+  debugFields _ = pure (VarFields [])
