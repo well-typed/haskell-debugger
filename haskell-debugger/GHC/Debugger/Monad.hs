@@ -404,9 +404,14 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
             [] -> error "No units"
             (x:xs) -> x NonEmpty.:| xs
 
+#ifndef DEBUG_WITH_GHC
       -- Find haskell-debugger-view in (deps of) home units, or load one from
       -- in-memory sources.
       (hdv_uid, loadedBuiltinModNames) <- findOrLoadHaskellDebuggerView l buildWays
+#else
+      let hdv_uid = hsDebuggerViewInMemoryUnitId
+      let loadedBuiltinModNames = [] :: [ModuleName]
+#endif
 
       -- See Note [Must explicitly expose module graph units]
       setExposedInUnit interactiveGhcDebuggerUnitId . graphUnits . hsc_mod_graph =<< getSession

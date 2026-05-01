@@ -1,4 +1,5 @@
 cradle:
+  #bios: { "program": "./scripts/debug-with-ghc-bios.sh" }
   cabal:
     - path: "./haskell-debugger/"
       component: "lib:haskell-debugger"

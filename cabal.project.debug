@@ -1,0 +1,40 @@
+import: cabal.project
+packages: ghc/compiler
+allow-newer: all
+documentation: False
+allow-boot-library-installs: True
+library-vanilla: False
+executable-dynamic: True
+
+package haskell-debugger
+  ghc-options: -DDEBUG_WITH_GHC
+package ghc
+  flags: +internal-interpreter +dynamic-system-linker
+package *
+  documentation: False
+
+-- we would like to fix them to the -package-id ghc itself depends on, but I don't see how with cabal.
+constraints:
+  base installed,
+  array installed,
+  binary installed,
+  bytestring installed,
+  containers installed,
+  deepseq installed,
+  directory installed,
+  exceptions installed,
+  filepath installed,
+  ghc-boot installed,
+  ghc-boot installed,
+  ghc-heap installed,
+  ghc-internal installed,
+  ghci installed,
+  hpc installed,
+  os-string installed,
+  process installed,
+  rts installed,
+  semaphore-compat installed,
+  stm installed,
+  time installed,
+  transformers installed,
+  unix installed,
