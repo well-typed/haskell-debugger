@@ -41,7 +41,6 @@ import System.Process.Internals (mkProcessHandle)
 import Text.Read (readMaybe)
 
 import GHC
-import GHC.Data.FastString
 import GHC.Data.StringBuffer
 import GHC.Driver.Config.Diagnostic
 import GHC.Driver.Config.Logger
@@ -61,9 +60,7 @@ import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Context as GHCi
 import GHC.Types.Error
-import GHC.Types.PkgQual
 import GHC.Types.SourceError
-import GHC.Types.SourceText
 import GHC.Types.Unique.Supply as GHC
 import GHC.Unit.Module.Graph
 import GHC.Unit.State
@@ -399,8 +396,6 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
         GHC.initUniqSupply (GHC.initialUnique df) (GHC.uniqueIncrement df)
 
       loadHomeUnit
-      -- See Note [Must explicitly expose module graph units]
-      setExposedInUnit interactiveGhcDebuggerUnitId . graphUnits . hsc_mod_graph =<< getSession
 
       -- Ensure all the home units are built with same Ways and return them.
       buildWays       <- do
@@ -413,35 +408,42 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
       -- in-memory sources.
       (hdv_uid, loadedBuiltinModNames) <- findOrLoadHaskellDebuggerView l buildWays
 
+      -- See Note [Must explicitly expose module graph units]
+      setExposedInUnit interactiveGhcDebuggerUnitId . graphUnits . hsc_mod_graph =<< getSession
 
       -- Set interactive context to import all loaded modules
-      let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
+      let preludeImp = GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
+
+      hsc_env_new <- getSession
+
       -- dbgView should always be available, either because we manually loaded it
       -- or because it's in the transitive closure.
-      hug <- hsc_HUG <$> getSession
       let dbgViewImps
-            -- If hs-dbg-view is a home-unit, refer to it directly
-            -- See Note [Do not package-qualify imports for home units]
-            | memberHugUnitId hdv_uid hug
-            = map (GHC.IIModule . mkModule (RealUnit (Definite hdv_uid))) loadedBuiltinModNames
-            -- It's available in an exposed unit in the transitive closure. Resolve it
-            | otherwise
-            = map (\mn ->
-                GHC.IIDecl (GHC.simpleImportDecl mn)
-                { ideclPkgQual = RawPkgQual
-                    StringLiteral
-                      { sl_st = NoSourceText
-                      , sl_fs = mkFastString (unitIdString hdv_uid)
-                      , sl_tc = Nothing
-                      }
-                }) loadedBuiltinModNames
+            = map (packageImportDecl hvd_pkgName) loadedBuiltinModNames
+            where
+              hvd_pkgName = fromMaybe (error $ "No package name for: " ++ unitIdString hdv_uid) $
+                lookupUnitPackageQualifier hsc_env_new hdv_uid
 
       mss <- getAllLoadedModules
 
-      GHC.setContext
-        (preludeImp :
-          dbgViewImps ++
-          map (GHC.IIModule . GHC.ms_mod) mss)
+      let
+        imports
+          = map GHC.IIDecl $ preludeImp :
+            [ i { ideclImportList = Just (Exactly, L noAnn []) }
+            | i <- instancesOnly ]
+
+        -- We import (only the instances of) all the home unit
+        -- modules to bring any orphan DebugView instances in scope.
+        instancesOnly =
+            dbgViewImps ++
+            [ packageImportDecl pkgName (moduleName modl)
+            | modl <- map GHC.ms_mod mss
+            , let uid = moduleUnitId modl
+            , let pkgName = fromMaybe (error $ "No package name for: " ++ unitIdString uid) $ lookupUnitPackageQualifier hsc_env_new uid
+            ]
+
+
+      GHC.setContext imports
 
       -- See Note [External interpreter buffering]
       setBufferings <- compileExprRemote """
@@ -465,10 +467,10 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
   case conf.externalInterpreterCustomProc of
     Left _ -> do
       -- We launched the external interpreter ourselves, so forward its output to the logger.
-      withUnliftGhc $ \ unlift -> do
-        withAsync (void externalInterpFwdThread) $ \ fwd_thr -> do
-          liftIO $ link fwd_thr
-          unlift mainGhcThread
+      withUnliftGhc $ \ unlift -> annotateCallStackIO $ do
+        withAsync (annotateCallStackIO $ void externalInterpFwdThread) $ \ fwd_thr -> do
+          liftIO $ annotateCallStackIO $ link fwd_thr
+          annotateCallStackIO $ unlift mainGhcThread
     Right _ ->
       -- Ext interp is running in user terminal, no need to forward output to logger
       mainGhcThread
@@ -577,27 +579,30 @@ An alternative, closer to what ghci does, would be to copy the `packageFlags`
 from the debuggee units, however doing so doesn't take care of fixing a unitId
 for dependencies of dependencies.
 
-Note [Do not package-qualify imports for home units]
+Note [Package Qualified Imports]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-A package-qualified module import will be looked up directly in the exposed
-packages, IGNORING the home units modules.
+Package qualified imports have a quirky behaviour: the source string qualifier gets converted into a `PkgQual` on the way, which can be one of these two:
+- `ThisPkg unitId` interpreted as a home unit
+- `OtherPkg unitId` interpreted as an external package
 
-This can lead to two scenarios:
+We get each under these conditions:
+- ThisPkg
+  - qualifier is the literal "this" or the **package name** of the active home unit or any of its home unit dependencies.
+- OtherPkg
+  - qualifier is the **package name** of a non-hidden external unit which exports the module we are importing.
+  - None of the above apply, and the qualifier itself is interpreted as a `UnitId`.
+When choosing between multiple units that satisfy a condition, the first found is committed to.
 
-  1) a package-import of a loaded unit fails, because that unit, despite being
-  loaded, is not installed
+The upshot is that `UnitId`s normally only work as qualifiers for external packages, unless you change the package names of home units as described in  Note [ Ambiguous Package Qualified Imports Workaround ].
 
-  2) a package-import of a loaded unit succeeds, because a unit with the same
-  name (but not necessarily the same unit-id!), is installed.
-
-The second case can result in subtly wrong interactive sessions, where the
+At the same time doing a PackageImport with a plain PackageName can succeed while resolving to an installed unit while we meant one of the loaded units, resulting in subtly wrong interactive sessions, where the
 package-qualified imported module shadows the loaded module. Perhaps GHC could
 warn about this. Cabal-repl and ghci also suffer from this subtle interaction.
 
 In light of this, when the debugger imports the `haskell-debugger-view` modules,
 it is imperative that if the `haskell-debugger-view` unit is in the home units
 (e.g. if `haskell-debugger-view` is listed in the cabal.project, like it is in
-the debugger tree), we do not use a package-qualified import.
+the debugger tree), we rely on Note [ Ambiguous Package Qualified Imports Workaround ].
 
 On the other hand, if the `haskell-debugger-view` package is not in the
 home-units, we *should* package-qualify it to make sure we reference the right
@@ -622,10 +627,6 @@ cleanupInterp = do
             -- Just unconditionally try to send the message.
             sendMessage i Shutdown
             pure InterpPending
-
--- | WARNING: callback is not to be used from other threads.
-withUnliftGhc :: ((Ghc b -> IO b) -> IO a) -> Ghc a
-withUnliftGhc k = reifyGhc $ \ s -> k (flip reflectGhc s)
 
 annotateDebuggerStackString :: String -> Debugger a -> Debugger a
 annotateDebuggerStackString s (Debugger m) = Debugger $ do
@@ -857,10 +858,9 @@ doLoad if_cache how_much mg = do
 
 
 loadInMemoryModules ::
-  GhcMonad m
-  => LogAction IO DebuggerLog
+  LogAction IO DebuggerLog
   -> UnitId
-  -> [(ModuleName,StringBuffer)] -> m [SuccessFlag]
+  -> [(ModuleName,StringBuffer)] -> Ghc [SuccessFlag]
 loadInMemoryModules l uid ts = do
   old_targets <- GHC.getTargets
   tgts <- forM ts $  \(modName,modContents) ->

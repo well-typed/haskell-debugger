@@ -1,5 +1,6 @@
-break --name runDebugger
+break --name GHC.Debugger.Monad.runDebugger
 run cli test/golden/self-debug-cli/Main.hs
+print import GHC.Data.FastString
 print mkFastString "this FastString should be displayed pretty as a string (SHOULD NOT SEE ITS FULL INTERNALS)."
 print mkFastString "We have a DebugView FastString instance at this breakpoint."
 exit

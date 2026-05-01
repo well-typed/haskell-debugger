@@ -1,4 +1,5 @@
 (hdb) Stopped at breakpoint
+(hdb) 
 (hdb) this FastString should be displayed pretty as a string (SHOULD NOT SEE ITS FULL INTERNALS).
 (hdb) We have a DebugView FastString instance at this breakpoint.
 (hdb) Exiting...

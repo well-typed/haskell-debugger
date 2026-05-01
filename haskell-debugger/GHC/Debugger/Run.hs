@@ -211,7 +211,7 @@ addImport s = handleError $ do
 
 -- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
 doEval :: String -> Debugger EvalResult
-doEval expr = withCurrentBreakExtensions $ do
+doEval expr = withCurrentBreakEnv $ do
   excr <- (Right <$> exec expr GHC.execOptions) `catch` \(e::SomeException) -> pure (Left (displayException e))
   case excr of
     Left err -> pure $ EvalAbortedWith err
@@ -250,20 +250,23 @@ continueToCompletion = do
     GHC.ExecBreak{} -> continueToCompletion
     GHC.ExecComplete{} -> return execr
 
--- | @withCurrentBreakExtensions m@ executes @m@ with the language and language
+-- | @withCurrentBreakEnv m@ executes @m@ with the imports, language, and language
 --  extensions of the current breakpoint source module.
 --
 --  If we are not stopped at a breakpoint @m@ is executed with no change.
-withCurrentBreakExtensions :: Debugger a -> Debugger a
-withCurrentBreakExtensions m = do
+withCurrentBreakEnv :: Debugger a -> Debugger a
+withCurrentBreakEnv m = do
   mmodl <- getCurrentBreakModule
   case mmodl of
     Nothing          -> m
     Just breakModule -> do
       ic_dyn_flags <- getInteractiveDebuggerDynFlags
       break_dyn_flags <- ms_hspp_opts <$> GHC.getModSummary breakModule
+      old_context <- GHC.getContext
       setInteractiveDebuggerDynFlags $ adjustFlags ic_dyn_flags break_dyn_flags
+      GHC.setContext (IIModule breakModule : old_context)
       x <- m
+      GHC.setContext old_context
       setInteractiveDebuggerDynFlags ic_dyn_flags
       return x
   where

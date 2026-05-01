@@ -8,7 +8,9 @@ import Data.List (isInfixOf)
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
+#ifdef mingw32_HOST_OS
 import Test.Tasty.ExpectedFailure
+#endif
 import qualified DAP
 
 evaluateTests :: TestTree
@@ -21,8 +23,7 @@ evaluateTests =
         evaluateStructured
     , testCase "Imported module bindings available in evaluate context (issue #233)"
         evaluateImportedBindings
-    , expectFailBecause "#299" $
-        testCase "Bindings from other modules not available in evaluate context (issue #233)"
+    , testCase "Bindings from other modules not available in evaluate context (issue #233)"
           evaluateImportedBindingsNotInOtherModule
     ]
 
@@ -91,6 +92,7 @@ evaluateImportedBindingsNotInOtherModule =
       let result = DAP.evaluateResponseResult mapFailResp
       liftIO $ assertBool
         ("expected 'not in scope' error for Map.fromList, got: " ++ show result)
-        ("not in scope" `isInfixOf` show result)
+        (or [not_in_scope `isInfixOf` show result
+            | not_in_scope <- ["not in scope","Not in scope"]])
 
       disconnect

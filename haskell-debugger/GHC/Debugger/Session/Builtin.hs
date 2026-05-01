@@ -107,6 +107,7 @@ addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
           , unitId /= rtsUnitId
           , unitId /= ghcInternalUnitId
           ]
+        , thisPackageName = Just "haskell-debugger-view"
         }
         & setGeneralFlag' Opt_HideAllPackages
   hsc_env <- getSession
