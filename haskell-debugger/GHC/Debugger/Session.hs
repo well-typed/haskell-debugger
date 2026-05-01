@@ -33,12 +33,19 @@ module GHC.Debugger.Session (
   setExposedInUnit,
   graphUnits,
   compileModuleWithDepsInHpt,
+  home_unit_dflags,
+  packageImportDecl,
+  withUnliftGhc,
+  annotateCallStackGhc,
+  lookupUnitPackageQualifier,
   )
   where
 
 #if MIN_VERSION_ghc(9,14,2)
 import Data.Function ((&))
 #endif
+import Control.Applicative ((<|>))
+import Control.Exception (assert)
 import Control.Monad
 import Control.Monad.IO.Class
 import qualified Crypto.Hash.SHA1                    as H
@@ -75,7 +82,7 @@ import qualified GHC.Unit.Home.Graph as HUG
 import qualified Data.Set as Set
 import Data.Maybe
 import GHC.Types.Target (InputFileBuffer)
-import GHC (SingleStep, ExecResult, ModSummary (ms_hspp_opts))
+import GHC (SingleStep, ExecResult, ModSummary (ms_hspp_opts), ideclPkgQual, ImportDecl, GhcPs)
 import Data.Set (Set)
 import qualified GHC.Unit as GHC
 import GHC.Unit.Module.Graph (mg_mss, ModuleGraphNode (..), mnKey)
@@ -89,7 +96,10 @@ import GHC.Driver.Pipeline (compileOne)
 import qualified GHC.Unit.Home.ModInfo as GHC
 import GHC.Utils.TmpFs
 import Data.Foldable (for_)
-import GHC.Plugins (SourceError, try)
+import GHC.Plugins (SourceError, try, RawPkgQual (..), HasCallStack, FastString, mkFastString, lookupUnitId)
+import GHC.Types.SourceText (StringLiteral(..), SourceText (..))
+import GHC.Stack.Annotation
+import GHC.Stack (callStack)
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -161,13 +171,24 @@ setupHomeUnitGraph flagsAndTargets = do
 -- | Set up the 'HomeUnitGraph' with empty 'HomeUnitEnv's.
 -- The first 'DynFlags' are the 'DynFlags' for the interactive session.
 createHomeUnitGraph :: GHC.Logger -> [DynFlags] -> IO HomeUnitGraph
-createHomeUnitGraph logger unitDflags = do
+createHomeUnitGraph logger unitDflags0 = do
+  -- See Note [ Ambiguous Package Qualified Imports Workaround ]
+  let unitDflags = fixFlagsForIIDecl unitDflags0
   let home_units = Set.fromList $ map homeUnitId_ unitDflags
+
   unitEnvList <- flip traverse unitDflags $ \ dflags -> do
+    let uid = homeUnitId_ dflags
     hue <- setupNewHomeUnitEnv logger dflags Nothing home_units
-    pure (homeUnitId_ dflags, hue)
+    assert (homeUnitId_ (homeUnitEnv_dflags hue) == uid) $
+      pure (uid, hue)
 
   pure $ unitEnv_new (Map.fromList unitEnvList)
+  where
+    -- | Makes package names of home units unique and removes hidden modules.
+    fixFlagsForIIDecl [df] | Just{} <- thisPackageName df = [df {hiddenModules = Set.empty}]
+    -- TODO #288: pick more user-friendly names.
+    fixFlagsForIIDecl dfss = map (\ dflags -> dflags { thisPackageName = Just (unitIdString (homeUnitId_ dflags))
+    , hiddenModules = Set.empty}) dfss
 
 setupNewHomeUnitEnv :: GHC.Logger -> DynFlags -> Maybe [GHC.UnitDatabase UnitId] -> Set UnitId -> IO HomeUnitEnv
 setupNewHomeUnitEnv logger dflags cached_dbs other_home_units = do
@@ -225,6 +246,13 @@ graphUnits mod_graph = L.nubOrd .
          InstantiationNode uid _ -> Just uid
          LinkNode _ _ -> Nothing
 
+-- | WARNING: callback is not to be used from other threads.
+withUnliftGhc :: ((Ghc b -> IO b) -> IO a) -> Ghc a
+withUnliftGhc k = reifyGhc $ \ s -> k (flip reflectGhc s)
+
+annotateCallStackGhc :: HasCallStack => Ghc a -> Ghc a
+annotateCallStackGhc m = let x = callStack in withUnliftGhc $ \k -> annotateStackShowIO x $ k m
+
 -- | Rebuilds the UnitState of the unit, exposing the given packages.
 --
 --   Takes care of updating hsc_dflags, ue_platform, and ue_namever if this is the ue_currentUnit.
@@ -280,7 +308,7 @@ setupMultiHomeUnitGhcSession
          -> HscEnv             -- ^ An empty HscEnv that we can use the setup the session.
          -> [(DynFlags, [GHC.Target])]    -- ^ New components to be loaded. Expected to be non-empty.
          -> IO (HscEnv, [TargetDetails])
-setupMultiHomeUnitGhcSession exts hsc_env cis = do
+setupMultiHomeUnitGhcSession exts hsc_env cis = annotateCallStackIO $ do
     let dfs = map fst cis
 
     hscEnv' <- initHomeUnitEnv dfs hsc_env
@@ -353,6 +381,31 @@ fromTargetId _ _ unitId (GHC.TargetFile f _) ctts = do
           | otherwise = (f ++ "-boot")
     return [TargetDetails (TargetFile f) [f, other] unitId ctts]
 
+{-
+Note [ Ambiguous Package Qualified Imports Workaround ]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Source level package qualified imports `import "foo" A` interpret "foo" as a package name.
+
+When one manually builds a `RawPkgQual` for an `ImportDecl` one can get away with using a unit-id, but only for external (i.e. not home) units.
+That it works does not seem entirely intended (see quoted snippet below), the code is in `renamePkgQual`: If a package qualifier is not found among packages it's looked up as an external unit. This is already in the code path for `OtherPkg` though, which is why Home Units are excluded.
+```
+    | otherwise
+    -> OtherPkg (UnitId pkg_fs)
+       -- not really correct as pkg_fs is unlikely to be a valid unit-id but
+       -- we will report the failure later...
+```
+
+Home units will only be found if the qualifier matches their dflags' `thisPackageName`. However that's bugged because the lookup doesn't bother considering there can be multiple units in the same package (library, sublibraries and exe units), and just picks the first found, leading to an import error if e.g. the library unit is picked but the module was in the exe one.
+Related GHC issue: https://gitlab.haskell.org/ghc/ghc/-/issues/24227
+
+Turns out that the package name of a home unit is pretty meaningless though, so we can update the dflags to replace it with anything that's actually unique so we can dodge the bug.
+
+Another stumbling block is that the `IIDecl` mode of an `InteractiveImport` does not allow importing hidden modules, but again for home units we can alter the DynFlags so all modules are exposed.
+
+See issue #288 for what can we do for users at the repl.
+-}
+
 -- ----------------------------------------------------------------------------
 -- GHC Utils that should likely be exposed by GHC
 -- ----------------------------------------------------------------------------
@@ -363,6 +416,33 @@ mkSimpleTarget df fp = GHC.Target (GHC.TargetFile fp Nothing) True (homeUnitId_ 
 hscSetUnitEnv :: UnitEnv -> HscEnv -> HscEnv
 hscSetUnitEnv ue env = env { hsc_unit_env = ue }
 
+home_unit_dflags :: HscEnv -> UnitId -> Maybe DynFlags
+home_unit_dflags hsc_env uid
+  = fmap homeUnitEnv_dflags
+  . HUG.lookupHugUnitId uid . ue_home_unit_graph
+  . hsc_unit_env
+  $ hsc_env
+
+-- | See Note [Package Qualified Imports] for why this is sometimes a @PackageName@ and sometimes a @UnitId@.
+newtype PackageQualifier = PackageQualifier FastString
+
+lookupUnitPackageQualifier :: HscEnv -> UnitId -> Maybe PackageQualifier
+lookupUnitPackageQualifier env uid = home_unit_name <|> ext_unit_name
+          where
+            -- See Note [Package Qualified Imports]
+            home_unit_name = PackageQualifier . mkFastString <$> (thisPackageName =<< home_unit_dflags env uid)
+            ext_unit_name = const (PackageQualifier (unitIdFS uid)) <$> lookupUnitId (hsc_units env) uid
+
+packageImportDecl :: PackageQualifier -> ModuleName -> ImportDecl GhcPs
+packageImportDecl (PackageQualifier pkgName) mn =
+  (GHC.simpleImportDecl $ mn)
+    { ideclPkgQual = RawPkgQual
+        StringLiteral
+          { sl_st = NoSourceText
+          , sl_fs = pkgName
+          , sl_tc = Nothing
+          }
+    }
 -- ----------------------------------------------------------------------------
 -- Session cache directory
 -- ----------------------------------------------------------------------------
@@ -417,9 +497,9 @@ getTargetFileSummary hsc_env target
       home_unit = ue_unitHomeUnit uid (hsc_unit_env hsc_env)
       dflags = homeUnitEnv_dflags (ue_findHomeUnitEnv uid (hsc_unit_env hsc_env))
 
-compileModuleWithDepsInHpt :: GhcMonad m =>
+compileModuleWithDepsInHpt ::
   GHC.Target ->
-  m (Maybe SourceError)
+  Ghc (Maybe SourceError)
 compileModuleWithDepsInHpt target@GHC.Target{targetUnitId = uid} = do
   hsc_env0 <- getSession
   let !old_active = hscActiveUnitId hsc_env0

@@ -1,4 +1,4 @@
-break --name main
+break --name Main.main
 run
 next
 next

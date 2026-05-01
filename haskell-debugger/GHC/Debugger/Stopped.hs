@@ -35,6 +35,7 @@ import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
 import GHC.Debugger.Utils
 import qualified Colog.Core as Logger
+import GHC.Debugger.Run (withCurrentBreakEnv)
 
 {-
 Note [Don't crash if not stopped]
@@ -108,7 +109,7 @@ getThreads = do
 
 -- | Get the stack frames at the point we're stopped at
 getStacktrace :: RemoteThreadId -> Debugger [DbgStackFrame]
-getStacktrace req_tid = do
+getStacktrace req_tid = withCurrentBreakEnv $ do -- TODO: remove, only a workaround for issue #310 on testcase T159
 
   tm <- liftIO . readIORef =<< asks threadMap
   let m_f_tid = lookupThreadMap (remoteThreadIntRef req_tid) tm

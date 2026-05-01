@@ -49,7 +49,7 @@ selfDebugDAPTest = do
       waitFiltering_ EventTy "initialized"
 
       _ <- sync $ setFunctionBreakpointsRequest @_ @Value $ object
-        [ "breakpoints" .= [ object [ "name" .= ("runDebugger" :: String) ] ] ]
+        [ "breakpoints" .= [ object [ "name" .= ("GHC.Debugger.Monad.runDebugger" :: String) ] ] ]
 
       _ <- sync configurationDone
 
