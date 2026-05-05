@@ -181,21 +181,20 @@ runInTerminalHdbProxy l port = do
 
 -- | Send a 'runInTerminal' reverse request to the DAP client
 -- with the @hdb proxy@ invocation
-sendRunProxyInTerminal :: PortNumber -> DebugAdaptor ()
-sendRunProxyInTerminal port = do
+sendRunProxyInTerminal :: FilePath -> PortNumber -> DebugAdaptor ()
+sendRunProxyInTerminal hdbProg port = do
   DAS { entryFile
       , entryPoint
       , entryArgs
       , projectRoot } <- getDebugSession
   let debuggee_inv = T.pack $ makeRelative projectRoot entryFile ++ ":" ++ entryPoint ++
                               (if null entryArgs then "" else " ") ++ unwords entryArgs
-  thisProg <- liftIO getExecutablePath -- run the same `hdb` executable in `proxy` mode
   sendRunInTerminalReverseRequest
     RunInTerminalRequestArguments
       { runInTerminalRequestArgumentsKind = Just RunInTerminalRequestArgumentsKindIntegrated
       , runInTerminalRequestArgumentsTitle = Just debuggee_inv
       , runInTerminalRequestArgumentsCwd = ""
-      , runInTerminalRequestArgumentsArgs = [T.pack thisProg, "proxy", "--port", T.pack (show port)]
+      , runInTerminalRequestArgumentsArgs = [T.pack hdbProg, "proxy", "--port", T.pack (show port)]
       , runInTerminalRequestArgumentsEnv = Just (H.singleton "DEBUGGEE_INVOCATION" debuggee_inv)
       , runInTerminalRequestArgumentsArgsCanBeInterpretedByShell = False
       }

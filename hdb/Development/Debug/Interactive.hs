@@ -7,8 +7,6 @@ import System.Exit
 import System.Directory
 import System.Console.Haskeline
 -- import System.Console.Haskeline.Completion
-import System.FilePath
-import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.RWS
@@ -56,17 +54,13 @@ runIDM logger entryPoint entryFile entryArgs extraGhcArgs runConf act = do
   projectRoot <- getCurrentDirectory
 
   let hieBiosLogger = contramap ISessionSetupLog logger
-  runExceptT (hieBiosSetup hieBiosLogger projectRoot entryFile) >>= \case
+  hieDebugRunner hieBiosLogger (DebugRunnerConf projectRoot entryFile extraGhcArgs) >>= \case
     Left e               -> exitWithMsg e
-    Right (Left e)       -> exitWithMsg e
-    Right (Right flags)
-      | HieBiosFlags{..} <- flags
+    Right (_ghcInvocation, debugRunner)
                          -> do
-
-      let absEntryFile = normalise $ projectRoot </> entryFile
       let debugRec = contramap IDebuggerLog logger
 
-      runDebugger debugRec rootDir componentDir libdir units ghcInvocation extraGhcArgs absEntryFile runConf $
+      runDebugger debugRec debugRunner runConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
                    (RunOptions { runEntryFile = entryFile, runEntryPoint = entryPoint, runEntryArgs = entryArgs })

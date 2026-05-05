@@ -10,14 +10,15 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module GHC.Debugger.Monad where
 
-import System.Environment
 import System.Process
 import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Exception
+import qualified Data.Foldable as Foldable
 import Control.Monad
 import Control.Monad.Catch as MC
 import Control.Monad.IO.Class
@@ -45,7 +46,7 @@ import GHC.Data.StringBuffer
 import GHC.Driver.Config.Diagnostic
 import GHC.Driver.Config.Logger
 import GHC.Driver.DynFlags as GHC
-import GHC.Driver.Env
+import GHC.Driver.Env as GHC
 import GHC.Driver.Monad
 import GHC.Driver.Hooks
 import GHC.Driver.Errors
@@ -203,284 +204,326 @@ data RunDebuggerSettings = RunDebuggerSettings
         --
         -- Left: we launch our own external interpreter process through
         -- GHC's spawnIServ using the given StdStream as the stdin.
+      , externalInterpreterProg :: FilePath
       }
 
--- | Run a 'Debugger' action on a session constructed from a given GHC invocation.
-runDebugger :: forall a
-             . LogAction IO DebuggerLog
-            -> FilePath   -- ^ Cradle root directory
-            -> FilePath   -- ^ Component root directory
-            -> FilePath   -- ^ The libdir (given with -B as an arg)
-            -> [String]   -- ^ The list of units included in the invocation
-            -> [String]   -- ^ The full ghc invocation (as constructed by hie-bios flags)
-            -> [String]   -- ^ The extra GHC arguments (as given by the user in @extraGhcArgs@)
-            -> FilePath   -- ^ Path to the main function
-            -> RunDebuggerSettings -- ^ Other debugger run settings
-            -> Debugger a -- ^ 'Debugger' action to run on the session constructed from this invocation
-            -> IO a
-runDebugger l rootDir compDir libdir units ghcInvocation' extraGhcArgs mainFp conf (Debugger action) = annotateCallStackIO $ do
-  let ghcLog = liftLogIO l :: LogAction Ghc DebuggerLog
-  let dbgLog = liftLogIO l :: LogAction Debugger DebuggerLog
-  thisProg <- getExecutablePath
-  let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcInvocation'
-  GHC.runGhc (Just libdir) $
-    flip MC.finally cleanupInterp $ -- See Note [Shutting down the external interpreter]
-      do
+-- | Run a 'Debugger' action on a session constructed by a 'DebugRunner'
+runDebugger :: LogAction IO DebuggerLog -> DebugRunner Ghc a -> RunDebuggerSettings -> Debugger a -> IO a
+runDebugger l debugRunner conf action = annotateCallStackIO $ do
+  debugRunner $ \ rootDir extraGhcArgs loadHomeUnit -> runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit action
+
+type DebugSession m a
+  =  FilePath -- ^ project root dir
+  -> [String] -- ^ extra ghc args
+  -> m ()   -- ^ action to load debugee home units
+  -> Ghc a
+
+type DebugRunner m a = DebugSession m a -> IO a
+
+data ProjectDebugSpec = ProjectDebugSpec
+      { rootDir :: FilePath
+      -- ^ Project root directory
+      , componentDir :: FilePath
+      -- ^ Root dir of the loaded 'ComponentOptions'.
+      -- Important for multi-package cabal projects, as packages are not in the
+      -- root of the cradle, but in some sub-directory.
+      , libdir :: FilePath
+        -- ^ The libdir (given with -B as an arg)
+      , units :: [String]
+        -- ^ The list of units included in the invocation
+      , ghcInvocation :: [String]
+      -- ^ The full ghc invocation (as constructed by hie-bios flags)
+      , absEntryFile :: FilePath
+      -- ^ Path to the main function
+      , extraGhcArgs :: [String]
+      }
+
+-- | Construct a session from paths and flags inferred from the debugee's project.
+withProjectDebugSession
+  :: GhcMonad m
+  => ProjectDebugSpec
+  -> DebugRunner m a
+withProjectDebugSession ProjectDebugSpec{ghcInvocation = ghcI, ..} k = do
+  let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcI
+  GHC.runGhc (Just libdir) $ k rootDir extraGhcArgs $ do
+    dflags2 <- getSessionDynFlags
+
+    -- Discover the user-given flags and targets
+    flagsAndTargets <- parseHomeUnitArguments absEntryFile componentDir units ghcInvocation dflags2 rootDir
+
+    -- Setup HomeUnitGraph with debugee and interactiveGhcDebugger units
+    setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
+
+    debugee_mod_graph <- doDownsweep Nothing
+
+    if_cache <- Just <$> liftIO newIfaceCache
+    success <- doLoad if_cache GHC.LoadAllTargets debugee_mod_graph
+
+    when (GHC.failed success) $ liftIO $
+      throwM DebuggerFailedToLoad
+
+runDebuggerAction :: forall a. LogAction IO DebuggerLog
+  -> FilePath -- ^ rootDir
+  -> [String] -- ^ extraGhcArgs
+  -> RunDebuggerSettings
+  -> Ghc () -- ^ load home units action
+  -> Debugger a
+  -> Ghc a
+runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = flip MC.finally cleanupInterp $ -- See Note [Shutting down the external interpreter]
+  do
 #ifdef MIN_VERSION_unix
-    -- Workaround #4162
-    -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
-    _ <- liftIO $ installHandler sigINT Default Nothing
-    _ <- liftIO $ installHandler sigQUIT Default Nothing
-    _ <- liftIO $ installHandler sigTERM Default Nothing
-    _ <- liftIO $ installHandler sigHUP Default Nothing
+  -- Workaround #4162
+  -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
+  _ <- liftIO $ installHandler sigINT Default Nothing
+  _ <- liftIO $ installHandler sigQUIT Default Nothing
+  _ <- liftIO $ installHandler sigTERM Default Nothing
+  _ <- liftIO $ installHandler sigHUP Default Nothing
 #endif
-    dflags0 <- GHC.getSessionDynFlags
-    let dflags1 = dflags0
-          { GHC.ghcMode = GHC.CompManager
-          , GHC.ghcLink = GHC.LinkInMemory
-          , GHC.verbosity = 1
-          , GHC.canUseColor = conf.supportsANSIStyling
-          , GHC.canUseErrorLinks = conf.supportsANSIHyperlinks
-          }
-          -- Default debugger settings
-          `GHC.xopt_set` LangExt.TypeApplications
-          `GHC.xopt_set` LangExt.PackageImports
-          `GHC.xopt_set` LangExt.MagicHash -- needed for some of the expressions we compile
-          `GHC.gopt_set` GHC.Opt_ImplicitImportQualified
-          `GHC.gopt_set` GHC.Opt_IgnoreOptimChanges
-          `GHC.gopt_set` GHC.Opt_IgnoreHpcChanges
-          `GHC.gopt_set` GHC.Opt_UseBytecodeRatherThanObjects
-          `GHC.gopt_set` GHC.Opt_InsertBreakpoints
+  dflags0 <- GHC.getSessionDynFlags
+  let dflags1 = dflags0
+        { GHC.ghcMode = GHC.CompManager
+        , GHC.ghcLink = GHC.LinkInMemory
+        , GHC.verbosity = 1
+        , GHC.canUseColor = conf.supportsANSIStyling
+        , GHC.canUseErrorLinks = conf.supportsANSIHyperlinks
+        }
+        -- Default debugger settings
+        `GHC.xopt_set` LangExt.TypeApplications
+        `GHC.xopt_set` LangExt.PackageImports
+        `GHC.xopt_set` LangExt.MagicHash -- needed for some of the expressions we compile
+        `GHC.gopt_set` GHC.Opt_ImplicitImportQualified
+        `GHC.gopt_set` GHC.Opt_IgnoreOptimChanges
+        `GHC.gopt_set` GHC.Opt_IgnoreHpcChanges
+        `GHC.gopt_set` GHC.Opt_UseBytecodeRatherThanObjects
+        `GHC.gopt_set` GHC.Opt_InsertBreakpoints
 
-          -- Enable the external interpreter by default! See #169
-          -- See Note [Custom external interpreter]
-          & enableExternalInterpreter conf.preferInternalInterpreter
-          -- Ext interp is the same program as this, with "--external-interpreter"
-          -- (this is ignored on GHC 9.14, see Note [Custom external interpreter])
-          & setPgmI thisProg
-          -- ideally, we'd set "external-interpreter" *before* the file
-          -- descriptors. since there's no way to do that yet, we just have
-          -- some logic in main to detect [writefd, readfd, --external-interpreter]
-          & addOptI "--external-interpreter"
+        -- Enable the external interpreter by default! See #169
+        -- See Note [Custom external interpreter]
+        & enableExternalInterpreter conf.preferInternalInterpreter
+        -- Ext interp is the same program as this, with "--external-interpreter"
+        -- (this is ignored on GHC 9.14, see Note [Custom external interpreter])
+        & setPgmI conf.externalInterpreterProg
+        -- ideally, we'd set "external-interpreter" *before* the file
+        -- descriptors. since there's no way to do that yet, we just have
+        -- some logic in main to detect [writefd, readfd, --external-interpreter]
+        & addOptI "--external-interpreter"
 
-          -- Really important to force -dynamic if host is dynamic
-          -- See Note [Dynamic Debuggee for dynamic debugger]
-          & enableDynamicDebuggee
+        -- Really important to force -dynamic if host is dynamic
+        -- See Note [Dynamic Debuggee for dynamic debugger]
+        & enableDynamicDebuggee
 
-          & setBytecodeBackend
-          & enableByteCodeGeneration
+        & setBytecodeBackend
+        & enableByteCodeGeneration
 
-    GHC.modifyLogger $
-      -- Override the logger to output to the given handle
-      GHC.pushLogHook $ const $ ghcLogAction l
+  GHC.modifyLogger $
+    -- Override the logger to output to the given handle
+    GHC.pushLogHook $ const $ ghcLogAction l
 
-    dflags2 <- getLogger >>= \logger -> do
-      -- Set the extra GHC arguments for ALL units by setting them early in
-      -- dynflags. This is important to make sure unfoldings for interfaces
-      -- loaded because of the built-in loaded classes (like
-      -- GHC.Debugger.View.Class) behave the same as if they were loaded for
-      -- the user program. Otherwise we may run into the problem which
-      -- 3093efa27468fb2d31a617f6a0e4ff67a90f6623 tried to fix (but had to be
-      -- reverted)
-      (dflags2, fileish_args, warns)
-        <- parseDynamicFlagsWithRootDir rootDir logger dflags1 (map noLoc extraGhcArgs)
-      liftIO $ printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
-      forM_ fileish_args $ \fish_arg -> liftIO $ do
-        GHC.logMsg logger MCOutput noSrcSpan $ text "Ignoring extraGhcArg which isn't a recognized flag:" <+> text (unLoc fish_arg)
-        printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
-      return dflags2
+  dflags2 <- getLogger >>= \logger -> do
+    -- Set the extra GHC arguments for ALL units by setting them early in
+    -- dynflags. This is important to make sure unfoldings for interfaces
+    -- loaded because of the built-in loaded classes (like
+    -- GHC.Debugger.View.Class) behave the same as if they were loaded for
+    -- the user program. Otherwise we may run into the problem which
+    -- 3093efa27468fb2d31a617f6a0e4ff67a90f6623 tried to fix (but had to be
+    -- reverted)
+    (dflags2, fileish_args, warns)
+      <- parseDynamicFlagsWithRootDir rootDir logger dflags1 (map noLoc extraGhcArgs)
+    liftIO $ printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
+    forM_ fileish_args $ \fish_arg -> liftIO $ do
+      GHC.logMsg logger MCOutput noSrcSpan $ text "Ignoring extraGhcArg which isn't a recognized flag:" <+> text (unLoc fish_arg)
+      printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
+    return dflags2
 
-    -- Make sure to override the function which creates the external
-    -- interpreter, because we need to keep track of the standard handles
-    iserv_handles <- liftIO newEmptyMVar
-    case conf.externalInterpreterCustomProc of
-      -- Left: GHC will launch the external interpreter itself on demand if
-      -- using external interpreter, and we just provide the stdin stream
-      Left givenStdStream ->
-        modifySession $ \h -> h
-          { hsc_hooks = (hsc_hooks h)
-              { createIservProcessHook = Just $ \cp -> do
-                  -- See Note [External interpreter buffering]
-                  (_, Just o, Just e, ph) <-
-                    createProcess cp
-                      { std_in  = givenStdStream
-                      , std_out = CreatePipe
-                      , std_err = CreatePipe
-                      -- Override executable path
-                      -- See Note [Custom external interpreter]
+  -- Make sure to override the function which creates the external
+  -- interpreter, because we need to keep track of the standard handles
+  iserv_handles <- liftIO newEmptyMVar
+  case conf.externalInterpreterCustomProc of
+    -- Left: GHC will launch the external interpreter itself on demand if
+    -- using external interpreter, and we just provide the stdin stream
+    Left givenStdStream ->
+      modifySession $ \h -> h
+        { hsc_hooks = (hsc_hooks h)
+            { createIservProcessHook = Just $ \cp -> do
+                -- See Note [External interpreter buffering]
+                (_, Just o, Just e, ph) <-
+                  createProcess cp
+                    { std_in  = givenStdStream
+                    , std_out = CreatePipe
+                    , std_err = CreatePipe
+                    -- Override executable path
+                    -- See Note [Custom external interpreter]
 #if MIN_VERSION_ghc(9,15,0)
 #else
-                      , cmdspec = case cmdspec cp of
-                          ShellCommand (words -> ws) -> ShellCommand $ unwords $ thisProg : drop 1 ws
-                          RawCommand _fp args -> RawCommand thisProg args
+                    , cmdspec = case cmdspec cp of
+                        ShellCommand (words -> ws) -> ShellCommand $ unwords $ conf.externalInterpreterProg : drop 1 ws
+                        RawCommand _fp args -> RawCommand conf.externalInterpreterProg args
 #endif
+                    }
+                putMVar iserv_handles (o, e)
+                return ph
+            }
+        }
+
+    -- Right: we supply our custom external interpreter process, which is
+    -- already running and connected to the user's terminal.
+    Right port -> do
+      extInterp <- liftIO
+        $ annotateStackStringIO "Waiting for an external interpreter run-in-terminal process"
+        $ extInterpFromTerminalProcess port
+      modifySession $ \h -> h
+        { hsc_interp = Just extInterp -- set it directly!
+        }
+
+  let
+    externalInterpFwdThread :: IO ()
+    externalInterpFwdThread = when (GHC.gopt GHC.Opt_ExternalInterpreter dflags2) $ do
+      -- The external interpreter is spawned lazily, so we block waiting for
+      -- the handles to be available in a new thread.
+      withAsync (takeMVar iserv_handles) $ \async_handles -> do
+        (serv_out, serv_err) <- wait async_handles
+        concurrently_
+          (forwardHandleToLogger serv_err (contramap LogDebuggeeErr l))
+          (forwardHandleToLogger serv_out (contramap LogDebuggeeOut l))
+
+    mainGhcThread :: Ghc a
+    mainGhcThread = do
+      -- Initializes interpreter!
+      _ <- GHC.setSessionDynFlags dflags2
+
+      -- Initialise plugins here because the plugin author might already expect this
+      -- subsequent call to `getLogger` to be affected by a plugin.
+      GHC.initializeSessionPlugins
+
+      GHC.getSessionDynFlags >>= \df -> liftIO $
+        GHC.initUniqSupply (GHC.initialUnique df) (GHC.uniqueIncrement df)
+
+      loadHomeUnit
+      -- See Note [Must explicitly expose module graph units]
+      setExposedInUnit interactiveGhcDebuggerUnitId . graphUnits . hsc_mod_graph =<< getSession
+
+      -- Ensure all the home units are built with same Ways and return them.
+      buildWays       <- do
+        hug_dflags <- fmap homeUnitEnv_dflags . Foldable.toList . hsc_HUG <$> getSession
+        liftIO $ validateUnitsWays $ case hug_dflags of
+            [] -> error "No units"
+            (x:xs) -> x NonEmpty.:| xs
+
+      -- Find haskell-debugger-view in (deps of) home units, or load one from
+      -- in-memory sources.
+      (hdv_uid, loadedBuiltinModNames) <- findOrLoadHaskellDebuggerView l buildWays
+
+
+      -- Set interactive context to import all loaded modules
+      let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
+      -- dbgView should always be available, either because we manually loaded it
+      -- or because it's in the transitive closure.
+      hug <- hsc_HUG <$> getSession
+      let dbgViewImps
+            -- If hs-dbg-view is a home-unit, refer to it directly
+            -- See Note [Do not package-qualify imports for home units]
+            | memberHugUnitId hdv_uid hug
+            = map (GHC.IIModule . mkModule (RealUnit (Definite hdv_uid))) loadedBuiltinModNames
+            -- It's available in an exposed unit in the transitive closure. Resolve it
+            | otherwise
+            = map (\mn ->
+                GHC.IIDecl (GHC.simpleImportDecl mn)
+                { ideclPkgQual = RawPkgQual
+                    StringLiteral
+                      { sl_st = NoSourceText
+                      , sl_fs = mkFastString (unitIdString hdv_uid)
+                      , sl_tc = Nothing
                       }
-                  putMVar iserv_handles (o, e)
-                  return ph
-              }
-          }
+                }) loadedBuiltinModNames
 
-      -- Right: we supply our custom external interpreter process, which is
-      -- already running and connected to the user's terminal.
-      Right port -> do
-        extInterp <- liftIO
-          $ annotateStackStringIO "Waiting for an external interpreter run-in-terminal process"
-          $ extInterpFromTerminalProcess port
-        modifySession $ \h -> h
-          { hsc_interp = Just extInterp -- set it directly!
-          }
+      mss <- getAllLoadedModules
 
-    let
-      externalInterpFwdThread :: IO ()
-      externalInterpFwdThread = when (GHC.gopt GHC.Opt_ExternalInterpreter dflags2) $ do
-        -- The external interpreter is spawned lazily, so we block waiting for
-        -- the handles to be available in a new thread.
-        withAsync (takeMVar iserv_handles) $ \async_handles -> do
-          (serv_out, serv_err) <- wait async_handles
-          concurrently_
-            (forwardHandleToLogger serv_err (contramap LogDebuggeeErr l))
-            (forwardHandleToLogger serv_out (contramap LogDebuggeeOut l))
+      GHC.setContext
+        (preludeImp :
+          dbgViewImps ++
+          map (GHC.IIModule . GHC.ms_mod) mss)
 
-      mainGhcThread :: Ghc a
-      mainGhcThread = do
-        -- Initializes interpreter!
-        _ <- GHC.setSessionDynFlags dflags2
+      -- See Note [External interpreter buffering]
+      setBufferings <- compileExprRemote """
+        do { System.IO.hSetBuffering System.IO.stdout System.IO.LineBuffering
+            ; System.IO.hSetBuffering System.IO.stderr System.IO.LineBuffering }
+        """
 
-        -- Initialise plugins here because the plugin author might already expect this
-        -- subsequent call to `getLogger` to be affected by a plugin.
-        GHC.initializeSessionPlugins
+      -- FIXME: does this implicitly wait for the interpreter to be ready, or should we do so explicitly?
+      hscInterp <$> GHC.getSession >>= \interp ->
+        liftIO $ evalIO interp setBufferings
 
-        GHC.getSessionDynFlags >>= \df -> liftIO $
-          GHC.initUniqSupply (GHC.initialUnique df) (GHC.uniqueIncrement df)
+      noPrint <- defineNoPrint
+      modifySession (\hsc_env -> hsc_env {hsc_IC = GHCi.setInteractivePrintName (hsc_IC hsc_env) noPrint})
 
-        -- Discover the user-given flags and targets
-        flagsAndTargets <- parseHomeUnitArguments mainFp compDir units ghcInvocation dflags2 rootDir
-        buildWays       <- liftIO $ validateUnitsWays flagsAndTargets
+      runReaderT action
+        =<< initialDebuggerState (liftLogIO l)
+            (if loadedBuiltinModNames == []
+              then Nothing
+              else Just hdv_uid)
 
-        -- Setup base HomeUnitGraph
-        setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
-        -- Downsweep user-given modules first
-        mod_graph_base <- doDownsweep Nothing
+  case conf.externalInterpreterCustomProc of
+    Left _ -> do
+      -- We launched the external interpreter ourselves, so forward its output to the logger.
+      withUnliftGhc $ \ unlift -> do
+        withAsync (void externalInterpFwdThread) $ \ fwd_thr -> do
+          liftIO $ link fwd_thr
+          unlift mainGhcThread
+    Right _ ->
+      -- Ext interp is running in user terminal, no need to forward output to logger
+      mainGhcThread
 
-        if_cache <- Just <$> liftIO newIfaceCache
+findOrLoadHaskellDebuggerView :: LogAction IO DebuggerLog
+             -> Ways
+             -> Ghc (UnitId, [ModuleName])
+findOrLoadHaskellDebuggerView l buildWays = do
+  let ghcLog = liftLogIO l
+  hsc_env <- getSession
+  let mod_graph_base = hsc_mod_graph hsc_env
 
-        -- Try to find or load the built-in classes from `haskell-debugger-view`
-        (hdv_uid, loadedBuiltinModNames) <- findHsDebuggerViewUnitId mod_graph_base >>= \case
-          Nothing -> (hsDebuggerViewInMemoryUnitId,) <$> do
+  -- Try to find or load the built-in classes from `haskell-debugger-view`
+  findHsDebuggerViewUnitId mod_graph_base >>= \case
+    Nothing -> (hsDebuggerViewInMemoryUnitId,) <$> do
+      -- Not imported by any module: no custom views. Therefore, the builtin
+      -- ones haven't been loaded. In this case, we will load the package ourselves.
 
-            -- Not imported by any module: no custom views. Therefore, the builtin
-            -- ones haven't been loaded. In this case, we will load the package ourselves.
+      -- Add the custom unit to the HUG
+      let base_dep_uids = [uid | UnitNode _ uid <- mg_mss mod_graph_base]
+      addInMemoryHsDebuggerViewUnit base_dep_uids . setDynFlagWays buildWays =<< getDynFlags
 
-            -- Add the custom unit to the HUG
-            let base_dep_uids = [uid | UnitNode _ uid <- mg_mss mod_graph_base]
-            addInMemoryHsDebuggerViewUnit base_dep_uids . setDynFlagWays buildWays =<< getDynFlags
+      -- Load unit modules using in-memory contents.
+      let
+        -- Don't try to load instances whose packages are not even in the
+        -- module graph.
+        (instanceMods,skipped) = L.partition (\ (_modName,_modContent,pkgName) -> any ((pkgName `L.isPrefixOf`) . unitIdString) base_dep_uids)
+            debuggerViewInstancesMods
+        modsToLoad =
+          (debuggerViewClassModName,debuggerViewClassContents)
+          : [ (modName,modContent)
+            | (modName, modContent, _pkgName) <- instanceMods]
 
-            tryLoadHsDebuggerViewModule l if_cache (const False) debuggerViewClassModName debuggerViewClassContents
-              >>= \case
-                Failed -> do
-                  -- Failed to load base debugger-view module!
-                  ghcLog <& DebuggerLog Logger.Debug
-                    (LogFailedToCompileDebugViewModule debuggerViewClassModName)
-                  return []
-                Succeeded -> (debuggerViewClassModName:) . concat <$> do
+      forM_ skipped $ \(modName,_,pkgName) ->
+        ghcLog <& DebuggerLog Logger.Debug
+          (LogSkippingViewModuleNoPkg modName pkgName (map unitIdString base_dep_uids))
 
-                  forM debuggerViewInstancesMods $ \(modName, modContent, pkgName) -> do
-                    -- Don't try to load instances whose packages are not even in
-                    -- the module graph:
-                    if any ((pkgName `L.isPrefixOf`) . unitIdString) base_dep_uids then do
-                      tryLoadHsDebuggerViewModule l if_cache
-                          ((\case
-                              -- Keep only "GHC.Debugger.View.Class", which is a dependency of all these.
-                              GHC.TargetFile f _
-                                -> f == "in-memory:" ++ moduleNameString debuggerViewClassModName
-                              _ -> False) . GHC.targetId)
-                          modName modContent >>= \case
-                        Failed -> do
-                          ghcLog <& DebuggerLog Logger.Info
-                            (LogFailedToCompileDebugViewModule modName)
-                          return []
-                        Succeeded -> do
-                          return [modName]
-                    else do
-                      ghcLog <& DebuggerLog Logger.Debug
-                        (LogSkippingViewModuleNoPkg modName pkgName (map unitIdString base_dep_uids))
-                      return []
+      successes <- loadInMemoryModules l hsDebuggerViewInMemoryUnitId modsToLoad
 
-          Just uid ->
-            -- TODO: We assume for now that if you depended on
-            -- @haskell-debugger-view@, then you also depend on all its transitive
-            -- dependencies (containers, text, ...), thus can load all custom
-            -- views. Hence all `debuggerViewBuiltinMods`. In the future, we
-            -- may want to guard all dependencies behind cabal flags that the user
-            -- can tweak when depending on `haskell-debugger-view`.
-            return (uid, map fst debuggerViewBuiltinMods)
+      fmap catMaybes . forM (zip successes modsToLoad) $ \case
+        (Failed,(modName,_)) -> do
+          ghcLog <& DebuggerLog Logger.Debug
+            (LogFailedToCompileDebugViewModule modName)
+          return $ Nothing
+        (Succeeded,(modName,_)) ->
+          return $ Just modName
 
-        -- Final load combining all base modules plus haskell-debugger-view ones that loaded successfully
-        -- The targets which were successfully loaded have been set with `setTarget` (e.g. by setupHomeUnitGraph).
-        final_mod_graph <- doDownsweep (Just mod_graph_base{-cached previous result-})
-        success <- doLoad if_cache GHC.LoadAllTargets final_mod_graph
-        when (GHC.failed success) $ liftIO $
-          throwM DebuggerFailedToLoad
-
-        -- See Note [Must explicitly expose module graph units]
-        setExposedInUnit interactiveGhcDebuggerUnitId (graphUnits final_mod_graph)
-
-        -- Set interactive context to import all loaded modules
-        let preludeImp = GHC.IIDecl . GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
-        -- dbgView should always be available, either because we manually loaded it
-        -- or because it's in the transitive closure.
-        hug <- hsc_HUG <$> getSession
-        let dbgViewImps
-              -- If hs-dbg-view is a home-unit, refer to it directly
-              -- See Note [Do not package-qualify imports for home units]
-              | memberHugUnitId hdv_uid hug
-              = map (GHC.IIModule . mkModule (RealUnit (Definite hdv_uid))) loadedBuiltinModNames
-              -- It's available in an exposed unit in the transitive closure. Resolve it
-              | otherwise
-              = map (\mn ->
-                  GHC.IIDecl (GHC.simpleImportDecl mn)
-                  { ideclPkgQual = RawPkgQual
-                      StringLiteral
-                        { sl_st = NoSourceText
-                        , sl_fs = mkFastString (unitIdString hdv_uid)
-                        , sl_tc = Nothing
-                        }
-                  }) loadedBuiltinModNames
-
-        mss <- getAllLoadedModules
-
-        GHC.setContext
-          (preludeImp :
-            dbgViewImps ++
-            map (GHC.IIModule . GHC.ms_mod) mss)
-
-        -- See Note [External interpreter buffering]
-        setBufferings <- compileExprRemote """
-          do { System.IO.hSetBuffering System.IO.stdout System.IO.LineBuffering
-             ; System.IO.hSetBuffering System.IO.stderr System.IO.LineBuffering }
-          """
-        hscInterp <$> GHC.getSession >>= \interp ->
-          liftIO $ evalIO interp setBufferings
-
-        noPrint <- defineNoPrint
-        modifySession (\hsc_env -> hsc_env {hsc_IC = GHCi.setInteractivePrintName (hsc_IC hsc_env) noPrint})
-
-        runReaderT action
-          =<< initialDebuggerState dbgLog
-              (if loadedBuiltinModNames == []
-                then Nothing
-                else Just hdv_uid)
-
-    case conf.externalInterpreterCustomProc of
-      Left _ -> do
-        -- We launched the external interpreter ourselves, so forward its output to the logger.
-        withUnliftGhc $ \ unlift -> do
-          withAsync (void externalInterpFwdThread) $ \ fwd_thr -> do
-            liftIO $ link fwd_thr
-            unlift mainGhcThread
-      Right _ ->
-        -- Ext interp is running in user terminal, no need to forward output to logger
-        mainGhcThread
+    Just uid -> do
+      -- TODO: We assume for now that if you depended on
+      -- @haskell-debugger-view@, then you also depend on all its transitive
+      -- dependencies (containers, text, ...), thus can load all custom
+      -- views. Hence all `debuggerViewBuiltinMods`. In the future, we
+      -- may want to guard all dependencies behind cabal flags that the user
+      -- can tweak when depending on `haskell-debugger-view`.
+      return (uid, map fst debuggerViewBuiltinMods)
 
 {-
 Note [Shutting down the external interpreter]
@@ -812,50 +855,42 @@ doLoad if_cache how_much mg = do
   let msg = batchMultiMsg
   load' if_cache how_much mkUnknownDiagnostic (Just msg) mg
 
--- | Returns @Just modName@ if the given module was successfully loaded
-tryLoadHsDebuggerViewModule
-  :: GhcMonad m
-  => LogAction IO DebuggerLog
-  -> Maybe ModIfaceCache
-  -> (GHC.Target -> Bool)
-  -- ^ Predicate to determine which of the existing
-  -- targets should be re-used when doing downsweep
-  -- Should be as minimal as necessary (i.e. just DebugView class for the
-  -- instances modules).
-  -> ModuleName -> StringBuffer -> m SuccessFlag
-tryLoadHsDebuggerViewModule l if_cache keepTarget modName modContents = do
-  dflags <- getDynFlags
-  -- Store existing targets to restore afterwards
-  -- We want to use as little targets as possible to keep downsweep minimal+fast
-  old_targets <- GHC.getTargets
 
-  -- Also: temporarily disable the logger! We don't want to show the user these
-  -- modules we're trying to load and compile.
+loadInMemoryModules ::
+  GhcMonad m
+  => LogAction IO DebuggerLog
+  -> UnitId
+  -> [(ModuleName,StringBuffer)] -> m [SuccessFlag]
+loadInMemoryModules l uid ts = do
+  old_targets <- GHC.getTargets
+  tgts <- forM ts $  \(modName,modContents) ->
+    liftIO $ makeInMemoryTarget uid modName modContents
+  GHC.setTargets (tgts ++ old_targets)
+  mod_graph <- hsc_mod_graph <$> GHC.getSession
+  -- TODO: use [incremental API](https://gitlab.haskell.org/ghc/ghc/-/issues/27054) when ready.
+  dvc_mod_graph <- doDownsweep (Just mod_graph)
+  modifySession $ GHC.setModuleGraph dvc_mod_graph
+
   restore_logger <- GHC.getLogger
+  dflags <- getSessionDynFlags
   GHC.modifyLogger $
     -- Emit it all as Debug-level debugger logs
     GHC.pushLogHook $ const $ \_ _ _ sdoc ->
       l <& DebuggerLog Logger.Debug (LogSDoc dflags sdoc)
 
-  -- Make the target
-  dvcT <- liftIO $ makeInMemoryHsDebuggerViewTarget modName modContents
-
-  -- Make mod_graph just for this target
-  GHC.setTargets (dvcT:filter keepTarget old_targets)
-  dvc_mod_graph <- doDownsweep Nothing
-
-  -- And try to load it
-  result <- doLoad if_cache (GHC.LoadUpTo [mkModule hsDebuggerViewInMemoryUnitId modName]) dvc_mod_graph
-
-  -- Restore targets plus new one if success
-  GHC.setTargets (old_targets ++ (if succeeded result then [dvcT] else []))
+  -- Might not make sense to keep going if the first fails, but we expect all of
+  -- them to succeed, and it's not that many more modules.
+  s <- forM tgts $ \ tgt -> compileModuleWithDepsInHpt tgt >>= \case
+        Nothing -> pure Succeeded
+        Just e -> do
+          liftLogIO l <& DebuggerLog Logger.Debug (LogSDoc dflags $ text (show e))
+          pure Failed
 
   -- Restore logger
   GHC.modifyLogger $
     GHC.pushLogHook (const $ GHC.putLogMsg restore_logger)
 
-
-  return result
+  return s
 
 --------------------------------------------------------------------------------
 -- * Finding Debugger View

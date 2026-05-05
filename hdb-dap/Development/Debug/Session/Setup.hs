@@ -12,6 +12,11 @@ module Development.Debug.Session.Setup
   -- * Logging
   , SessionSetupLog(..)
   , renderSessionSetupLog
+
+  , GhcInvocation(..)
+  , DebugRunnerProvider
+  , hieDebugRunner
+  , DebugRunnerConf(..)
   ) where
 
 import Control.Applicative ((<|>))
@@ -49,6 +54,28 @@ import qualified Hie.Yaml as Implicit
 import Colog.Core
 import Prettyprinter
 import Prettyprinter.Render.Text
+
+import qualified GHC.Debugger.Monad as Debugger
+import GHC (Ghc)
+import GHC.Debugger.Monad (ProjectDebugSpec(ProjectDebugSpec))
+
+data GhcInvocation = GhcInvocation
+  { gi_libdir :: FilePath
+  , gi_units :: [String]
+  , gi_args :: [String]
+  -- ^ includes also the ghcExtraArgs that will be passed to the DebugSession by the DebugRunner.
+  }
+
+-- | When successful in setting up a DebugRunner it also returns the GhcInvocation used.
+type DebugRunnerProvider a = LogAction IO (WithSeverity SessionSetupLog)
+  -> DebugRunnerConf
+  -> IO (Either String (GhcInvocation, Debugger.DebugRunner Ghc a))
+
+data DebugRunnerConf = DebugRunnerConf
+  { drcProjectRoot :: FilePath
+  , drcEntryFile :: FilePath
+  , drcExtraGhcArgs :: [String]
+  }
 
 data SessionSetupLog
   = HieBiosLog HIE.Log
@@ -188,6 +215,18 @@ ghcDebuggerFlags =
   [ "-fno-it" -- don't introduce @it@ after evaluating something at the prompt
   ]
 
+hieDebugRunner
+  :: LogAction IO (WithSeverity SessionSetupLog)
+  -> DebugRunnerConf
+  -> IO (Either String (GhcInvocation, Debugger.DebugRunner Ghc a))
+hieDebugRunner l (DebugRunnerConf projectRoot entryFile extraGhcArgs) = runExceptT $ do
+  r <- hieBiosSetup l projectRoot entryFile
+  HieBiosFlags{..} <- case r of
+    Left e -> throwError e
+    Right f -> return f
+  let absEntryFile = normalise $ projectRoot </> entryFile
+  let gI = GhcInvocation libdir units (ghcInvocation ++ extraGhcArgs)
+  pure $ (,) gI $ Debugger.withProjectDebugSession ProjectDebugSpec{..}
 
 -- ----------------------------------------------------------------------------
 -- Utilities

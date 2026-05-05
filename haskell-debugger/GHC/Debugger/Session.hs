@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies, CPP, RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NondecreasingIndentation #-}
 
 -- | Initialise the GHC session for one or more home units.
 --
@@ -31,6 +32,7 @@ module GHC.Debugger.Session (
   resumeExec,
   setExposedInUnit,
   graphUnits,
+  compileModuleWithDepsInHpt,
   )
   where
 
@@ -73,10 +75,21 @@ import qualified GHC.Unit.Home.Graph as HUG
 import qualified Data.Set as Set
 import Data.Maybe
 import GHC.Types.Target (InputFileBuffer)
-import GHC (SingleStep, ExecResult)
+import GHC (SingleStep, ExecResult, ModSummary (ms_hspp_opts))
 import Data.Set (Set)
 import qualified GHC.Unit as GHC
-import GHC.Unit.Module.Graph (mg_mss, ModuleGraphNode (..), ModNodeKeyWithUid (mnkUnitId), mnKey)
+import GHC.Unit.Module.Graph (mg_mss, ModuleGraphNode (..), mnKey)
+import GHC.Driver.Make
+import GHC.Unit.Home.ModInfo (HomeModInfo(..))
+import qualified GHC.Driver.Errors.Types as GHC
+import System.Directory (doesFileExist)
+import qualified GHC.Types.Error as GHC
+import qualified GHC.Utils.Error as GHC
+import GHC.Driver.Pipeline (compileOne)
+import qualified GHC.Unit.Home.ModInfo as GHC
+import GHC.Utils.TmpFs
+import Data.Foldable (for_)
+import GHC.Plugins (SourceError, try)
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -221,6 +234,7 @@ setExposedInUnit unitId exposed = do
   let old_ie = case lookupHugUnitId unitId (hsc_HUG env) of
         Just hue -> hue
         Nothing -> error $ "setExposedInUnit: unit not found " ++ unitIdString unitId
+  let home_units = allUnits $ hsc_HUG env
 
   let dflags = (homeUnitEnv_dflags old_ie) { packageFlags = [ExposePackage
                   (unitIdString uid)
@@ -229,13 +243,12 @@ setExposedInUnit unitId exposed = do
               | uid <- exposed
               , uid /= rtsUnitId
               , uid /= ghcInternalUnitId
-              , unitIdString uid /= "haskell-debugger-view-in-memory"
+              , uid /= unitId
               -- FIXME: any other to filter out?
               ]}
   let cached_dbs = homeUnitEnv_unit_dbs old_ie
-  let home_units = Set.fromList $ State.homeUnitDepends $ homeUnitEnv_units old_ie
-  (dbs,unit_state,home_unit,mconstants) <- liftIO $ State.initUnits (hsc_logger env) dflags cached_dbs home_units
-
+  (dbs,unit_state,home_unit,mconstants)
+    <- liftIO $ State.initUnits (hsc_logger env) dflags cached_dbs home_units
   updated_dflags <- liftIO $ GHC.updatePlatformConstants dflags mconstants
   let ie = old_ie
        { homeUnitEnv_units = unit_state
@@ -245,8 +258,7 @@ setExposedInUnit unitId exposed = do
        }
 
   let home_unit_graph = HUG.unitEnv_insert unitId ie (hsc_HUG env)
-  let ue0 = hsc_unit_env env
-  let ue1 = ue0 {ue_home_unit_graph = home_unit_graph}
+  let ue1 = (hsc_unit_env env) {ue_home_unit_graph = home_unit_graph}
   let
     new_env
       | ue_currentUnit ue1 /= unitId = hscSetUnitEnv ue1 env
@@ -285,9 +297,9 @@ setupMultiHomeUnitGhcSession exts hsc_env cis = do
 
 -- | Find and return the ways in which the home units are built.
 -- INVARIANT: All home units are built with the same 'Ways'
-validateUnitsWays :: NonEmpty.NonEmpty (DynFlags, [GHC.Target]) -> IO Ways
-validateUnitsWays flagsAndTargets = do
-    let unitWays  = NonEmpty.map (ways . fst) flagsAndTargets
+validateUnitsWays :: NonEmpty.NonEmpty DynFlags -> IO Ways
+validateUnitsWays flags = do
+    let unitWays  = NonEmpty.map ways flags
         firstWays = NonEmpty.head unitWays
         restWays  = NonEmpty.tail unitWays
     if all (== firstWays) restWays
@@ -381,6 +393,63 @@ getCacheDirs prefix opts = do
     -- Create a unique folder per set of different GHC options, assuming that each different set of
     -- GHC options will create incompatible interface files.
     opts_hash = B.unpack $ B16.encode $ H.finalize $ H.updates H.init (map B.pack opts)
+
+
+getTargetFileSummary ::
+  HscEnv ->
+  GHC.Target ->
+  IO (Either GHC.DriverMessages GHC.ModSummary)
+getTargetFileSummary hsc_env target
+  | GHC.TargetFile file mb_phase <- targetId
+  = do
+    let offset_file = GHC.augmentByWorkingDirectory dflags file
+    exists <- liftIO $ doesFileExist offset_file
+    if exists || isJust maybe_buf
+    then summariseFile hsc_env home_unit old_summary_map offset_file mb_phase
+         maybe_buf
+    else
+      return $ Left $ GHC.singleMessage $
+      GHC.mkPlainErrorMsgEnvelope noSrcSpan (GHC.DriverFileNotFound offset_file)
+  | otherwise = error "FIXME"
+  where
+      old_summary_map = Map.empty
+      GHC.Target {targetId, targetContents = maybe_buf, targetUnitId = uid} = target
+      home_unit = ue_unitHomeUnit uid (hsc_unit_env hsc_env)
+      dflags = homeUnitEnv_dflags (ue_findHomeUnitEnv uid (hsc_unit_env hsc_env))
+
+compileModuleWithDepsInHpt :: GhcMonad m =>
+  GHC.Target ->
+  m (Maybe SourceError)
+compileModuleWithDepsInHpt target@GHC.Target{targetUnitId = uid} = do
+  hsc_env0 <- getSession
+  let !old_active = hscActiveUnitId hsc_env0
+  let !hsc_env = hscSetActiveUnitId uid hsc_env0
+  ehmi <- liftIO $ try @SourceError $ do
+    Right summary <- getTargetFileSummary hsc_env target
+    result <- compileOne hsc_env (forceRecomp summary) 1 1 Nothing (GHC.HomeModLinkable Nothing Nothing)
+    cleanCurrentModuleTempFilesMaybe (hsc_logger hsc_env) (hsc_tmpfs hsc_env) (ms_hspp_opts summary)
+    pure result
+  case ehmi of
+   Left e -> do
+     return $ Just e
+   Right hmi -> do
+    setSession . hscSetActiveUnitId old_active =<< liftIO (addDepsToHscEnv [hmi] hsc_env)
+    return Nothing
+  where
+    -- This bypasses another recompilation check in 'compileOne'
+    forceRecomp summary =
+      summary {ms_hspp_opts = gopt_set (ms_hspp_opts summary) Opt_ForceRecomp}
+
+addDepsToHscEnv :: [HomeModInfo] -> HscEnv -> IO HscEnv
+addDepsToHscEnv deps hsc_env = do
+  for_ deps $ \ dep -> hscInsertHPT dep hsc_env
+  pure hsc_env
+
+cleanCurrentModuleTempFilesMaybe :: MonadIO m => GHC.Logger -> TmpFs -> DynFlags -> m ()
+cleanCurrentModuleTempFilesMaybe logger tmpfs dflags =
+  if gopt Opt_KeepTmpFiles dflags
+    then liftIO $ keepCurrentModuleTempFiles logger tmpfs
+    else liftIO $ cleanCurrentModuleTempFiles logger tmpfs
 
 -- ----------------------------------------------------------------------------
 -- The Interactive DynFlags

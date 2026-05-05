@@ -1,5 +1,4 @@
-[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
-[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/myapp/app/Main.hs, interpreted )[myapp-0.1.0.0-inplace-myapp]
+[1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>/myapp/app/Main.hs, interpreted )[myapp-0.1.0.0-inplace-myapp]
 [;1m<TEMPORARY-DIRECTORY>/myapp/app/Main.hs:3:1: [;1m[35mwarning[0m[0m[;1m: [GHC-66111] [[;1m[35m-Wunused-imports[0m[0m[;1m][0m[0m[;1m
     The import of ‘MyLib’ is redundant
       except perhaps to import instances from ‘MyLib’

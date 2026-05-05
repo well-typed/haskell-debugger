@@ -1,5 +1,4 @@
-[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
-[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/app/Main.hs, interpreted )[T283-0.1.0.0-inplace-T283]
+[1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>/app/Main.hs, interpreted )[T283-0.1.0.0-inplace-T283]
 (hdb) 
 (hdb) THIS IS A PACKAGE
 ()

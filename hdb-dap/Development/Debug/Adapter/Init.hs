@@ -44,6 +44,7 @@ import Development.Debug.Adapter
 import Colog.Core as Logger
 import qualified Development.Debug.Adapter.Output as Output
 
+import GHC (Ghc)
 import GHC.Utils.Logger (defaultLogActionWithHandles)
 import GHC.Debugger.Utils (forwardHandleToLogger)
 import qualified GHC.Debugger as Debugger
@@ -55,9 +56,9 @@ import DAP
 import Development.Debug.Adapter.Handles
 import Development.Debug.Session.Setup
 import Development.Debug.Adapter.Proxy
-import System.Environment
 import Network.Socket (socketPort)
 import qualified Network.Socket as Socket
+import GHC.Debugger.Monad (RunDebuggerSettings(externalInterpreterCustomProc))
 
 --------------------------------------------------------------------------------
 -- * Client
@@ -86,7 +87,7 @@ data LaunchArgs
 -- * Logging
 --------------------------------------------------------------------------------
 
-data DAPLog
+data DAPSessionLog
   = DAPSessionSetupLog (WithSeverity SessionSetupLog)
   | DAPDebuggerLog Debugger.DebuggerLog
   | RunProxyServerLog (WithSeverity T.Text)
@@ -95,12 +96,19 @@ data DAPLog
 -- * Launch Debugger
 --------------------------------------------------------------------------------
 
+data DAPServerConf = DAPServerConf
+  { hdbProgram :: FilePath
+    -- ^ invoked with `external-interpreter` to serve as the external interpreter
+  , getDebugRunner :: DebugRunnerProvider ()
+  , dapServerConfig :: ServerConfig
+  }
+
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
-initDebugger :: LogAction IO DAPLog -> Bool -> Bool
+initDebugger :: LogAction IO DAPSessionLog -> DAPServerConf -> Bool -> Bool
              -> LaunchArgs -> DebugAdaptor ()
-initDebugger l supportsRunInTerminal preferInternalInterpreter
+initDebugger l servConf supportsRunInTerminal preferInternalInterpreter
                LaunchArgs{ __sessionId
                          , projectRoot = givenRoot
                          , entryFile = entryFileMaybe
@@ -136,11 +144,10 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
         WithSeverity msg sev
           | sev >= Info -> dapLogger <& renderSessionSetupLog msg
           | otherwise -> mempty
-
-  liftIO (runExceptT (hieBiosSetup hieBiosLogger projectRoot entryFile)) >>= \case
+  let debugRunnerConf = DebugRunnerConf projectRoot entryFile extraGhcArgs
+  liftIO (getDebugRunner servConf hieBiosLogger debugRunnerConf) >>= \case
     Left e              -> throwError (ErrorMessage (T.pack e), Nothing)
-    Right (Left e)      -> throwError (ErrorMessage (T.pack e), Nothing)
-    Right (Right flags) -> do
+    Right (ghcInvocation, debugRunner) -> do
 
       let
         nextFreshId = 0
@@ -172,9 +179,10 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
 
       dbgLog <- liftIO $
         createDebuggerLogger l dapLogger writeDAPOutput runInTerminalProc
+      let hdbProg = hdbProgram servConf
 
       (runInTerminalThreads, afterRegisterActions) <-
-        mkRunInTerminalThreads l runInTerminalProc preferInternalInterpreter
+        mkRunInTerminalThreads l hdbProg runInTerminalProc preferInternalInterpreter
 
       let
         defaultRunConf = Debugger.RunDebuggerSettings
@@ -185,13 +193,23 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
               RunExternalInterpreterInTerminal{extInterpPort}
                 -> Right extInterpPort
               _ -> Left CreatePipe -- if not runInTerminal, just create a new pipe for stdin
+          , externalInterpreterProg = hdbProgram servConf
           }
         absEntryFile = normalise $ projectRoot </> entryFile
         daState = DAS{entryFile=absEntryFile,..}
 
       sessionId <- liftIO $ maybe (("debug-session:" <>) . T.show <$> UUID.nextRandom) (pure . T.pack) __sessionId
       registerNewDebugSession sessionId daState $
-        [ debuggerThread dbgLog flags extraGhcArgs absEntryFile defaultRunConf syncRequests syncResponses
+        [ \withAdaptor -> do
+            -- The info here is already taken into account in debugRunner.
+            let GhcInvocation libdir units args = ghcInvocation
+            withAdaptor $
+              Output.console $ T.pack $ unlines $
+                [ "libdir: " <> libdir
+                , "units: " <> unwords units
+                , "args: " <> unwords args
+                ]
+            debuggerThread dbgLog debugRunner defaultRunConf syncRequests syncResponses
         , \withAdaptor -> forwardHandleToLogger readDAPOutput $
             LogAction (\msg -> withAdaptor (Output.neutral msg))
         ]
@@ -203,14 +221,15 @@ initDebugger l supportsRunInTerminal preferInternalInterpreter
 -- | Additional threads to register for this session depending on the process
 -- we're running through `runInTerminal` (see 'RunInTerminalProc').
 mkRunInTerminalThreads
-  :: LogAction IO DAPLog
+  :: LogAction IO DAPSessionLog
+  -> FilePath
   -> RunInTerminalProc
   -> Bool -- ^ Use internal interpreter
   -> DebugAdaptor ([(DebugAdaptorCont () -> IO ()) -> IO ()], DebugAdaptor ())
     -- ^ Threads to register in this debug session and additional commands to
     -- run after registering the session.
 
-mkRunInTerminalThreads _ NoRunInTerminal useInternalInterp
+mkRunInTerminalThreads _ _ NoRunInTerminal useInternalInterp
   -- Not using the terminal proxy, but we still want to output our own
   -- stdout/err (from the internal interpreter) as console events.
   | True <- useInternalInterp
@@ -219,11 +238,10 @@ mkRunInTerminalThreads _ NoRunInTerminal useInternalInterp
   | otherwise
   = pure ([], pure ())
 
-mkRunInTerminalThreads _ RunExternalInterpreterInTerminal{..} _
+mkRunInTerminalThreads _ hdbProg RunExternalInterpreterInTerminal{..} _
   -- No additional bookkeeping is needed in this case because GHC will
   -- naturally have to wait for the external interpreter in order to start execution
   = do
-  thisProg <- liftIO getExecutablePath -- run the same `hdb` executable in `proxy` mode
   pure ([],
     sendRunInTerminalReverseRequest
       RunInTerminalRequestArguments
@@ -231,12 +249,12 @@ mkRunInTerminalThreads _ RunExternalInterpreterInTerminal{..} _
         , runInTerminalRequestArgumentsTitle = Nothing
         , runInTerminalRequestArgumentsCwd = ""
         , runInTerminalRequestArgumentsArgs =
-            [T.pack thisProg, "external-interpreter", "--port", T.pack (show extInterpPort)]
+            [T.pack hdbProg, "external-interpreter", "--port", T.pack (show extInterpPort)]
         , runInTerminalRequestArgumentsEnv = Nothing
         , runInTerminalRequestArgumentsArgsCanBeInterpretedByShell = False
         })
 
-mkRunInTerminalThreads l RunProxyInTerminal{..} _
+mkRunInTerminalThreads l hdbProg RunProxyInTerminal{..} _
   = do
     (serverPort, serverProxyThread) <-
       mkServerSideHdbProxy (contramap RunProxyServerLog l)
@@ -256,7 +274,7 @@ mkRunInTerminalThreads l RunProxyInTerminal{..} _
       -- (the 'RunProxyInTerminal' case), we ask the DAP client to launch the
       -- `hdb proxy` attached to the user's terminal. The proxy forwards
       -- input/output from the user terminal to the debugger+debuggee shared process
-      sendRunProxyInTerminal serverPort
+      sendRunProxyInTerminal hdbProg serverPort
       )
 
 -- | The main debugger thread launches a GHC.Debugger session.
@@ -269,25 +287,13 @@ mkRunInTerminalThreads l RunProxyInTerminal{..} _
 -- Concurrently, it reads from the process's stderr forever and outputs it through OutputEvents.
 --
 debuggerThread :: LogAction IO Debugger.DebuggerLog
-               -> HieBiosFlags    -- ^ GHC Invocation flags
-               -> [String]        -- ^ Extra ghc args
-               -> FilePath
+               -> Debugger.DebugRunner Ghc ()
                -> Debugger.RunDebuggerSettings -- ^ Settings for running the debugger
                -> MVar D.Command  -- ^ Read commands
                -> MVar D.Response -- ^ Write reponses
-               -> (DebugAdaptorCont () -> IO ())
-               -- ^ Allows unlifting DebugAdaptor actions to IO. See 'registerNewDebugSession'.
                -> IO ()
-debuggerThread l HieBiosFlags{..} extraGhcArgs mainFp runConf requests replies withAdaptor = do
-
-  -- Log haskell-debugger invocation
-  withAdaptor $
-    Output.console $ T.pack $
-      "libdir: " <> libdir <> "\n" <>
-      "units: " <> unwords units <> "\n" <>
-      "args: " <> unwords (ghcInvocation ++ extraGhcArgs)
-
-  Debugger.runDebugger l rootDir componentDir libdir units ghcInvocation extraGhcArgs mainFp runConf $ do
+debuggerThread l debugRunner runConf requests replies = do
+  Debugger.runDebugger l debugRunner runConf $ do
     liftIO $ do
       tid <- myThreadId
       labelThread tid "Main Debugger Thread"
@@ -325,7 +331,7 @@ Specification for the logger given to `Debugger`:
 
 -- See Note [Debugger, debuggee, and DAP logs]
 createDebuggerLogger
-  :: LogAction IO DAPLog
+  :: LogAction IO DAPSessionLog
   -> LogAction IO T.Text -- ^ Logger that writes to to DAP output
   -> Handle              -- ^ Handle to DAP output
   -> RunInTerminalProc

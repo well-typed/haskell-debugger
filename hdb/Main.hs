@@ -5,29 +5,16 @@ module Main where
 
 import System.Process
 import System.Environment
-import Data.Maybe
-import Data.IORef
-import Text.Read
-import Control.Concurrent
-import Control.Monad
-import Control.Monad.IO.Class
 import Control.Exception (bracket, uninterruptibleMask, bracketOnError)
 import Control.Exception.Backtrace
 
 import DAP
 
 import Development.Debug.Adapter.Init
-import Development.Debug.Adapter.Breakpoints
-import Development.Debug.Adapter.Stepping
-import Development.Debug.Adapter.Stopped
-import Development.Debug.Adapter.Evaluation
-import Development.Debug.Adapter.ExceptionInfo
-import Development.Debug.Adapter.Exit
-import Development.Debug.Adapter.Exit.Helpers
 import Development.Debug.Adapter.Handles
+import Development.Debug.Adapter.Server
 import Colog.Core
 
-import Data.Time
 import System.IO
   ( hFlush
   , hClose
@@ -38,8 +25,6 @@ import System.IO
   , openFile
   , IOMode(ReadMode, ReadWriteMode)
   )
-import qualified DAP.Log as DAP
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import GHC.IO.Handle.FD
@@ -51,14 +36,14 @@ import qualified GHCi.Signals as GHCi
 import qualified GHCi.Utils as GHCi
 import qualified GHCi.Message as GHCi
 
-import GHC.Utils.Logger (defaultLogActionWithHandles)
-import GHC.Debugger.Monad (DebuggerLog(..), RunDebuggerSettings(..))
+import GHC.Debugger.Monad (RunDebuggerSettings(..))
 import Development.Debug.Options (HdbOptions(..))
 import Development.Debug.Options.Parser (parseHdbOptions)
-import Development.Debug.Adapter
 import Development.Debug.Adapter.Proxy
 import Development.Debug.Interactive
 import GHC.Stack.Annotation (annotateCallStackIO)
+import GHC.Utils.Logger (defaultLogActionWithHandles)
+import Development.Debug.Session.Setup (hieDebugRunner)
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -83,12 +68,18 @@ main = do
     HdbDAPServer{port, internalInterpreter, disableIpeBacktraces} -> do
       setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
       config <- getConfig port
+      -- the same program invoked with `external-interpreter` serves as the external interpreter
+      hdbProgram <- getExecutablePath
+      let servConf = DAPServerConf
+            { getDebugRunner = hieDebugRunner
+            , hdbProgram
+            , dapServerConfig = config
+            }
       redirectRealStdout internalInterpreter $ \realStdout -> do
         hSetBuffering realStdout LineBuffering
-        l <- mainLogger hdbOpts.verbosity realStdout
-        init_var <- liftIO (newIORef False{-not supported by default-})
+        l <- contramap DAPLog <$> mainLogger hdbOpts.verbosity realStdout
         runDAPServerWithLogger (contramap DAPLibraryLog l) config
-          (talk l init_var internalInterpreter)
+          (talk l servConf internalInterpreter)
           (ack l )
     HdbCLI{..} -> do
         setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
@@ -96,11 +87,14 @@ main = do
         stdinStream <- case debuggeeStdin of
           Just fp -> UseHandle <$> System.IO.openFile fp ReadMode
           Nothing -> pure Inherit
+        -- the same program invoked with `external-interpreter` serves as the external interpreter
+        thisProg <- getExecutablePath
         let runConf = RunDebuggerSettings
               { supportsANSIStyling = True -- todo: check!!
               , supportsANSIHyperlinks = False
               , preferInternalInterpreter = internalInterpreter
               , externalInterpreterCustomProc = Left stdinStream
+              , externalInterpreterProg = thisProg
               }
         runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs
           runConf debugInteractive
@@ -173,211 +167,15 @@ main = do
       | otherwise = k stdout
 
 
--- | Fetch config from environment, fallback to sane defaults
-getConfig :: Int -> IO ServerConfig
-getConfig port = do
-  let
-    hostDefault = "0.0.0.0"
-    portDefault = port
-    capabilities = Capabilities
-      { supportsConfigurationDoneRequest      = True
-      , supportsFunctionBreakpoints           = True
-      , supportsConditionalBreakpoints        = True
-      , supportsHitConditionalBreakpoints     = True
-      , supportsEvaluateForHovers             = False
-      -- Exception Breakpoints:
-      , exceptionBreakpointFilters            = [ defaultExceptionBreakpointsFilter
-                                                  { exceptionBreakpointsFilterLabel = "All exceptions"
-                                                  , exceptionBreakpointsFilterFilter = BREAK_ON_EXCEPTION
-                                                  }
-                                                , defaultExceptionBreakpointsFilter
-                                                  { exceptionBreakpointsFilterLabel = "Uncaught exceptions"
-                                                  , exceptionBreakpointsFilterFilter = BREAK_ON_ERROR
-                                                  }
-                                                ]
-      , supportsStepBack                      = False
-      , supportsSetVariable                   = False
-      , supportsRestartFrame                  = False
-      , supportsGotoTargetsRequest            = False
-      , supportsStepInTargetsRequest          = False
-      , supportsCompletionsRequest            = False
-      , completionTriggerCharacters           = []
-      , supportsModulesRequest                = False
-      , additionalModuleColumns               = [ defaultColumnDescriptor
-                                                  { columnDescriptorAttributeName = "Extra"
-                                                  , columnDescriptorLabel = "Label"
-                                                  }
-                                                ]
-      , supportedChecksumAlgorithms           = []
-      , supportsRestartRequest                = False
-      , supportsExceptionOptions              = True
-      , supportsValueFormattingOptions        = True
-      , supportsExceptionInfoRequest          = True
-      , supportTerminateDebuggee              = False -- for now, when debugger is disconnected, we always kill the debuggee
-      , supportSuspendDebuggee                = False
-      , supportsDelayedStackTraceLoading      = False
-      , supportsLoadedSourcesRequest          = False
-      , supportsLogPoints                     = True
-      , supportsTerminateThreadsRequest       = False
-      , supportsSetExpression                 = False
-      , supportsTerminateRequest              = True
-      , supportsDataBreakpoints               = False
-      , supportsReadMemoryRequest             = False
-      , supportsWriteMemoryRequest            = False
-      , supportsDisassembleRequest            = False
-      , supportsCancelRequest                 = False
-      -- Display which breakpoints are valid when user intends to set
-      -- breakpoint on given line:
-      , supportsBreakpointLocationsRequest    = True
-      , supportsClipboardContext              = False
-      , supportsSteppingGranularity           = False
-      , supportsInstructionBreakpoints        = False
-      , supportsExceptionFilterOptions        = False
-      , supportsSingleThreadExecutionRequests = False
-      }
-  ServerConfig
-    <$> do fromMaybe hostDefault <$> lookupEnv "DAP_HOST"
-    <*> do fromMaybe portDefault . (readMaybe =<<) <$> do lookupEnv "DAP_PORT"
-    <*> pure capabilities
-    <*> pure True
-
---------------------------------------------------------------------------------
--- * Talk
---------------------------------------------------------------------------------
-
--- | Main function where requests are received and Events + Responses are returned.
--- The core logic of communicating between the client <-> adaptor <-> debugger
--- is implemented in this function.
-talk :: LogAction IO MainLog
-     -> IORef Bool
-     -- ^ Whether the client supports runInTerminal
-     -> Bool
-     -- ^ Prefer internal interpreter
-     -> Command -> DebugAdaptor ()
---------------------------------------------------------------------------------
-talk l support_rit_var prefer_internal_interpreter = \ case
-  CommandInitialize -> do
-    InitializeRequestArguments{supportsRunInTerminalRequest} <- getArguments
-#ifdef mingw32_HOST_OS
-    -- On Windows, runInTerminal is currently unsupported
-    -- See #199
-    let runInTerminal = False
-#else
-    let runInTerminal = fromMaybe False supportsRunInTerminalRequest
-#endif
-    -- This global variable is wrong. Even though we only register the session
-    -- and the per-session state on Launch (which gives us __sessionId), the
-    -- *initialize* command is run once per new session on a new connection and
-    -- two different clients which may differ in their support for
-    -- 'runInTerminal'.
-    --
-    -- The `dap` library should likely keep track of the client capabilities
-    -- per connection.
-    liftIO $ writeIORef support_rit_var runInTerminal
-    sendInitializeResponse
---------------------------------------------------------------------------------
-  CommandLaunch -> do
-    launch_args <- getArguments
-
-    -- Wrong-ish. See above where this variable is written
-    supportsRunInTerminalRequest <- liftIO $ readIORef support_rit_var
-
-    initDebugger (contramap DAPLog l)
-      supportsRunInTerminalRequest prefer_internal_interpreter
-      launch_args
-
-    sendLaunchResponse   -- ack
-    sendInitializedEvent -- our debugger is only ready to be configured after it has launched the session
-
-    liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "Debugger launched successfully.") Info)
---------------------------------------------------------------------------------
-  CommandAttach -> do
-    sendTerminatedEvent (TerminatedEvent False)
-    destroyDebugSession
-    sendError (ErrorMessage (T.pack "hdb does not support \"attach\" mode yet")) Nothing
---------------------------------------------------------------------------------
-  CommandBreakpointLocations       -> commandBreakpointLocations
-  CommandSetBreakpoints            -> commandSetBreakpoints
-  CommandSetFunctionBreakpoints    -> commandSetFunctionBreakpoints
-  CommandSetExceptionBreakpoints   -> commandSetExceptionBreakpoints
-  CommandExceptionInfo             -> commandExceptionInfo
-  CommandSetDataBreakpoints        -> undefined
-  CommandSetInstructionBreakpoints -> undefined
-----------------------------------------------------------------------------
-  CommandLoadedSources -> undefined
-----------------------------------------------------------------------------
-  CommandConfigurationDone -> do
-    sendConfigurationDoneResponse
-
-    DAS{runInTerminalProc} <- getDebugSession
-    case runInTerminalProc of
-      RunProxyInTerminal{proxyClientReady} -> liftIO $ do
-        -- Only start executing after proxy client connects succesfully (#95)
-        takeMVar proxyClientReady
-      _ ->
-        pure ()
-
-    -- Configuration is finished. Start executing until it halts.
-    startExecution >>= handleEvalResult False
-----------------------------------------------------------------------------
-  CommandThreads    -> commandThreads
-  CommandStackTrace -> commandStackTrace
-  CommandScopes     -> commandScopes
-  CommandVariables  -> commandVariables
-----------------------------------------------------------------------------
-  CommandContinue   -> commandContinue
-----------------------------------------------------------------------------
-  CommandNext       -> commandNext
-----------------------------------------------------------------------------
-  CommandStepIn     -> commandStepIn
-  CommandStepOut    -> commandStepOut
-----------------------------------------------------------------------------
-  CommandEvaluate   -> commandEvaluate
-----------------------------------------------------------------------------
-  CommandTerminate  -> commandTerminate
-  CommandDisconnect -> commandDisconnect
-----------------------------------------------------------------------------
-  CommandModules -> sendModulesResponse (ModulesResponse [] Nothing)
-  CommandSource -> undefined
-  CommandPause -> pure () -- TODO
-  (CustomCommand "mycustomcommand") -> undefined
-  other -> do
-    terminateWithError ("Unsupported command: " <> show other)
-
--- | Receive reverse request responses (such as runInTerminal response)
-ack :: LogAction IO MainLog
-    -> ReverseRequestResponse -> DebugAdaptorCont ()
-ack l rrr = case rrr.reverseRequestCommand of
-  ReverseCommandRunInTerminal -> do
-
-    RunInTerminalResponse{} <- getReverseRequestResponseBody rrr
-
-    -- TODO: keep track of body.shellProcessId to then kill the proxy when the
-    -- session is terminated:
-    -- [stdout] [127.0.0.1:54427][DEBUG][RECEIVED]
-    --  {
-    --      "body": {
-    --          "shellProcessId": 2092
-    --      },
-    --      "command": "runInTerminal",
-    --      "seq": 14,
-    --      "success": true,
-    --      "type": "response"
-    --  }
-    when rrr.success $ do
-      liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "RunInTerminal was successful") Info)
-  _ -> pure ()
 
 --------------------------------------------------------------------------------
 -- * Logging
 --------------------------------------------------------------------------------
 
 data MainLog
-  = DAPLog DAPLog
-  | InteractiveLog InteractiveLog
+  = InteractiveLog InteractiveLog
   | RunProxyClientLog (WithSeverity T.Text)
-  | DAPLaunchLog (WithSeverity T.Text)
-  | DAPLibraryLog DAP.DAPLog
+  | DAPLog DAPLog
 
 -- | Given the severity threshold from which we start logging, create a base
 -- logger for consuming the top-level debugger logs ('MainLog').
@@ -385,54 +183,9 @@ data MainLog
 mainLogger :: Severity -> Handle -> IO (LogAction IO MainLog)
 mainLogger threshold h = do
   l <- handleLogger h
-  let
-    logSessionLog (WithSeverity msg sev)
-      | sev >= threshold =
-        cmapM renderWithTimestamp l <& (renderSeverity sev <> T.pack (show msg))
-      | otherwise = pure ()
-
-    logDebuggerLog = \case
-      DebuggerLog sev msg
-        | sev >= threshold ->
-          cmapM renderWithTimestamp l <&
-            (renderSeverity sev <> T.pack (show msg))
-      GHCLog logflags msg_class srcSpan msg ->
-        defaultLogActionWithHandles h h logflags msg_class srcSpan msg
-      LogDebuggeeOut out ->
-        -- If we wanted, we could log the debuggee output differently if we are
-        -- on the DAP debug mode vs, say, hdb.
-        l <& out
-      LogDebuggeeErr err -> l <& err
-      _ -> pure ()
-
-    defaultLog (WithSeverity msg sev)
-      | sev >= threshold =
-        cmapM renderWithTimestamp l <& (renderSeverity sev <> msg)
-      | otherwise = pure ()
-
+  let logGhcLog = defaultLogActionWithHandles h h
   pure $ LogAction $ \case
-    DAPLog (DAPSessionSetupLog sessionLog)       -> logSessionLog sessionLog
-    DAPLog (DAPDebuggerLog debuggerLog)          -> logDebuggerLog debuggerLog
-    DAPLog (RunProxyServerLog sev_msg) -> defaultLog sev_msg
-    InteractiveLog (ISessionSetupLog sessionLog) -> logSessionLog sessionLog
-    InteractiveLog (IDebuggerLog debuggerLog)    -> logDebuggerLog debuggerLog
-    RunProxyClientLog sev_msg -> defaultLog sev_msg
-    DAPLaunchLog sev_msg      -> defaultLog sev_msg
-    DAPLibraryLog t ->
-      l <& DAP.renderDAPLog t
-  where
-    renderSeverity :: Severity -> Text
-    renderSeverity = \ case
-      Debug -> "[DEBUG] "
-      Info -> "[INFO] "
-      Warning -> "[WARNING] "
-      Error -> "[ERROR] "
-
-    renderWithTimestamp :: Text -> IO Text
-    renderWithTimestamp msg = do
-      t <- getCurrentTime
-      let timeStamp = utcTimeToText t
-      pure $ "[" <> timeStamp <> "] " <> msg
-      where
-        utcTimeToText utcTime = T.pack $
-          formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%6QZ" utcTime
+    InteractiveLog (ISessionSetupLog sessionLog) -> logSessionLog l threshold sessionLog
+    InteractiveLog (IDebuggerLog debuggerLog)    -> logDebuggerLog logGhcLog l threshold debuggerLog
+    RunProxyClientLog sev_msg -> defaultLog l threshold sev_msg
+    DAPLog dapLog -> logDAPLog logGhcLog l threshold <& dapLog
