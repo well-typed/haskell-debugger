@@ -155,10 +155,9 @@ library
     hs-source-dirs:   haskell-debugger
     default-language: GHC2021
 
-executable hdb
+library dap
     import:           warnings
-    main-is:          Main.hs
-    other-modules:    Development.Debug.Adapter.Breakpoints,
+    exposed-modules:  Development.Debug.Adapter.Breakpoints,
                       Development.Debug.Adapter.Stepping,
                       Development.Debug.Adapter.Stopped,
                       Development.Debug.Adapter.Evaluation,
@@ -169,19 +168,15 @@ executable hdb
                       Development.Debug.Adapter.Exit,
                       Development.Debug.Adapter.Exit.Helpers,
                       Development.Debug.Adapter.Handles,
+                      Development.Debug.Adapter.Server,
                       Development.Debug.Adapter,
 
                       Development.Debug.Adapter.Proxy,
 
-                      Development.Debug.Interactive,
-
                       Development.Debug.Session.Setup,
-
-                      Development.Debug.Options,
-                      Development.Debug.Options.Parser,
-
-                      Paths_haskell_debugger
-    autogen-modules:  Paths_haskell_debugger
+    hs-source-dirs:   hdb-dap
+    default-language: GHC2021
+    default-extensions: CPP
     build-depends:
         base, ghc, ghci,
         exceptions, aeson, bytestring,
@@ -202,7 +197,45 @@ executable hdb
         network-run >= 0.4.4,
         async >= 2.2.5 && < 2.3,
         text >= 2.1 && < 2.3,
-        dap >= 0.5 && < 0.6,
+        dap >= 0.6 && < 0.7,
+
+        haskeline >= 0.8 && < 1,
+        optparse-applicative >= 0.18 && < 0.20,
+        uuid >= 1.3 && < 1.4,
+        ghc-stack-annotations >=0.1 && <0.2,
+
+executable hdb
+    import:           warnings
+    main-is:          Main.hs
+    other-modules:    Development.Debug.Interactive,
+
+                      Development.Debug.Options,
+                      Development.Debug.Options.Parser,
+
+                      Paths_haskell_debugger
+    autogen-modules:  Paths_haskell_debugger
+    build-depends:
+        base, ghc, ghci,
+        exceptions, aeson, bytestring,
+        containers, filepath,
+        process, mtl,
+        unordered-containers >= 0.2.19 && < 0.3,
+
+        haskell-debugger,
+        haskell-debugger:dap,
+        hie-bios,
+        prettyprinter ^>= 1.7.0,
+        co-log-core >= 0.3.2.5 && < 0.4,
+        implicit-hie ^>=0.1.4.0,
+        transformers >= 0.6 && < 0.7,
+        time,
+
+        directory >= 1.3.9 && < 1.4,
+        network >= 3.2.8,
+        network-run >= 0.4.4,
+        async >= 2.2.5 && < 2.3,
+        text >= 2.1 && < 2.3,
+        dap >= 0.6 && < 0.7,
 
         haskeline >= 0.8 && < 1,
         optparse-applicative >= 0.18 && < 0.20,

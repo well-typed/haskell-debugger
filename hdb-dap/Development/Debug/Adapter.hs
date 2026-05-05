@@ -1,4 +1,5 @@
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE LambdaCase #-}
 module Development.Debug.Adapter where
 
 import Control.Concurrent.MVar

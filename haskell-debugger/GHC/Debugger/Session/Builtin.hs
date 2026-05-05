@@ -10,7 +10,7 @@ module GHC.Debugger.Session.Builtin
     -- * In memory unit
   , hsDebuggerViewInMemoryUnitId
   , addInMemoryHsDebuggerViewUnit
-  , makeInMemoryHsDebuggerViewTarget
+  , makeInMemoryTarget
 
   -- Note:
   -- Don't export instances mods individually to make sure we get warnings if
@@ -128,15 +128,14 @@ addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
            in HUG.unitEnv_insert hsDebuggerViewInMemoryUnitId hdv_hue hug
       )
 
--- | Make an in-memory 'GHC.Target' for a @haskell-debugger-view@ built-in
--- module from the module name and contents
-makeInMemoryHsDebuggerViewTarget :: ModuleName -> StringBuffer -> IO GHC.Target
-makeInMemoryHsDebuggerViewTarget modName sb = do
+-- | Make an in-memory 'GHC.Target' for a module from the module name and contents
+makeInMemoryTarget :: UnitId -> ModuleName -> StringBuffer -> IO GHC.Target
+makeInMemoryTarget uid modName sb = do
     time <- getCurrentTime
     let mkTarget mn contents = GHC.Target
           { targetId = GHC.TargetFile ("in-memory:" ++ moduleNameString mn) Nothing
           , targetAllowObjCode = False
-          , GHC.targetUnitId = hsDebuggerViewInMemoryUnitId
+          , GHC.targetUnitId = uid
           , GHC.targetContents = Just (contents, time)
           }
     return $ mkTarget modName sb
