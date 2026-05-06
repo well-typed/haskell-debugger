@@ -1,0 +1,3 @@
+#!/bin/sh
+
+$HDB -v0 T159b.hs < T159b.hdb-stdin 2>&1 || true
