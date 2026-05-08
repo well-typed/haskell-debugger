@@ -1,0 +1,7 @@
+-- cabal project file used for self-debug tests.
+-- Meant to be just `cabal.project` but separate file to prevent cabal 
+-- from including `cabal.project.local` as well.
+--
+-- Referenced by hie-self-debug-test.yaml
+
+import: cabal.project

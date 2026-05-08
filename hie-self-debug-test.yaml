@@ -1,0 +1,6 @@
+# HIE cradle used for self-debug tests.
+# It has to be at the project root, otherwise HIE will not resolve it properly.
+cradle:
+  cabal:
+    cabalProject: "cabal.project.self-debug-test"
+    component: "all"

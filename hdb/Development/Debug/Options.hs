@@ -21,6 +21,7 @@ data HdbOptions
     , entryFile :: FilePath
     , entryArgs :: [String]
     , extraGhcArgs :: [String]
+    , cradleFile :: Maybe FilePath
     , verbosity :: Severity
     , internalInterpreter :: Bool
     , disableIpeBacktraces :: Bool

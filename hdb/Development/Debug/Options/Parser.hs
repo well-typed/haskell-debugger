@@ -54,6 +54,12 @@ cliParser = HdbCLI
      <> metavar "GHC_ARGS"
      <> value []
      <> help "Additional flags to pass to the ghc invocation that loads the program for debugging" )
+  <*> option (Just <$> str)
+       (long "cradle-file"
+       <> metavar "HIE_PATH"
+       <> value Nothing
+       <> help "Path to .yaml file to use as cradle configuration. Location inferred from ENTRY_POINT otherwise."
+       )
   <*> verbosityParser Warning
   <*> internalInterpreterParser
   <*> disableIpeBacktracesParser

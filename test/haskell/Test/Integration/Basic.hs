@@ -81,6 +81,7 @@ minimalConfig =
             , lcEntryArgs = []
             , lcExtraGhcArgs = []
             , lcInternalInterpreter = Nothing
+            , lcCradleFile = Nothing
             }
       hitBreakpointWith cfg 2
       disconnect

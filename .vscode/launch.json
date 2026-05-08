@@ -9,7 +9,8 @@
             "entryFile": "hdb/Main.hs",
             "entryArgs": ["server", "--port", "12345"],
             "entryPoint": "main",
-            "extraGhcArgs": []
+            "extraGhcArgs": [],
+	    "cradleFile" : "hie-self-debug.yaml"
         },
         {
             "type": "haskell-debugger",
@@ -19,7 +20,8 @@
             "entryFile": "test/haskell/Main.hs",
             "entryPoint": "main",
             "entryArgs": ["--pattern", "DAP.Scopes"],
-            "extraGhcArgs": []
+            "extraGhcArgs": [],
+	    "cradleFile": "hie-self-debug.yaml"
         }
     ]
 }
