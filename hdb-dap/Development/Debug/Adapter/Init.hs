@@ -80,6 +80,8 @@ data LaunchArgs
     -- or function arguments otherwise.
   , extraGhcArgs :: Maybe [String]
     -- ^ Additional arguments to pass to the GHC invocation inferred by hie-bios for this project
+  , cradleFile :: Maybe FilePath
+    -- ^ specify cradle file rather than let it be inferred from @entryFile@, relative to @projectRoot@.
   } deriving stock (Show, Eq, Generic)
     deriving anyclass FromJSON
 
@@ -115,6 +117,7 @@ initDebugger l servConf supportsRunInTerminal preferInternalInterpreter
                          , entryPoint = fromMaybe "main" -> entryPoint
                          , entryArgs  = fromMaybe [] -> entryArgs
                          , extraGhcArgs = fromMaybe [] -> extraGhcArgs
+                         , cradleFile
                          } = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
@@ -144,7 +147,7 @@ initDebugger l servConf supportsRunInTerminal preferInternalInterpreter
         WithSeverity msg sev
           | sev >= Info -> dapLogger <& renderSessionSetupLog msg
           | otherwise -> mempty
-  let debugRunnerConf = DebugRunnerConf projectRoot entryFile extraGhcArgs
+  let debugRunnerConf = DebugRunnerConf projectRoot entryFile extraGhcArgs cradleFile
   liftIO (getDebugRunner servConf hieBiosLogger debugRunnerConf) >>= \case
     Left e              -> throwError (ErrorMessage (T.pack e), Nothing)
     Right (ghcInvocation, debugRunner) -> do

@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Development.Debug.Session.Setup
   (
@@ -75,6 +76,10 @@ data DebugRunnerConf = DebugRunnerConf
   { drcProjectRoot :: FilePath
   , drcEntryFile :: FilePath
   , drcExtraGhcArgs :: [String]
+  , drcCradleFile :: Maybe FilePath
+    -- ^ specified cradle file rather than letting be inferred from
+    -- @drcEntryFile@, relative to @drcProjectRoot@ if so. @DebugRunnerProvider@s
+    -- must WARN if this field is @Just@ but they do not use hie cradles.
   }
 
 data SessionSetupLog
@@ -106,11 +111,12 @@ data HieBiosFlags = HieBiosFlags
 hieBiosSetup :: LogAction IO (WithSeverity SessionSetupLog)
              -> FilePath -- ^ project root
              -> FilePath -- ^ entry file
+             -> Maybe FilePath -- ^ cradle file
              -> ExceptT String IO (Either String HieBiosFlags)
-hieBiosSetup logger projectRoot entryFile = do
+hieBiosSetup logger projectRoot entryFile cradleFile = do
 
   logInfo "Figuring out the right flags to compile the project using hie-bios..."
-  cradle <- hieBiosCradle logger projectRoot entryFile & ExceptT
+  cradle <- hieBiosCradle logger projectRoot entryFile cradleFile & ExceptT
 
   -- GHC is found in PATH (by hie-bios as well).
   logInfo "Checking GHC version against debugger version..."
@@ -129,10 +135,16 @@ hieBiosSetup logger projectRoot entryFile = do
 hieBiosCradle :: LogAction IO (WithSeverity SessionSetupLog)
               -> FilePath -- ^ Project root
               -> FilePath -- ^ Entry file relative to root
+              -> Maybe FilePath -- ^ Cradle file relative to root
               -> IO (Either String (HIE.Cradle Void))
-hieBiosCradle logger root relTarget = runExceptT $ do
+hieBiosCradle logger root relTarget mrelCradle = runExceptT $ do
   let target = root </> relTarget
-  explicitCradle <- HIE.findCradle target & liftIO
+  explicitCradle <- case mrelCradle of
+    Nothing -> HIE.findCradle target & liftIO
+    Just ((root </>) -> cradleFile) -> do
+      liftIO (doesFileExist cradleFile) >>= \case
+        True -> return $ Just cradleFile
+        False -> throwError $ "Specified Cradle file does not exist: " ++ cradleFile
   cradle <- maybe (loadImplicitCradle hieBiosLogger target)
                   (HIE.loadCradle hieBiosLogger) explicitCradle & liftIO
   liftLogIO logger <& WithSeverity (LogCradle cradle) Info
@@ -219,8 +231,8 @@ hieDebugRunner
   :: LogAction IO (WithSeverity SessionSetupLog)
   -> DebugRunnerConf
   -> IO (Either String (GhcInvocation, Debugger.DebugRunner Ghc a))
-hieDebugRunner l (DebugRunnerConf projectRoot entryFile extraGhcArgs) = runExceptT $ do
-  r <- hieBiosSetup l projectRoot entryFile
+hieDebugRunner l (DebugRunnerConf projectRoot entryFile extraGhcArgs cradleFile) = runExceptT $ do
+  r <- hieBiosSetup l projectRoot entryFile cradleFile
   HieBiosFlags{..} <- case r of
     Left e -> throwError e
     Right f -> return f

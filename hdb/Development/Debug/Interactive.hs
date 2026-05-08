@@ -47,14 +47,15 @@ runIDM :: LogAction IO InteractiveLog
        -> FilePath -- ^ entryFile
        -> [String] -- ^ entryArgs
        -> [String] -- ^ extraGhcArgs
+       -> Maybe FilePath
        -> RunDebuggerSettings
        -> InteractiveDM a
        -> IO a
-runIDM logger entryPoint entryFile entryArgs extraGhcArgs runConf act = do
+runIDM logger entryPoint entryFile entryArgs extraGhcArgs cradleFile runConf act = do
   projectRoot <- getCurrentDirectory
 
   let hieBiosLogger = contramap ISessionSetupLog logger
-  hieDebugRunner hieBiosLogger (DebugRunnerConf projectRoot entryFile extraGhcArgs) >>= \case
+  hieDebugRunner hieBiosLogger (DebugRunnerConf projectRoot entryFile extraGhcArgs cradleFile) >>= \case
     Left e               -> exitWithMsg e
     Right (_ghcInvocation, debugRunner)
                          -> do

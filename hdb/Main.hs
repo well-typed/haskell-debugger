@@ -96,7 +96,7 @@ main = do
               , externalInterpreterCustomProc = Left stdinStream
               , externalInterpreterProg = thisProg
               }
-        runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs
+        runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs cradleFile
           runConf debugInteractive
     HdbProxy{port} -> do
         setBacktraceMechanismState IPEBacktrace True

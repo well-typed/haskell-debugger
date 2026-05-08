@@ -125,6 +125,7 @@ data LaunchConfig = LaunchConfig
   , lcEntryPoint :: Maybe String
   , lcEntryArgs :: [String]
   , lcExtraGhcArgs :: [String]
+  , lcCradleFile :: Maybe FilePath
   , lcInternalInterpreter :: Maybe Bool
   }
 
@@ -137,6 +138,7 @@ mkLaunchConfig projectRoot entryFile = LaunchConfig
   , lcEntryPoint = Just "main"
   , lcEntryArgs = []
   , lcExtraGhcArgs = []
+  , lcCradleFile = Nothing
   , lcInternalInterpreter = Nothing
   }
 
@@ -150,7 +152,9 @@ launchWith LaunchConfig{..} = launch $ object $
   [ "entryPoint" .= ep | Just ep <- [lcEntryPoint] ] ++
   [ "entryArgs" .= lcEntryArgs ] ++
   [ "extraGhcArgs" .= lcExtraGhcArgs ] ++
+  [ "cradleFile" .= file | Just file <- [lcCradleFile] ] ++
   [ "internalInterpreter" .= b | Just b <- [lcInternalInterpreter] ]
+
 
 -- | Set breakpoints in a particular source file of a project at the given
 -- lines.

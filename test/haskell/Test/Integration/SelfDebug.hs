@@ -32,8 +32,9 @@ selfDebugDAPTest = do
     doesFileExist (test_dir </> "cabal.project") >>= \exists ->
       unless exists $ writeFile (test_dir </> "cabal.project")
         "packages: . haskell-debugger-view\nallow-newer: ghc-bignum,containers,time,ghc,base,template-haskell"
-    doesFileExist (test_dir </> "hie.yaml") >>= \exists ->
-      unless exists $ writeFile (test_dir </> "hie.yaml")
+    let hieFileName = "hie-self-debug-test.yaml"
+    doesFileExist (test_dir </> hieFileName) >>= \exists ->
+      unless exists $ writeFile (test_dir </> hieFileName)
         "cradle:\n  cabal:\n    component: \"all\""
     withTestDAPServerClient server $ do
       let cfg = LaunchConfig
@@ -42,6 +43,7 @@ selfDebugDAPTest = do
             , lcEntryPoint = Just "main"
             , lcEntryArgs = ["cli", "test/golden/self-debug-cli/Main.hs"]
             , lcExtraGhcArgs = []
+            , lcCradleFile = Just hieFileName
             , lcInternalInterpreter = Nothing
             }
 
