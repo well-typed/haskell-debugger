@@ -157,6 +157,7 @@ library
 
 library dap-server
     import:           warnings
+    visibility:       public
     exposed-modules:  Development.Debug.Adapter.Breakpoints,
                       Development.Debug.Adapter.Stepping,
                       Development.Debug.Adapter.Stopped,
