@@ -24,9 +24,10 @@ import Data.List (intercalate)
 import qualified Data.Maybe as Maybe
 
 data RunOptions = RunOptions
-  { runEntryFile :: FilePath
+  { runEntryFile :: AbsFilePath
   , runEntryPoint :: String
   , runEntryArgs :: [String]
+  , runProjectRoot :: AbsFilePath
   }
 
 data RunContext = RunContext
@@ -52,10 +53,10 @@ runIDM :: LogAction IO InteractiveLog
        -> InteractiveDM a
        -> IO a
 runIDM logger entryPoint entryFile entryArgs extraGhcArgs cradleFile runConf act = do
-  projectRoot <- getCurrentDirectory
+  projectRoot <- mkAbsolute <$> getCurrentDirectory
 
   let hieBiosLogger = contramap ISessionSetupLog logger
-  hieDebugRunner hieBiosLogger (DebugRunnerConf projectRoot entryFile extraGhcArgs cradleFile) >>= \case
+  hieDebugRunner hieBiosLogger (DebugRunnerConf (unAbs projectRoot) entryFile extraGhcArgs cradleFile) >>= \case
     Left e               -> exitWithMsg e
     Right (_ghcInvocation, debugRunner)
                          -> do
@@ -64,7 +65,7 @@ runIDM logger entryPoint entryFile entryArgs extraGhcArgs cradleFile runConf act
       runDebugger debugRec debugRunner runConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
-                   (RunOptions { runEntryFile = entryFile, runEntryPoint = entryPoint, runEntryArgs = entryArgs })
+                   (RunOptions { runProjectRoot = projectRoot, runEntryFile = projectRoot /> entryFile, runEntryPoint = entryPoint, runEntryArgs = entryArgs })
                    (RunContext { runLastCommand = Nothing, runCurrentThread = Nothing } )
   where
     exitWithMsg txt = do
@@ -228,10 +229,10 @@ renderExceptionInfo = unlines . go 0
 -- Command parser
 --------------------------------------------------------------------------------
 
-breakpointParser :: Parser Breakpoint
-breakpointParser =
+breakpointParser :: AbsFilePath -> Parser Breakpoint
+breakpointParser root =
   ( ModuleBreak
-  <$> argument str
+  <$> argument ((root />) <$> str)
       ( metavar "PATH" -- todo: accept module breaks using module name
      <> help "Path to module to break at" )
   <*> argument auto
@@ -301,7 +302,7 @@ cmdParser :: RunOptions -> RunContext -> Parser (OrExit Command)
 cmdParser opts ctx = hsubparser
    (
     Options.Applicative.command "delete"
-    ( info (Do . DelBreakpoint <$> breakpointParser)
+    ( info (Do . DelBreakpoint <$> breakpointParser (runProjectRoot opts))
       ( progDesc "Delete a breakpoint" ) )
   <>
     Options.Applicative.command "run"
@@ -345,7 +346,7 @@ cmdParser opts ctx = hsubparser
     ( info (Do <$> variablesParser ctx <**> helper)
       ( progDesc "Print local variables" ) )
   <> Options.Applicative.command "break"
-    ( info (Do <$> (SetBreakpoint <$> breakpointParser <*> hitCountBreakParser <*> conditionalBreakParser <*> logMessageParser))
+    ( info (Do <$> (SetBreakpoint <$> breakpointParser (runProjectRoot opts) <*> hitCountBreakParser <*> conditionalBreakParser <*> logMessageParser))
       ( progDesc "Set a breakpoint" ) )
   )
 

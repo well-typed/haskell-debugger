@@ -93,6 +93,7 @@ import GHC.Data.FastString.Env (emptyFsEnv)
 #endif
 import GHC.Unit.Home.Graph
 import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything which uses `Debugger`
+import System.Directory (getCurrentDirectory)
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -1022,6 +1023,15 @@ getAllLoadedModules :: GHC.GhcMonad m => m [GHC.ModSummary]
 getAllLoadedModules =
   (GHC.mgModSummaries <$> GHC.getModuleGraph) >>=
     filterM (\ms -> GHC.isLoadedModule (ms_unitid ms) (ms_mod_name ms))
+
+getAllLoadedModulesWithPaths :: GHC.GhcMonad m => m [(AbsFilePath,ModSummary)]
+getAllLoadedModulesWithPaths = do
+  ghcCwd <- mkAbsolute <$> liftIO getCurrentDirectory
+  -- TODO: cache?
+  map (\ m -> (absoluteSourcePath ghcCwd m, m)) <$> getAllLoadedModules
+  where
+    absoluteSourcePath :: AbsFilePath -> ModSummary -> AbsFilePath
+    absoluteSourcePath ghcCwdDir ms = ghcCwdDir /> msHsFilePath ms
 
 --------------------------------------------------------------------------------
 -- * Forcing laziness

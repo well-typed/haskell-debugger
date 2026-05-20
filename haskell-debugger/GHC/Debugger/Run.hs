@@ -16,10 +16,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.IORef
-import qualified Data.List as List
 import Data.Maybe
-import System.FilePath
-import System.Directory
 
 import GHC qualified
 import GHC (
@@ -65,13 +62,14 @@ import Colog.Core as Logger
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import GHC.Debugger.Runtime.Thread
 import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
+import Data.List (find)
 
 --------------------------------------------------------------------------------
 -- * Evaluation
 --------------------------------------------------------------------------------
 
 -- | Run a program with debugging enabled
-debugExecution :: FilePath -> EntryPoint -> [String] {-^ Args -} -> Debugger EvalResult
+debugExecution :: AbsFilePath -> EntryPoint -> [String] {-^ Args -} -> Debugger EvalResult
 debugExecution entryFile entry args = do
   -- consider always using :trace like ghci-dap to always have a stacktrace?
   -- better solution could involve profiling stack traces or from IPE info?
@@ -133,14 +131,14 @@ debugExecution entryFile entry args = do
               `gopt_set` Opt_ImplicitImportQualified
           )
 
-    findUnitIdOfEntryFile :: GhcMonad m => FilePath -> m GHC.ModSummary
-    findUnitIdOfEntryFile fp = do
-      afp <- normalise <$> liftIO (makeAbsolute fp)
-      modSums <- getAllLoadedModules
-      let normalisedModLoc = fmap normalise . GHC.ml_hs_file . GHC.ms_location
-      case List.find ((Just afp ==) . normalisedModLoc) modSums of
-        Nothing -> error $ "findUnitIdOfEntryFile: no unit id found for: " ++ fp ++ "\nCandidates were:\n" ++ unlines (map (show . normalisedModLoc) modSums)
-        Just summary -> pure summary
+    findUnitIdOfEntryFile :: GhcMonad m => AbsFilePath -> m GHC.ModSummary
+    findUnitIdOfEntryFile afp = do
+      modSums <- getAllLoadedModulesWithPaths
+      case find ((== unAbs afp) . unAbs . fst) modSums of
+        Nothing -> do
+          let norms = map fst modSums
+          error $ "findUnitIdOfEntryFile: no unit id found for: " ++ unAbs afp ++ "\nCandidates were:\n" ++ unlines (map show norms)
+        Just (_,summary) -> pure summary
 
 -- | Resume execution of the stopped debuggee program
 doContinue :: Debugger EvalResult

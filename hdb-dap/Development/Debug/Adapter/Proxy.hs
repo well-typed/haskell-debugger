@@ -44,6 +44,7 @@ import qualified Data.HashMap.Strict as H
 import Colog.Core
 import Development.Debug.Adapter
 import qualified Control.Exception as E
+import GHC.Debugger.Interface.Messages (unAbs)
 
 -- | Fork a new thread to run the server-side of the proxy.
 --
@@ -187,7 +188,7 @@ sendRunProxyInTerminal hdbProg port = do
       , entryPoint
       , entryArgs
       , projectRoot } <- getDebugSession
-  let debuggee_inv = T.pack $ makeRelative projectRoot entryFile ++ ":" ++ entryPoint ++
+  let debuggee_inv = T.pack $ makeRelative (unAbs projectRoot) (unAbs entryFile) ++ ":" ++ entryPoint ++
                               (if null entryArgs then "" else " ") ++ unwords entryArgs
   sendRunInTerminalReverseRequest
     RunInTerminalRequestArguments

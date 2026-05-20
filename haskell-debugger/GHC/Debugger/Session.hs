@@ -660,6 +660,7 @@ addWay' w dflags0 =
                        (wayUnsetGeneralFlags platform w)
    in dflags3
 
+
 -- ----------------------------------------------------------------------------
 -- Wrappers around GHC's odd behavior
 -- ----------------------------------------------------------------------------
