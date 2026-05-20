@@ -856,7 +856,7 @@ doDownsweep reuse_mg = do
       hsc_env mkUnknownDiagnostic (Just msg)
       (maybe [] mgModSummaries reuse_mg)
 #if MIN_VERSION_ghc(10,1,0)
-      Nothing -- Reused module graph
+      reuse_mg
 #endif
       [] False
   when (not $ null errs_base) $ do
@@ -879,14 +879,19 @@ loadInMemoryModules ::
   -> UnitId
   -> [(ModuleName,StringBuffer)] -> Ghc [SuccessFlag]
 loadInMemoryModules l uid ts = do
-  old_targets <- GHC.getTargets
   tgts <- forM ts $  \(modName,modContents) ->
     liftIO $ makeInMemoryTarget uid modName modContents
-  GHC.setTargets (tgts ++ old_targets)
+  GHC.setTargets tgts
   mod_graph <- hsc_mod_graph <$> GHC.getSession
-  -- TODO: use [incremental API](https://gitlab.haskell.org/ghc/ghc/-/issues/27054) when ready.
   dvc_mod_graph <- doDownsweep (Just mod_graph)
-  modifySession $ GHC.setModuleGraph dvc_mod_graph
+  let new_mod_graph
+#if MIN_VERSION_ghc(10,1,0)
+        -- new API allows extending an existing graph.
+        = dvc_mod_graph
+#else
+        = mkModuleGraph $ mg_mss dvc_mod_graph ++ mg_mss mod_graph
+#endif
+  modifySession $ GHC.setModuleGraph new_mod_graph
 
   restore_logger <- GHC.getLogger
   dflags <- getSessionDynFlags
