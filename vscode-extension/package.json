@@ -165,6 +165,11 @@
                 "type": "boolean",
                 "description": "Whether to use the internal GHCi interpreter for debugging.",
                 "default": false
+              },
+              "expensiveLocals": {
+                "type": "boolean",
+                "description": "Report the 'Locals' scope as expensive so the DAP client doesn't expand it automatically on every stop. Useful when displaying locals is buggy or slow.",
+                "default": false
               }
             }
           }
