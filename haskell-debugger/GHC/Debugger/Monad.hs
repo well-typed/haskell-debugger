@@ -879,14 +879,13 @@ loadInMemoryModules ::
   -> UnitId
   -> [(ModuleName,StringBuffer)] -> Ghc [SuccessFlag]
 loadInMemoryModules l uid ts = do
-  old_targets <- GHC.getTargets
   tgts <- forM ts $  \(modName,modContents) ->
     liftIO $ makeInMemoryTarget uid modName modContents
-  GHC.setTargets (tgts ++ old_targets)
+  GHC.setTargets tgts
   mod_graph <- hsc_mod_graph <$> GHC.getSession
   -- TODO: use [incremental API](https://gitlab.haskell.org/ghc/ghc/-/issues/27054) when ready.
   dvc_mod_graph <- doDownsweep (Just mod_graph)
-  modifySession $ GHC.setModuleGraph dvc_mod_graph
+  modifySession $ GHC.setModuleGraph $ mkModuleGraph $ mg_mss dvc_mod_graph ++ mg_mss mod_graph
 
   restore_logger <- GHC.getLogger
   dflags <- getSessionDynFlags
