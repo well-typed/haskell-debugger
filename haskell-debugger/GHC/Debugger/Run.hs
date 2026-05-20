@@ -16,7 +16,6 @@ import Control.Monad.IO.Class
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.IORef
-import qualified Data.List as List
 import Data.Maybe
 import System.FilePath
 import System.Directory
@@ -137,9 +136,16 @@ debugExecution entryFile entry args = do
     findUnitIdOfEntryFile fp = do
       afp <- normalise <$> liftIO (makeAbsolute fp)
       modSums <- getAllLoadedModules
-      let normalisedModLoc = fmap normalise . GHC.ml_hs_file . GHC.ms_location
-      case List.find ((Just afp ==) . normalisedModLoc) modSums of
-        Nothing -> error $ "findUnitIdOfEntryFile: no unit id found for: " ++ fp ++ "\nCandidates were:\n" ++ unlines (map (show . normalisedModLoc) modSums)
+      let normalisedModLoc = maybe (pure Nothing) (fmap (Just . normalise) . liftIO . makeAbsolute) . GHC.ml_hs_file . GHC.ms_location
+      let findM _ [] = return Nothing
+          findM f (x:xs) = do
+            b <- f x
+            if b then return (Just x) else findM f xs
+      r <- findM (fmap (Just afp ==) . normalisedModLoc) modSums
+      case r of
+        Nothing -> do
+          norms <- mapM normalisedModLoc modSums
+          error $ "findUnitIdOfEntryFile: no unit id found for: " ++ fp ++ "\nCandidates were:\n" ++ unlines (map show norms)
         Just summary -> pure summary
 
 -- | Resume execution of the stopped debuggee program
