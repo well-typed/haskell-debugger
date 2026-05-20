@@ -6,6 +6,7 @@
              DuplicateRecordFields,
              TypeApplications
              #-}
+{-# LANGUAGE DerivingStrategies #-}
 
 -- | Types for sending and receiving messages to/from haskell-debugger
 module GHC.Debugger.Interface.Messages where
@@ -16,6 +17,20 @@ import qualified GHC.Utils.Outputable as GHC
 import GHC.Debugger.Runtime.Term.Key
 import Data.Binary (Binary)
 import qualified GHC.Stack as Stack
+import System.FilePath (isAbsolute, (</>), normalise)
+import Control.Exception (assert)
+
+newtype AbsFilePath = MkAbsFilePath FilePath
+  deriving newtype Show
+
+mkAbsolute :: FilePath -> AbsFilePath
+mkAbsolute fp = assert (isAbsolute fp) $ MkAbsFilePath fp
+
+(/>) :: AbsFilePath -> FilePath -> AbsFilePath
+MkAbsFilePath fp /> fp' = MkAbsFilePath $ fp </> fp'
+
+unAbs :: AbsFilePath -> FilePath
+unAbs (MkAbsFilePath fp) = normalise fp
 
 --------------------------------------------------------------------------------
 -- Commands
@@ -42,7 +57,7 @@ data Command
 
   -- | Clear all breakpoints in the specified file.
   -- This is useful because DAP's `setBreakpoints` re-sets all breakpoints from zero for a source rather than incrementally.
-  | ClearModBreakpoints { file :: FilePath }
+  | ClearModBreakpoints { file :: AbsFilePath }
 
   -- | Clear all function breakpoints
   | ClearFunctionBreakpoints
@@ -87,7 +102,7 @@ data Command
   -- When the @'EntryPoint'@ is @'Main'@, @'runArgs'@ are set as process
   -- invocation arguments (as in @argv@) rather than passed directly as a
   -- Haskell function arguments.
-  | DebugExecution { entryPoint :: EntryPoint, entryFile :: FilePath, runArgs :: [String] }
+  | DebugExecution { entryPoint :: EntryPoint, entryFile :: AbsFilePath, runArgs :: [String] }
 
 -- | An entry point for program execution.
 data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnName :: String }
@@ -96,7 +111,7 @@ data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnNam
 -- | A breakpoint can be set/removed on functions by name, or in modules by
 -- line number. And, globally, for all exceptions, or just uncaught exceptions.
 data Breakpoint
-  = ModuleBreak { path :: FilePath, lineNum :: Int, columnNum :: Maybe Int }
+  = ModuleBreak { path :: AbsFilePath, lineNum :: Int, columnNum :: Maybe Int }
   | FunctionBreak { function  :: String }
   | OnExceptionsBreak
   | OnUncaughtExceptionsBreak
