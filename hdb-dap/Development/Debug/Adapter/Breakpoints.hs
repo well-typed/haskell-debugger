@@ -7,7 +7,6 @@ import qualified Data.IntSet as IS
 import Text.Read
 import Control.Monad
 import Data.Maybe
-import System.FilePath ((</>), normalise)
 
 import qualified GHC
 
@@ -154,11 +153,11 @@ registerNewBreakpoint breakpoint = do
 -- | Get the file from a DAP Source
 --
 -- TODO: Handles sourceReferences too
-fileFromSourcePath :: Source -> DebugAdaptor FilePath
+fileFromSourcePath :: Source -> DebugAdaptor AbsFilePath
 fileFromSourcePath source = do
   prjRoot <- projectRoot <$> getDebugSession
   let
     file = T.unpack $
             fromMaybe (error "sourceReference unsupported") $
               sourcePath source
-  return $ normalise $ prjRoot </> file
+  return $ prjRoot /> file
