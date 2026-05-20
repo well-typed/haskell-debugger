@@ -3,6 +3,8 @@ cradle:
   cabal:
     - path: "./haskell-debugger/"
       component: "lib:haskell-debugger"
+    - path: "./hdb-dap/"
+      component: "lib:dap-server"
     - path: "./hdb/"
       component: "exe:hdb"
     - path: "./test/haskell/"
