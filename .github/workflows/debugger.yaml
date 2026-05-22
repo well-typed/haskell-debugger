@@ -70,16 +70,18 @@ jobs:
 
   # Tests run on the distributed sdist to catch packaging issues.
   build-n-test-haskell-debugger:
-    name: Build and Run Tests on Sdist
+    name: Build and Run Tests on Sdist (GHC ${{ matrix.version }})
     needs: sdist-haskell-debugger
     runs-on: ubuntu-latest # just one is fine here, we test more machines on the checkout
     continue-on-error: ${{ inputs.is-release == false }}
     strategy:
       matrix:
-        version: [9.14.1]
+        version: [9.14.1, 10.1.20260422]
         include:
           - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
             version: 9.14.1
+          - channel: https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml
+            version: 10.1.20260422
     steps:
       - uses: actions/checkout@v4
         with:
@@ -115,25 +117,31 @@ jobs:
           (cd ${{ runner.temp }}/dist && tar xzf "haskell-debugger-view-${{env.haskellDebuggerViewVersion}}.tar.gz" && mv "haskell-debugger-view-${{env.haskellDebuggerViewVersion}}" "haskell-debugger-${{env.haskellDebuggerVersion}}/haskell-debugger-view")
           (cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}} && echo 'packages: . ./haskell-debugger-view' > cabal.project)
 
+      - name: Configure head.hackage for nightly
+        if: matrix.version == '10.1.20260422'
+        working-directory: ${{ runner.temp }}/dist/haskell-debugger-${{ env.haskellDebuggerVersion }}
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://ghc.gitlab.haskell.org/head.hackage/cabal.project >> cabal.project.local
+          echo 'constraints: hashable == 1.4.7.0' >> cabal.project.local
+          cabal update
+
       - name: Build and Run tests
         run: |
           echo "Using haskell-debugger-view from hackage: ${{env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE}}"
           cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}}
-          cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell --ghc-options=-Werror
+          cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,ghci,base,ghc-internal,ghc-prim,template-haskell --ghc-options=-Werror
 
   # Tests run on the git checkout
   build-n-more-test-haskell-debugger:
-    name: Build and Run Tests on checkout (${{ matrix.runner }})
+    name: Build and Run Tests on checkout (${{ matrix.runner }}, GHC ${{ matrix.version }})
     runs-on: ${{ matrix.runner }}
     # Run all jobs in the matrix to the end (IF RELEASE, STOP ON FAILURE)
     continue-on-error: ${{ inputs.is-release == false }}
     strategy:
       matrix:
         runner: [ubuntu-latest, macOS-latest] # windows-latest is broken, see #246
-        version: [9.14.1] #, latest-nightly] disable nightly while its broken
+        version: [9.14.1]
         include:
-          # - channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
-          #   version: latest-nightly
           - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
             version: 9.14.1
     steps:
@@ -192,7 +200,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" == "Windows" ]; then
-            cabal run haskell-debugger-test --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell
+            cabal run haskell-debugger-test --allow-newer=ghc-bignum,containers,time,ghc,ghci,base,template-haskell
           else
-            cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell
+            cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,ghci,base,template-haskell
           fi
