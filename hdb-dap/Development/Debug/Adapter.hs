@@ -39,6 +39,9 @@ data DebugAdaptorState = DAS
       , projectRoot   :: FilePath
       , runInTerminalProc :: RunInTerminalProc
         -- ^ Potentially a process launched via 'runInTerminal'.
+      , expensiveLocals :: Bool
+        -- ^ When 'True', report the "Locals" scope as expensive so the DAP
+        -- client doesn't expand it automatically on every stop.
       }
 
 type BreakpointId = Int

@@ -82,6 +82,10 @@ data LaunchArgs
     -- ^ Additional arguments to pass to the GHC invocation inferred by hie-bios for this project
   , cradleFile :: Maybe FilePath
     -- ^ specify cradle file rather than let it be inferred from @entryFile@, relative to @projectRoot@.
+  , expensiveLocals :: Maybe Bool
+    -- ^ When 'True', mark the "Locals" scope as expensive so DAP clients
+    -- don't expand it automatically on every stop. Useful when fetching
+    -- locals is buggy or slow. Defaults to 'False'.
   } deriving stock (Show, Eq, Generic)
     deriving anyclass FromJSON
 
@@ -118,6 +122,7 @@ initDebugger l servConf supportsRunInTerminal preferInternalInterpreter
                          , entryArgs  = fromMaybe [] -> entryArgs
                          , extraGhcArgs = fromMaybe [] -> extraGhcArgs
                          , cradleFile
+                         , expensiveLocals = fromMaybe False -> expensiveLocals
                          } = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
