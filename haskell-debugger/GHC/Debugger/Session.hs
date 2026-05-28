@@ -38,6 +38,8 @@ module GHC.Debugger.Session (
   withUnliftGhc,
   annotateCallStackGhc,
   lookupUnitPackageQualifier,
+  addInteractiveGhcDebuggerUnit,
+  fixHomeUnitsDynFlagsForIIDecl,
   )
   where
 
@@ -47,6 +49,7 @@ import Data.Function ((&))
 import Control.Applicative ((<|>))
 import Control.Exception (assert)
 import Control.Monad
+import Control.Monad.Identity
 import Control.Monad.IO.Class
 import qualified Crypto.Hash.SHA1                    as H
 import qualified Data.ByteString.Base16              as B16
@@ -171,9 +174,8 @@ setupHomeUnitGraph flagsAndTargets = do
 -- | Set up the 'HomeUnitGraph' with empty 'HomeUnitEnv's.
 -- The first 'DynFlags' are the 'DynFlags' for the interactive session.
 createHomeUnitGraph :: GHC.Logger -> [DynFlags] -> IO HomeUnitGraph
-createHomeUnitGraph logger unitDflags0 = do
-  -- See Note [ Ambiguous Package Qualified Imports Workaround ]
-  let unitDflags = fixFlagsForIIDecl unitDflags0
+createHomeUnitGraph logger unitDflags = do
+  --let unitDflags = fixFlagsForIIDecl unitDflags0
   let home_units = Set.fromList $ map homeUnitId_ unitDflags
 
   unitEnvList <- flip traverse unitDflags $ \ dflags -> do
@@ -183,12 +185,21 @@ createHomeUnitGraph logger unitDflags0 = do
       pure (uid, hue)
 
   pure $ unitEnv_new (Map.fromList unitEnvList)
+
+-- | See Note [ Ambiguous Package Qualified Imports Workaround ]
+fixHomeUnitsDynFlagsForIIDecl :: Ghc ()
+fixHomeUnitsDynFlagsForIIDecl = do
+  modifySession $ hscUpdateHUG $ \ hug -> do
+    let manyHomeUnits = Set.size (HUG.allUnits hug) > 1
+    let h hue = hue { homeUnitEnv_dflags = fixFlagsForIIDecl manyHomeUnits (homeUnitEnv_dflags hue) }
+    runIdentity . unitEnv_traverseWithKey (const $ pure . h) $ hug
   where
     -- | Makes package names of home units unique and removes hidden modules.
-    fixFlagsForIIDecl [df] | Just{} <- thisPackageName df = [df {hiddenModules = Set.empty}]
+    fixFlagsForIIDecl :: Bool -> DynFlags -> DynFlags
+    fixFlagsForIIDecl False df | Just{} <- thisPackageName df = df {hiddenModules = Set.empty}
     -- TODO #288: pick more user-friendly names.
-    fixFlagsForIIDecl dfss = map (\ dflags -> dflags { thisPackageName = Just (unitIdString (homeUnitId_ dflags))
-    , hiddenModules = Set.empty}) dfss
+    fixFlagsForIIDecl _manyHUnits dflags = dflags { thisPackageName = Just (unitIdString (homeUnitId_ dflags))
+        , hiddenModules = Set.empty}
 
 setupNewHomeUnitEnv :: GHC.Logger -> DynFlags -> Maybe [GHC.UnitDatabase UnitId] -> Set UnitId -> IO HomeUnitEnv
 setupNewHomeUnitEnv logger dflags cached_dbs other_home_units = do
@@ -203,10 +214,17 @@ setupNewHomeUnitEnv logger dflags cached_dbs other_home_units = do
 -- anything.
 initHomeUnitEnv :: [DynFlags] -> HscEnv -> IO HscEnv
 initHomeUnitEnv unitDflags env = do
-  let dflags0         = hsc_dflags env
 
   initial_home_graph <- createHomeUnitGraph (hsc_logger env) unitDflags
 
+  -- We need one of the units to be the `ue_currentUnit`: by default it's "main", but we don't create such a unit and Ghc panics.
+  addInteractiveGhcDebuggerUnit $ hscUpdateHUG (const initial_home_graph) env
+
+-- | Exported so it can be called in main in case we are getting the initial home graph some other way.
+addInteractiveGhcDebuggerUnit :: HscEnv -> IO HscEnv
+addInteractiveGhcDebuggerUnit env = do
+  let dflags0 = hsc_dflags env
+  let initial_home_graph = hsc_HUG env
   -- We set up the interactive debugger home unit after the other home units
   -- have been initialised.
   -- This allows us to reuse the package databases and their respective visibilities.
@@ -233,8 +251,12 @@ initHomeUnitEnv unitDflags env = do
         HUG.unitEnv_insert interactiveGhcDebuggerUnitId interactiveHomeUnit initial_home_graph
 
   let interactiveDFlags = homeUnitEnv_dflags interactiveHomeUnit
-  unit_env <-
-    initUnitEnv interactiveGhcDebuggerUnitId home_unit_graph (GHC.ghcNameVersion interactiveDFlags) (targetPlatform interactiveDFlags)
+  let unit_env = (hsc_unit_env env)
+        { ue_home_unit_graph = home_unit_graph
+        , ue_current_unit    = interactiveGhcDebuggerUnitId
+        , ue_platform        = targetPlatform interactiveDFlags
+        , ue_namever         = GHC.ghcNameVersion interactiveDFlags
+        }
   pure $ hscSetFlags interactiveDFlags $ hscSetUnitEnv unit_env env
 
 -- | Extracts @UnitId@s from the graph.

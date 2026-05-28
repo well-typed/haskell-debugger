@@ -2,7 +2,12 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-module Development.Debug.Adapter.Server where
+module Development.Debug.Adapter.Server
+  (
+  module Development.Debug.Adapter.Server,
+  LogAction(..),
+  )
+  where
 
 
 import System.Environment

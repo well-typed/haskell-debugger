@@ -280,16 +280,16 @@ parseQC a (x:xs)       = parseQC (x:a) xs
 getModuleByPath :: FilePath -> Debugger (Either SDoc ModSummary)
 getModuleByPath path = do
   -- get all loaded modules this every time as the loaded modules may have changed
-  lms <- getAllLoadedModules
+  lms <- mapM (\ m -> fmap (m,) . liftIO . makeAbsolute . msHsFilePath $ m) =<< getAllLoadedModules
   absPath <- liftIO $ makeAbsolute path
-  let matches ms = normalise (msHsFilePath ms) == normalise absPath
+  let matches (_,ms) = normalise ms == normalise absPath
   return $ case filter matches lms of
-    [x] -> Right x
+    [x] -> Right (fst x)
     [] -> Left $ text "No module matched" <+> text path <> text "."
                $$ text "Loaded modules:"
-               $$ vcat (map (text . msHsFilePath) lms)
+               $$ vcat (map (text . snd) lms)
                $$ text "Perhaps you've set a breakpoint on a module that isn't loaded into the session?"
-    xs -> Left $ text "Too many modules (" <> ppr xs <> text ") matched" <+> text path
+    xs -> Left $ text "Too many modules (" <> ppr (map fst xs) <> text ") matched" <+> text path
               <> text ". Please report a bug at https://github.com/well-typed/haskell-debugger."
 
 -- | Find a 'BreakpointId' index and its span from a module + line + column.
