@@ -1,6 +1,11 @@
 packages: . haskell-debugger-view
 
-allow-newer: ghc-bignum,containers,time,ghc,base,template-haskell
+if impl(ghc >= 10.0)
+    packages: hie-bios
+    allow-newer: ghc-bignum,containers,time,ghc,base,template-haskell,ghc-boot-th,ghci,ghc-boot,ghc-heap,ghc-prim,ghc-internal,ghc-experimental
+    constraints: hashable == 1.4.7.0
+else
+    allow-newer: ghc-bignum,containers,time,ghc,base,template-haskell
 
 package *
     ghc-options: -finfo-table-map

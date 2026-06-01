@@ -54,7 +54,11 @@ import qualified Data.ByteString.Char8               as B
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Data.List as L
+#if MIN_VERSION_ghc(10,0,0)
+import qualified Data.Containers.ListUtils as LU
+#else
 import qualified Data.Containers.ListUtils as L
+#endif
 import GHC.ResponseFile (expandResponse)
 import HIE.Bios.Environment as HIE
 import System.FilePath
@@ -76,6 +80,9 @@ import qualified GHC.Unit.State                        as State
 import GHC.Driver.Env
 import GHC.Types.SrcLoc
 import GHC.Settings (ToolSettings(..))
+#if MIN_VERSION_ghc(10,0,0)
+import GHC.Types.Unique.Set (emptyUniqSet)
+#endif
 import Language.Haskell.Syntax.Module.Name
 import qualified Data.Foldable as Foldable
 import qualified GHC.Unit.Home.Graph as HUG
@@ -185,10 +192,16 @@ createHomeUnitGraph logger unitDflags0 = do
   pure $ unitEnv_new (Map.fromList unitEnvList)
   where
     -- | Makes package names of home units unique and removes hidden modules.
-    fixFlagsForIIDecl [df] | Just{} <- thisPackageName df = [df {hiddenModules = Set.empty}]
+    fixFlagsForIIDecl [df] | Just{} <- thisPackageName df = [df {hiddenModules = emptyHiddenModules}]
     -- TODO #288: pick more user-friendly names.
     fixFlagsForIIDecl dfss = map (\ dflags -> dflags { thisPackageName = Just (unitIdString (homeUnitId_ dflags))
-    , hiddenModules = Set.empty}) dfss
+    , hiddenModules = emptyHiddenModules}) dfss
+
+#if MIN_VERSION_ghc(10,0,0)
+    emptyHiddenModules = emptyUniqSet
+#else
+    emptyHiddenModules = Set.empty
+#endif
 
 setupNewHomeUnitEnv :: GHC.Logger -> DynFlags -> Maybe [GHC.UnitDatabase UnitId] -> Set UnitId -> IO HomeUnitEnv
 setupNewHomeUnitEnv logger dflags cached_dbs other_home_units = do
@@ -320,7 +333,11 @@ setupMultiHomeUnitGhcSession exts hsc_env cis = annotateCallStackIO $ do
       let mk t = fromTargetId (importPaths df) exts (homeUnitId_ df) (GHC.targetId t) (GHC.targetContents t)
       ctargets <- concatMapM mk targets
 
+#if MIN_VERSION_ghc(10,0,0)
+      return (LU.nubOrdOn targetTarget ctargets)
+#else
       return (L.nubOrdOn targetTarget ctargets)
+#endif
     pure (hscEnv', concat ts)
 
 -- | Find and return the ways in which the home units are built.

@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 module GHC.Debugger.Runtime.Instances.Discover
   (
   -- * Runtime 'DebugView' instance
@@ -110,7 +111,11 @@ findDebugViewInstance needle_ty = do
       let modl = mkModule (RealUnit (Definite hdv_uid)) debuggerViewClassModName
       let mthdRdrName mthStr = mkOrig modl (mkVarOcc mthStr) :: RdrName
 
-      (err_msgs, res) <- liftIO $ runTcInteractive hsc_env $ do
+      (err_msgs, res) <- liftIO $ runTcInteractive
+#if MIN_VERSION_ghc(10,0,0)
+                                    NoTcMPlugins
+#endif
+                                    hsc_env $ do
 
         -- Types used by DebugView
         varValueIOTy    <-  fmap mkTyConTy . tcLookupTyCon
