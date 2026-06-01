@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.svg" alt="Haskell Debugger logo" width="320" />
+</p>
+
 # Haskell Debugger
 
 We are working on a first class debugger for Haskell!

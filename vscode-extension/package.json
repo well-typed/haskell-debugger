@@ -21,7 +21,7 @@
   "engines": {
     "vscode": "^1.66.0"
   },
-  "icon": "images/mock-debug-icon.png",
+  "icon": "images/haskell-debugger-icon.png",
   "categories": [
     "Debuggers"
   ],
