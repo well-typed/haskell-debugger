@@ -5,7 +5,7 @@ pkgs.buildNpmPackage {
     version = "0.13.1";
     src = ./.;
 
-    npmDepsHash = "sha256-rvPlvEsFygi/EYh0vcOBDAC4Sf5nzJIfaN8HjdsVXE0=";
+    npmDepsHash = "sha256-y236GuKdV8JsudIl+nfMu5CR1S7FTpv2KMt6eXJZZCs=";
 
     nativeBuildInputs = [
       pkgs.nodejs pkgs.vsce pkgs.cacert
