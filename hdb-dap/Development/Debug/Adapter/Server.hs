@@ -275,8 +275,14 @@ logDAPLog logGhcLog l threshold = LogAction $ \case
       DAPSessionLog (DAPDebuggerLog debuggerLog)          -> logDebuggerLog logGhcLog l threshold debuggerLog
       DAPSessionLog (RunProxyServerLog sev_msg) -> defaultLog l threshold sev_msg
       DAPLaunchLog sev_msg      -> defaultLog l threshold sev_msg
-      DAPLibraryLog t ->
+      DAPLibraryLog t | convert t.severity >= threshold ->
         l <& DAP.renderDAPLog t
+        | otherwise -> pure ()
+  where
+    convert DAP.DEBUG = Debug
+    convert DAP.INFO = Info
+    convert DAP.WARN = Warning
+    convert DAP.ERROR = Error
 
 renderSeverity :: Severity -> Text
 renderSeverity = \case
