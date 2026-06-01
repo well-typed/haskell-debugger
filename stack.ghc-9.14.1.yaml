@@ -10,8 +10,6 @@ configure-options:
 ghc-options:
   $targets: -finfo-table-map
 
-allow-newer: true
-
 # There's no Stackage snapshot for GHC 9.14.1 yet, so go via compiler version.
 # SEE: https://docs.haskellstack.org/en/stable/topics/snapshot_location/
 snapshot: ghc-9.14.1
