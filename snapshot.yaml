@@ -1,0 +1,6 @@
+snapshot: nightly-2026-06-01
+compiler: ghc-9.14.1
+
+packages:
+  - dap-0.7.0.0
+  - ghc-stack-annotations-0.1.0.0
