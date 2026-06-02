@@ -5,7 +5,7 @@ packages:
 configure-options:
   $targets:
     - --enable-executable-dynamic
-    - --enable-library-vanilla
+    - --disable-library-vanilla
 
 ghc-options:
   $targets: -finfo-table-map
