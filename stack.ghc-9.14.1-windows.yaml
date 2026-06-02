@@ -1,0 +1,7 @@
+# Stack project-level configuration for Windows only.
+
+snapshot: snapshot.ghc-9.14.1.yaml
+
+packages:
+- .
+- haskell-debugger-view
