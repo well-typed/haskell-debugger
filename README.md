@@ -162,20 +162,6 @@ built-in version in memory.
 cabal build -w /path/to/ghc-9.14 exe:hdb
 ```
 
-## Build and install `hdb` (using Stack)
-
-On non-Windows operating systems:
-
-```
-stack install haskell-debugger
-```
-
-On Windows:
-
-```
-stack -w stack-windows.yaml install haskell-debugger
-```
-
 ## Build VS Code extension (using Nix)
 
 ```
