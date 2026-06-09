@@ -1,0 +1,13 @@
+snapshot: snapshot.ghc-9.14.1.yaml
+
+packages:
+  - .
+  - haskell-debugger-view
+
+configure-options:
+  $targets:
+    - --enable-executable-dynamic
+    - --disable-library-vanilla
+
+ghc-options:
+  $targets: -finfo-table-map
