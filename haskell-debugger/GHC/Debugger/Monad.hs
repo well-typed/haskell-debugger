@@ -11,6 +11,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NondecreasingIndentation #-}
 
 module GHC.Debugger.Monad where
 
@@ -52,6 +53,7 @@ import GHC.Driver.Errors
 import GHC.Driver.Errors.Types
 import GHC.Driver.Main
 import GHC.Driver.Make
+import qualified GHC.Driver.Monad as GHC
 import GHC.Driver.Ppr
 import GHC.Driver.Session (parseDynamicFlagsCmdLine)
 import GHC.Runtime.Eval
@@ -242,7 +244,16 @@ withProjectDebugSession
   -> DebugRunner m a
 withProjectDebugSession ProjectDebugSpec{ghcInvocation = ghcI, ..} k = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcI
-  GHC.runGhc (Just libdir) $ k rootDir extraGhcArgs $ do
+  GHC.runGhc (Just libdir) $ do
+#ifdef MIN_VERSION_unix
+  -- Workaround #4162
+  -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
+    _ <- liftIO $ installHandler sigINT Default Nothing
+    _ <- liftIO $ installHandler sigQUIT Default Nothing
+    _ <- liftIO $ installHandler sigTERM Default Nothing
+    _ <- liftIO $ installHandler sigHUP Default Nothing
+#endif
+    k rootDir extraGhcArgs $ do
     dflags2 <- getSessionDynFlags
 
     -- Discover the user-given flags and targets
@@ -268,14 +279,6 @@ runDebuggerAction :: forall a. LogAction IO DebuggerLog
   -> Ghc a
 runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = flip MC.finally cleanupInterp $ -- See Note [Shutting down the external interpreter]
   do
-#ifdef MIN_VERSION_unix
-  -- Workaround #4162
-  -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
-  _ <- liftIO $ installHandler sigINT Default Nothing
-  _ <- liftIO $ installHandler sigQUIT Default Nothing
-  _ <- liftIO $ installHandler sigTERM Default Nothing
-  _ <- liftIO $ installHandler sigHUP Default Nothing
-#endif
   dflags0 <- GHC.getSessionDynFlags
   let dflags1 = dflags0
         { GHC.ghcMode = GHC.CompManager
@@ -396,6 +399,9 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
         GHC.initUniqSupply (GHC.initialUnique df) (GHC.uniqueIncrement df)
 
       loadHomeUnit
+
+      fixHomeUnitsDynFlagsForIIDecl
+      GHC.modifySessionM $ liftIO . addInteractiveGhcDebuggerUnit
 
       -- Ensure all the home units are built with same Ways and return them.
       buildWays       <- do
@@ -867,14 +873,13 @@ loadInMemoryModules ::
   -> UnitId
   -> [(ModuleName,StringBuffer)] -> Ghc [SuccessFlag]
 loadInMemoryModules l uid ts = do
-  old_targets <- GHC.getTargets
   tgts <- forM ts $  \(modName,modContents) ->
     liftIO $ makeInMemoryTarget uid modName modContents
-  GHC.setTargets (tgts ++ old_targets)
+  GHC.setTargets tgts
   mod_graph <- hsc_mod_graph <$> GHC.getSession
   -- TODO: use [incremental API](https://gitlab.haskell.org/ghc/ghc/-/issues/27054) when ready.
   dvc_mod_graph <- doDownsweep (Just mod_graph)
-  modifySession $ GHC.setModuleGraph dvc_mod_graph
+  modifySession $ GHC.setModuleGraph $ mkModuleGraph $ mg_mss dvc_mod_graph ++ mg_mss mod_graph
 
   restore_logger <- GHC.getLogger
   dflags <- getSessionDynFlags
