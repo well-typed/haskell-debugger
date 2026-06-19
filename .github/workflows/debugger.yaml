@@ -121,7 +121,7 @@ jobs:
         run: |
           echo "Using haskell-debugger-view from hackage: ${{env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE}}"
           cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}}
-          cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,ghci,base,ghc-internal,ghc-prim,template-haskell --ghc-options=-Werror
+          cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell --ghc-options=-Werror
 
   # Tests run on the git checkout
   build-n-more-test-haskell-debugger:
@@ -194,7 +194,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" == "Windows" ]; then
-            cabal run haskell-debugger-test --allow-newer=ghc-bignum,containers,time,ghc,ghci,base,template-haskell
+            cabal run haskell-debugger-test
           else
-            cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,ghci,base,template-haskell
+            cabal run haskell-debugger-test --enable-executable-dynamic
           fi
