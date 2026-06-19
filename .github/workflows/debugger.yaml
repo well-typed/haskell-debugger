@@ -76,12 +76,10 @@ jobs:
     continue-on-error: ${{ inputs.is-release == false }}
     strategy:
       matrix:
-        version: [9.14.1, 10.1.20260530]
+        version: [9.14.1]
         include:
           - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
             version: 9.14.1
-          - channel: https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml
-            version: 10.1.20260530
     steps:
       - uses: actions/checkout@v4
         with:
