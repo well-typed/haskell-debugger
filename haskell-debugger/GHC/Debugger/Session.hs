@@ -54,7 +54,7 @@ import qualified Data.ByteString.Char8               as B
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Data.List as L
-import qualified Data.Containers.ListUtils as L
+import qualified Data.Containers.ListUtils as ListUtils
 import GHC.ResponseFile (expandResponse)
 import HIE.Bios.Environment as HIE
 import System.FilePath
@@ -185,10 +185,10 @@ createHomeUnitGraph logger unitDflags0 = do
   pure $ unitEnv_new (Map.fromList unitEnvList)
   where
     -- | Makes package names of home units unique and removes hidden modules.
-    fixFlagsForIIDecl [df] | Just{} <- thisPackageName df = [df {hiddenModules = Set.empty}]
+    fixFlagsForIIDecl [df] | Just{} <- thisPackageName df = [df {hiddenModules = mempty}]
     -- TODO #288: pick more user-friendly names.
     fixFlagsForIIDecl dfss = map (\ dflags -> dflags { thisPackageName = Just (unitIdString (homeUnitId_ dflags))
-    , hiddenModules = Set.empty}) dfss
+    , hiddenModules = mempty}) dfss
 
 setupNewHomeUnitEnv :: GHC.Logger -> DynFlags -> Maybe [GHC.UnitDatabase UnitId] -> Set UnitId -> IO HomeUnitEnv
 setupNewHomeUnitEnv logger dflags cached_dbs other_home_units = do
@@ -239,7 +239,7 @@ initHomeUnitEnv unitDflags env = do
 
 -- | Extracts @UnitId@s from the graph.
 graphUnits :: GHC.ModuleGraph -> [UnitId]
-graphUnits mod_graph = L.nubOrd .
+graphUnits mod_graph = ListUtils.nubOrd .
   (`mapMaybe` mg_mss mod_graph) $ \case
          UnitNode _deps uid -> Just uid
          ModuleNode _ modl -> Just $ mnkUnitId $ mnKey modl
@@ -320,7 +320,7 @@ setupMultiHomeUnitGhcSession exts hsc_env cis = annotateCallStackIO $ do
       let mk t = fromTargetId (importPaths df) exts (homeUnitId_ df) (GHC.targetId t) (GHC.targetContents t)
       ctargets <- concatMapM mk targets
 
-      return (L.nubOrdOn targetTarget ctargets)
+      return (ListUtils.nubOrdOn targetTarget ctargets)
     pure (hscEnv', concat ts)
 
 -- | Find and return the ways in which the home units are built.
