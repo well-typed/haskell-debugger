@@ -1,0 +1,11 @@
+[1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, <TEMPORARY-DIRECTORY>/.hdb-cache/<CACHE-ENTRY>/Main.gbc )[main]
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Main 13], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/Main.hs", startLine = 17, endLine = 17, startCol = 3, endCol = 10}}
+(hdb) helio
+Stopped at breakpoint
+(hdb) _result : IO () = <fn> :: IO ()
+doit : forall {b}. b -> IO () = <fn> :: forall {b}. b -> IO ()
+y : D Char = <fn> :: D Char
+x : forall a. (a ~ IO ()) => a = <fn> :: forall a. (a ~ IO ()) => a
+ix : B = _
+  ix : B = B (Left _)
+(hdb) Exiting...

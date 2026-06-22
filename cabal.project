@@ -2,8 +2,12 @@ packages: . haskell-debugger-view
 
 allow-newer: ghc-bignum,containers,time,ghc,base,template-haskell
 
-package *
-    ghc-options: -finfo-table-map
+-- See issue https://gitlab.haskell.org/ghc/ghc/-/issues/27419
+-- We can remove this, once the upstream issue is solved and the
+-- nightly GHC version is updated to include the fix from #27419.
+if impl(ghc <10.1)
+    package *
+        ghc-options: -finfo-table-map
 
 if !os(windows)
     package *

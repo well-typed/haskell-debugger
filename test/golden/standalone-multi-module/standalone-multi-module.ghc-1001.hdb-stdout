@@ -1,0 +1,8 @@
+[1 of 3] Compiling Helper           ( <TEMPORARY-DIRECTORY>/Helper.hs, <TEMPORARY-DIRECTORY>/.hdb-cache/<CACHE-ENTRY>/Helper.gbc )[main]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, <TEMPORARY-DIRECTORY>/.hdb-cache/<CACHE-ENTRY>/Main.gbc )[main]
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Main 5], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/Main.hs", startLine = 7, endLine = 7, startCol = 3, endCol = 25}}
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Helper 4], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/./Helper.hs", startLine = 5, endLine = 5, startCol = 3, endCol = 38}}
+(hdb) Stopped at breakpoint
+(hdb) Starting...
+Stopped at breakpoint
+(hdb) Exiting...

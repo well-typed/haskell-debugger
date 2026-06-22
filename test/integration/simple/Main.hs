@@ -7,6 +7,6 @@ main = do
   args <- getArgs
   putStrLn "hello"
   print args
-  fail "CATCH ME" `catch` (\(_::SomeException) -> putStrLn "caught it")
+  throwIO (ErrorCall "CATCH ME") `catch` (\(_::SomeException) -> putStrLn "caught it")
   putStrLn "goodbye"
   return ()

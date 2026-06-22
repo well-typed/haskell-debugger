@@ -46,7 +46,7 @@ basicForConfig name projectRoot entryFile =
         waitFiltering_ EventTy "initialized"
         setBreakOnException
         _ <- sync configurationDone
-        assertStoppedLocation DAP.StoppedEventReasonException 66 -- FIXME WHY IS THIS 66? in the NodeJS testsuite we ignored the line.
+        assertStoppedLocation DAP.StoppedEventReasonException 10 -- Line in the test file
         disconnect
     ]
   where

@@ -1,0 +1,11 @@
+[1 of 3] Compiling GHC.Debugger.View.Class ( in-memory:GHC.Debugger.View.Class, interpreted )[haskell-debugger-view-in-memory]
+[2 of 3] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, interpreted )[main]
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId Main 2], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/Main.hs", startLine = 27, endLine = 27, startCol = 3, endCol = 28}}
+(hdb) Stopped at breakpoint
+(hdb) _result : IO () = <fn> :: IO ()
+container : Container = Container
+  containerBefore : Int = _
+  containerPacked : Packed = Packed
+  containerPacked2 : Packed = Packed
+  containerAfter : Int = _
+(hdb) (hdb) Exiting...
