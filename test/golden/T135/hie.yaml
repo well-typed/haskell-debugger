@@ -1,6 +1,5 @@
 cradle:
   cabal:
-    - path: "./mylib"
-      component: "lib:mylib"
+    #we want mylib to be an external package, so we don't list it in the cradle.
     - path: "./myapp/"
       component: "myapp"

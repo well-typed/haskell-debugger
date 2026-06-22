@@ -1,0 +1,3 @@
+break app/Main.hs 15
+run
+variables

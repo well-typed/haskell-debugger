@@ -1,0 +1,5 @@
+cradle:
+  cabal:
+    components:
+      - path: "app/"
+        component: "exe:T237"

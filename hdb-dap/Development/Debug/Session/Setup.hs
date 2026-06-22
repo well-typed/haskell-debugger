@@ -186,7 +186,9 @@ hieBiosFlags cradle root relTarget = runExceptT $ do
   -- because hie.yaml may invoke programs relative to the root (e.g. GHC's hie.yaml does)
   -- (HIE.getCompilerOptions depends on CWD being the proper root dir)
   let compilerOpts = liftIO $ withCurrentDirectory root $
-#if MIN_VERSION_hie_bios(0,14,0)
+#if MIN_VERSION_hie_bios(0,20,0)
+                          HIE.getCompilerOptions (HIE.TargetWithContext target [target]) HIE.LoadUnitsFromCradle cradle
+#elif MIN_VERSION_hie_bios(0,14,0)
                           HIE.getCompilerOptions target (HIE.LoadWithContext [target]) cradle
 #else
                           HIE.getCompilerOptions target [] cradle
@@ -309,12 +311,18 @@ stackCradle fp = do
   pkgsWithComps <- liftIO $ catMaybes <$> mapM (Implicit.nestedPkg fp) pkgs
   let yaml = fp </> "stack.yaml"
   pure $ (,fp) $ case pkgsWithComps of
-    [] -> Config.Stack (Config.StackType Nothing (Just yaml))
+    [] -> Config.Stack (mkStackType Nothing (Just yaml))
     ps -> Config.StackMulti mempty $ do
       Implicit.Package n cs <- ps
       c <- cs
       let (prefix, comp) = Implicit.stackComponent n c
-      pure (prefix, Config.StackType (Just comp) (Just yaml))
+      pure (prefix, mkStackType (Just comp) (Just yaml))
+  where
+#if MIN_VERSION_hie_bios(0,20,0)
+    mkStackType a b = Config.StackType a b Nothing
+#else
+    mkStackType a b = Config.StackType a b
+#endif
 
 -- | By default, we generate a simple cabal cradle which is equivalent to the
 -- following hie.yaml:
@@ -326,7 +334,11 @@ stackCradle fp = do
 --
 -- Note, this only works reliable for reasonably modern cabal versions >= 3.2.
 simpleCabalCradle :: FilePath -> (Config.CradleTree a, FilePath)
+#if MIN_VERSION_hie_bios(0,20,0)
+simpleCabalCradle fp = (Config.Cabal $ Config.CabalType Nothing Nothing Nothing, fp)
+#else
 simpleCabalCradle fp = (Config.Cabal $ Config.CabalType Nothing Nothing, fp)
+#endif
 
 cabalExecutable :: MaybeT IO FilePath
 cabalExecutable = MaybeT $ findExecutable "cabal"
