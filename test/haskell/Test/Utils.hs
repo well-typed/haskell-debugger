@@ -2,7 +2,7 @@ module Test.Utils where
 
 import Control.Monad (when)
 import Data.List (isInfixOf)
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist,doesDirectoryExist)
 import System.FilePath
 import System.IO.Temp
 import qualified System.Process as P
@@ -14,7 +14,7 @@ withHermeticDir :: Bool               -- ^ Whether to keep the temp dir around f
                 -> (FilePath -> IO r) -- ^ Continuation receives hermetic test dir (in temporary dir)
                 -> IO r
 withHermeticDir keep src k = do
-  withTmpDir "hdb-test" $ \dest -> do
+  withTestTmpDir keep $ \dest -> do
     P.callCommand $ "cp -r " ++ src ++ " " ++ dest
     let destTestDir = dest </> takeBaseName src
     -- Some test projects reference @./haskell-debugger-view@ in their
@@ -24,14 +24,6 @@ withHermeticDir keep src k = do
     cpHaskellDebuggerViewIfNeeded destTestDir
     k destTestDir
   where
-    withTmpDir | keep      = withPersistentSystemTempDirectory
-               | otherwise = withSystemTempDirectory
-
-    withPersistentSystemTempDirectory :: String -> (FilePath -> IO r) -> IO r
-    withPersistentSystemTempDirectory template k' = do
-      dir <- flip createTempDirectory template =<< getCanonicalTemporaryDirectory
-      k' dir
-
     cpHaskellDebuggerViewIfNeeded testDir = do
       let cabalProject = testDir </> "cabal.project"
       existsCP <- doesFileExist cabalProject
@@ -41,3 +33,37 @@ withHermeticDir keep src k = do
           P.callCommand $
             "cp -r haskell-debugger-view " ++ testDir </> "haskell-debugger-view"
 
+
+withTestTmpDir :: Bool               -- ^ Whether to keep the temp dir around for inspection
+                -> (FilePath -> IO r) -- ^ Continuation receives temporary dir
+                -> IO r
+withTestTmpDir keep k = do
+  withTmpDir "hdb-test" k
+  where
+    withTmpDir | keep      = withPersistentSystemTempDirectory
+               | otherwise = withSystemTempDirectory
+
+    withPersistentSystemTempDirectory :: String -> (FilePath -> IO r) -> IO r
+    withPersistentSystemTempDirectory template k' = do
+      dir <- flip createTempDirectory template =<< getCanonicalTemporaryDirectory
+      k' dir
+
+
+withTmpDirFromRepo :: Bool               -- ^ Whether to keep the temp dir around for inspection
+                -> FilePath           -- ^ Test dir
+                -> (FilePath -> IO r) -- ^ Continuation receives temporary dir
+                -> IO r
+withTmpDirFromRepo keep src k = do
+  b <- doesDirectoryExist $ src </> ".git"
+  withTestTmpDir keep $ \ dest -> do
+    case b of
+      False -> do
+        P.callCommand $ "cp -r " ++ src ++ "/. " ++ dest
+      True -> do
+        P.callCommand $ unwords
+          [ "git ls-files -z --full-name --"
+          , src
+          , "| cpio -0 -pdm  "
+          , dest
+          ]
+    k dest
