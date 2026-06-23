@@ -202,7 +202,13 @@ termToVarInfo fam_envs key term0 = do
 getFamInstEnvs' :: Debugger FamInstEnvs
 getFamInstEnvs' = do
   hsc_env <- getSession
-  (err_msgs, res) <- liftIO $ runTcInteractive hsc_env $ tcGetFamInstEnvs
+  (err_msgs, res) <- liftIO $
+    runTcInteractive
+#if MIN_VERSION_ghc(10,1,0)
+      NoTcMPlugins
+#endif
+      hsc_env
+      tcGetFamInstEnvs
   case res of
     Just fam_envs -> pure fam_envs
     Nothing -> do

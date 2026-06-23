@@ -9,3 +9,6 @@ cabal.project.local
 # Stack-related
 .stack-work
 *.yaml.lock
+
+# custom caches
+.hdb-cache

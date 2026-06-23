@@ -89,4 +89,4 @@ f `compose` g = Remote.app (Remote.app composeVar f) g where
 
 displayStackAnnotation :: RemoteExpr SomeStackAnnotation -> RemoteExpr String
 displayStackAnnotation = Remote.app $
-  Remote.var (mkModuleName "GHC.Stack.Annotation.Experimental") "displayStackAnnotation" ["SomeStackAnnotation"]
+  Remote.var (mkModuleName "GHC.Stack.Annotation.Experimental") "displayStackAnnotation" ["GHC.Stack.Annotation.Experimental.SomeStackAnnotation"]

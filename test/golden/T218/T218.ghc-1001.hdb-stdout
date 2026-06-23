@@ -1,0 +1,11 @@
+[1 of 2] Compiling Main             ( <TEMPORARY-DIRECTORY>/Main.hs, <TEMPORARY-DIRECTORY>/.hdb-cache/<CACHE-ENTRY>/Main.gbc )[main]
+(hdb) Aborted: <interactive>:1:1: error: [GHC-88464]
+    Variable not in scope: isLetter
+(hdb) 
+(hdb) <fn> :: Char -> Bool
+(hdb) True
+(hdb) False
+(hdb) Aborted: <interactive>:1:1: error: [GHC-87110]
+    Could not find module ‘Does.Not.Exist’.
+    Use -v to see a list of the files searched for.
+(hdb) Exiting...

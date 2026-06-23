@@ -15,7 +15,7 @@ on:
 env:
   haskellDebuggerViewVersion: 0.2.1.0
   haskellDebuggerVersion: 0.13.1.0
-  USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE: ${{ 
+  USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE: ${{
       github.event_name == 'workflow_call'
         && inputs.use-haskell-debugger-view-from-hackage
         || false
@@ -70,7 +70,7 @@ jobs:
 
   # Tests run on the distributed sdist to catch packaging issues.
   build-n-test-haskell-debugger:
-    name: Build and Run Tests on Sdist
+    name: Build and Run Tests on Sdist (GHC ${{ matrix.version }})
     needs: sdist-haskell-debugger
     runs-on: ubuntu-latest # just one is fine here, we test more machines on the checkout
     continue-on-error: ${{ inputs.is-release == false }}
@@ -123,19 +123,19 @@ jobs:
 
   # Tests run on the git checkout
   build-n-more-test-haskell-debugger:
-    name: Build and Run Tests on checkout (${{ matrix.runner }})
+    name: Build and Run Tests on checkout (${{ matrix.runner }}, GHC ${{ matrix.version }})
     runs-on: ${{ matrix.runner }}
     # Run all jobs in the matrix to the end (IF RELEASE, STOP ON FAILURE)
     continue-on-error: ${{ inputs.is-release == false }}
     strategy:
       matrix:
         runner: [ubuntu-latest, macOS-latest] # windows-latest is broken, see #246
-        version: [9.14.1] #, latest-nightly] disable nightly while its broken
+        version: [9.14.1, 10.1.20260617]
         include:
-          # - channel: https://ghc.gitlab.haskell.org/ghcup-metadata/ghcup-nightlies-0.0.7.yaml
-          #   version: latest-nightly
           - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
             version: 9.14.1
+          - channel: https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml
+            version: 10.1.20260617
     steps:
       - uses: actions/checkout@v4
         with:
@@ -173,12 +173,12 @@ jobs:
           path: ${{ steps.setup.outputs.cabal-store }}
           key: ${{ env.key }}-plan-${{ hashFiles('**/plan.json') }}
           restore-keys: ${{ env.key }}-
-          
+
       - name: Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
         if: steps.cache.outputs.cache-hit != 'true'
         run: cabal build all --only-dependencies
-        
+
       # Cache dependencies already here, so that we do not have to rebuild them should the subsequent steps fail.
       - name: Save cached dependencies
         uses: actions/cache/save@v4
@@ -192,7 +192,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" == "Windows" ]; then
-            cabal run haskell-debugger-test --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell
+            cabal run haskell-debugger-test
           else
-            cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell
+            cabal run haskell-debugger-test --enable-executable-dynamic
           fi

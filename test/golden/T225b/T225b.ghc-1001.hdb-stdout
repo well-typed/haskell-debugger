@@ -1,0 +1,7 @@
+[1 of 2] Compiling B                ( <TEMPORARY-DIRECTORY>/B.hs, <TEMPORARY-DIRECTORY>/.hdb-cache/<CACHE-ENTRY>/B.gbc )[main]
+[2 of 2] Compiling A                ( <TEMPORARY-DIRECTORY>/Main.hs, <TEMPORARY-DIRECTORY>/.hdb-cache/<CACHE-ENTRY>/A.gbc )[main]
+(hdb) BreakFound {changed = True, breakId = [InternalBreakpointId B 3], sourceSpan = SourceSpan {file = "<TEMPORARY-DIRECTORY>/./B.hs", startLine = 11, endLine = 11, startCol = 3, endCol = 19}}
+(hdb) 1
+Stopped at breakpoint
+(hdb) "fromList [1,2,3]"
+(hdb) Exiting...

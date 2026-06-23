@@ -846,7 +846,14 @@ doDownsweep :: GhcMonad m
 doDownsweep reuse_mg = do
   hsc_env <- getSession
   let msg = batchMultiMsg
-  (errs_base, mod_graph) <- liftIO $ downsweep hsc_env mkUnknownDiagnostic (Just msg) (maybe [] mgModSummaries reuse_mg) [] False
+  (errs_base, mod_graph) <- liftIO $
+    downsweep
+      hsc_env mkUnknownDiagnostic (Just msg)
+      (maybe [] mgModSummaries reuse_mg)
+#if MIN_VERSION_ghc(10,1,0)
+      Nothing -- Reused module graph
+#endif
+      [] False
   when (not $ null errs_base) $ do
 #if MIN_VERSION_ghc(9,15,0)
     sec <- initSourceErrorContext . hsc_dflags <$> getSession

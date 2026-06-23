@@ -119,11 +119,11 @@ library
 
     default-extensions: CPP
     build-depends:    base >= 4.22 && < 5,
-                      ghc >= 9.14 && < 9.16, ghci >= 9.14 && < 9.16,
-                      ghc-boot-th >= 9.14 && < 9.16,
-                      ghc-boot >= 9.14 && < 9.16,
-                      ghc-experimental >= 9.1401 && < 9.1600,
-                      ghc-heap >= 9.14 && < 9.16,
+                      ghc >= 9.14 && < 10.2, ghci >= 9.14 && < 10.2,
+                      ghc-boot-th >= 9.14 && < 10.2,
+                      ghc-boot >= 9.14 && < 10.2,
+                      ghc-experimental >= 9.1401 && < 10.2000,
+                      ghc-heap >= 9.14 && < 10.2,
                       array >= 0.5.8 && < 0.6,
                       containers >= 0.7 && < 0.9,
                       mtl >= 2.3 && < 3,

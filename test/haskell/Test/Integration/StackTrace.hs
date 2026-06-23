@@ -10,6 +10,7 @@ import Test.Tasty.HUnit
 #ifdef mingw32_HOST_OS
 import Test.Tasty.ExpectedFailure
 #endif
+import qualified Data.Text as Text
 import DAP (threadId, stackFrameName)
 
 stackTraceTests :: TestTree
@@ -52,8 +53,8 @@ stackAnnotationsTest =
       liftIO $ do
         -- Contains the stack annotations
         assertBool ("should contain 'Lovely annotation': " ++ show names)
-          ("Lovely annotation" `elem` names)
+          (any ("Lovely annotation" `Text.isPrefixOf`) names)
         assertBool ("should contain '[1,2,3,4]': " ++ show names)
-          ("[1,2,3,4]" `elem` names)
+          (any ("[1,2,3,4]" `Text.isPrefixOf`) names)
       disconnect
 
