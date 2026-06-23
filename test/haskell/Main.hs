@@ -75,8 +75,9 @@ main = do
   let baseFlags = "--disable-ipe-backtraces"
   let default_goldens   = map (mkTest baseFlags) testsForExternal
   let intinterp_goldens = map (mkTest ("--internal-interpreter " ++ baseFlags)) testsForInternal
+  let individualTimeout = 5*60*1_000_000
 
-  defaultMain $
+  defaultMain $ localOption (mkTimeout individualTimeout) $
     testGroup "Tests"
       [ testGroup "Golden tests" default_goldens
       ,

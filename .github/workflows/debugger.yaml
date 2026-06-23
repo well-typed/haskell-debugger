@@ -70,6 +70,7 @@ jobs:
 
   # Tests run on the distributed sdist to catch packaging issues.
   build-n-test-haskell-debugger:
+    timeout-minutes: 30
     name: Build and Run Tests on Sdist (GHC ${{ matrix.version }})
     needs: sdist-haskell-debugger
     runs-on: ubuntu-latest # just one is fine here, we test more machines on the checkout
@@ -123,6 +124,7 @@ jobs:
 
   # Tests run on the git checkout
   build-n-more-test-haskell-debugger:
+    timeout-minutes: 30
     name: Build and Run Tests on checkout (${{ matrix.runner }}, GHC ${{ matrix.version }})
     runs-on: ${{ matrix.runner }}
     # Run all jobs in the matrix to the end (IF RELEASE, STOP ON FAILURE)
