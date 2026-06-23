@@ -287,9 +287,15 @@ parseList item_parser =
 intParser :: TermParser Int
 intParser = fromIntegral <$> wordParser
 
+intPrimParser :: TermParser Int
+intPrimParser = fromIntegral <$> primParser
+
 -- | Parse a 'Word'
 wordParser :: TermParser Word
 wordParser = subtermWith 0 primParser
+
+wordPrimParser :: TermParser Word
+wordPrimParser = primParser
 
 -- | Parse a 'String' term
 stringParser :: TermParser String
@@ -392,4 +398,3 @@ programTermParser =
 
 reifyBool :: Bool -> Debugger ForeignHValue
 reifyBool b = Comp.compileRaw (show b ++ ":: Bool")
-
