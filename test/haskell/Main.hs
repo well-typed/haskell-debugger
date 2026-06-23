@@ -120,7 +120,10 @@ mkGoldenTest keepTmpDirs inheritedEnv flags path = goldenVsStringComparing testN
     noTmpDir = ".no-tmp-dir" `isInfixOf` testName
 
     topAction :: IO LBS.ByteString
-    topAction | noTmpDir  = testAction path =<< getCurrentDirectory -- a bit dangerous! used in the self-debug-cli test
+    topAction | noTmpDir  = do
+      cwd <- getCurrentDirectory -- a bit dangerous! used in the self-debug-cli test
+      withTmpDirFromRepo keepTmpDirs cwd (testAction path)
+
               | otherwise = withHermeticDir keepTmpDirs (takeDirectory path) (testAction (takeFileName path))
 
 
