@@ -15,6 +15,7 @@ import DAP
 import qualified GHC
 import qualified GHC.Debugger.Interface.Messages as D (Command, Response, RemoteThreadId, VariableReference)
 import Network.Socket (PortNumber)
+import GHC.Debugger.Interface.Messages (AbsFilePath, unAbs, (/>))
 
 type DebugAdaptor = Adaptor DebugAdaptorState Request
 type DebugAdaptorCont = Adaptor DebugAdaptorState ()
@@ -33,10 +34,10 @@ data DebugAdaptorState = DAS
       , breakpointMap :: Map.Map GHC.InternalBreakpointId BreakpointSet
       , stackFrameMap :: IM.IntMap StackFrameIx
       , variablesMap  :: IM.IntMap VariablesIx
-      , entryFile     :: FilePath
+      , entryFile     :: AbsFilePath
       , entryPoint    :: String
       , entryArgs     :: [String]
-      , projectRoot   :: FilePath
+      , projectRoot   :: AbsFilePath
       , runInTerminalProc :: RunInTerminalProc
         -- ^ Potentially a process launched via 'runInTerminal'.
       }
@@ -113,7 +114,7 @@ fileToSource file = do
   root <- projectRoot <$> getDebugSession
   fullPath <- if isAbsolute file
      then return file
-     else return (root </> file)
+     else return (unAbs $ root /> file)
   return defaultSource{sourcePath = Just (T.pack fullPath)}
 
 -- | Generate fresh Int identifier.

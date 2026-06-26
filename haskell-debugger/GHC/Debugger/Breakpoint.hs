@@ -11,8 +11,6 @@ import Control.Monad.Reader
 import Data.Bits (xor)
 import Data.List (intercalate)
 import Data.IORef
-import System.Directory
-import System.FilePath
 import qualified Colog.Core as Logger
 
 import GHC
@@ -23,7 +21,6 @@ import GHC.Driver.Env
 import GHC.Driver.Ppr as GHC
 import GHC.Runtime.Interpreter
 import GHC.Runtime.Debugger.Breakpoints as GHC
-import GHC.Unit.Module.ModSummary
 import GHC.Utils.Error (logOutput)
 import GHC.Utils.Outputable as GHC
 import qualified GHCi.BreakArray as BA
@@ -42,7 +39,7 @@ import Data.Function
 -- | Remove all module breakpoints set on the given loaded module by path
 --
 -- If the argument is @Nothing@, clear all function breakpoints instead.
-clearBreakpoints :: Maybe FilePath -> Debugger ()
+clearBreakpoints :: Maybe AbsFilePath -> Debugger ()
 clearBreakpoints mfile = do
   -- It would be simpler to go to all loaded modules and disable all
   -- breakpoints for that module rather than keeping track,
@@ -185,7 +182,7 @@ registerBreakpoint bp info@BreakpointInfo{bpInfoStatus = status} = do
 -- | Get a list with all currently active breakpoints on the given module (by path)
 --
 -- If the path argument is @Nothing@, get all active function breakpoints instead
-getActiveBreakpoints :: Maybe FilePath -> Debugger [GHC.InternalBreakpointId]
+getActiveBreakpoints :: Maybe AbsFilePath -> Debugger [GHC.InternalBreakpointId]
 getActiveBreakpoints mfile = do
   bm <- asks activeBreakpoints >>= liftIO . readIORef
   case mfile of
@@ -275,21 +272,20 @@ parseQC a ('\\':[])    = parseQC ('\\':a) []
 parseQC a ('{':xs)     = Literal (reverse a) : unQC [] xs
 parseQC a (x:xs)       = parseQC (x:a) xs
 
-
 -- | Get a 'ModSummary' of a loaded module given its 'FilePath'
-getModuleByPath :: FilePath -> Debugger (Either SDoc ModSummary)
+getModuleByPath :: AbsFilePath -> Debugger (Either SDoc ModSummary)
 getModuleByPath path = do
-  -- get all loaded modules this every time as the loaded modules may have changed
-  lms <- getAllLoadedModules
-  absPath <- liftIO $ makeAbsolute path
-  let matches ms = normalise (msHsFilePath ms) == normalise absPath
-  return $ case filter matches lms of
-    [x] -> Right x
-    [] -> Left $ text "No module matched" <+> text path <> text "."
+  -- TODO (bytecode libraries): getAllLoadedModules skips any ModuleNodeFixed, and only includes modules from home units.
+  -- get all loaded modules every time as the loaded modules may have changed
+  lms <- getAllLoadedModulesWithPaths
+
+  return $ case filter ((== unAbs path) . unAbs . fst) lms of
+    [x] -> Right (snd x)
+    [] -> Left $ text "No module matched" <+> text (unAbs path) <> text "."
                $$ text "Loaded modules:"
-               $$ vcat (map (text . msHsFilePath) lms)
+               $$ vcat (map (text . unAbs . fst) lms)
                $$ text "Perhaps you've set a breakpoint on a module that isn't loaded into the session?"
-    xs -> Left $ text "Too many modules (" <> ppr xs <> text ") matched" <+> text path
+    xs -> Left $ text "Too many modules (" <> ppr (map snd xs) <> text ") matched" <+> text (unAbs path)
               <> text ". Please report a bug at https://github.com/well-typed/haskell-debugger."
 
 -- | Find a 'BreakpointId' index and its span from a module + line + column.

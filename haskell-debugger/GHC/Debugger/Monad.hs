@@ -11,6 +11,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NondecreasingIndentation #-}
 
 module GHC.Debugger.Monad where
 
@@ -92,6 +93,7 @@ import GHC.Data.FastString.Env (emptyFsEnv)
 #endif
 import GHC.Unit.Home.Graph
 import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything which uses `Debugger`
+import System.Directory (getCurrentDirectory)
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -242,7 +244,16 @@ withProjectDebugSession
   -> DebugRunner m a
 withProjectDebugSession ProjectDebugSpec{ghcInvocation = ghcI, ..} k = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcI
-  GHC.runGhc (Just libdir) $ k rootDir extraGhcArgs $ do
+  GHC.runGhc (Just libdir) $ do
+#ifdef MIN_VERSION_unix
+  -- Workaround #4162
+  -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
+    _ <- liftIO $ installHandler sigINT Default Nothing
+    _ <- liftIO $ installHandler sigQUIT Default Nothing
+    _ <- liftIO $ installHandler sigTERM Default Nothing
+    _ <- liftIO $ installHandler sigHUP Default Nothing
+#endif
+    k rootDir extraGhcArgs $ do
     dflags2 <- getSessionDynFlags
 
     -- Discover the user-given flags and targets
@@ -268,14 +279,6 @@ runDebuggerAction :: forall a. LogAction IO DebuggerLog
   -> Ghc a
 runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = flip MC.finally cleanupInterp $ -- See Note [Shutting down the external interpreter]
   do
-#ifdef MIN_VERSION_unix
-  -- Workaround #4162
-  -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
-  _ <- liftIO $ installHandler sigINT Default Nothing
-  _ <- liftIO $ installHandler sigQUIT Default Nothing
-  _ <- liftIO $ installHandler sigTERM Default Nothing
-  _ <- liftIO $ installHandler sigHUP Default Nothing
-#endif
   dflags0 <- GHC.getSessionDynFlags
   let dflags1 = dflags0
         { GHC.ghcMode = GHC.CompManager
@@ -397,6 +400,9 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
 
       loadHomeUnit
 
+      fixHomeUnitsDynFlagsForIIDecl
+
+
       -- Ensure all the home units are built with same Ways and return them.
       buildWays       <- do
         hug_dflags <- fmap homeUnitEnv_dflags . Foldable.toList . hsc_HUG <$> getSession
@@ -414,7 +420,7 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
 #endif
 
       -- See Note [Must explicitly expose module graph units]
-      setExposedInUnit interactiveGhcDebuggerUnitId . graphUnits . hsc_mod_graph =<< getSession
+      exposeModGraphUnitsInInteractiveGhcDebuggerUnit
 
       -- Set interactive context to import all loaded modules
       let preludeImp = GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"
@@ -874,14 +880,13 @@ loadInMemoryModules ::
   -> UnitId
   -> [(ModuleName,StringBuffer)] -> Ghc [SuccessFlag]
 loadInMemoryModules l uid ts = do
-  old_targets <- GHC.getTargets
   tgts <- forM ts $  \(modName,modContents) ->
     liftIO $ makeInMemoryTarget uid modName modContents
-  GHC.setTargets (tgts ++ old_targets)
+  GHC.setTargets tgts
   mod_graph <- hsc_mod_graph <$> GHC.getSession
   -- TODO: use [incremental API](https://gitlab.haskell.org/ghc/ghc/-/issues/27054) when ready.
   dvc_mod_graph <- doDownsweep (Just mod_graph)
-  modifySession $ GHC.setModuleGraph dvc_mod_graph
+  modifySession $ GHC.setModuleGraph $ mkModuleGraph $ mg_mss dvc_mod_graph ++ mg_mss mod_graph
 
   restore_logger <- GHC.getLogger
   dflags <- getSessionDynFlags
@@ -1012,6 +1017,15 @@ getAllLoadedModules :: GHC.GhcMonad m => m [GHC.ModSummary]
 getAllLoadedModules =
   (GHC.mgModSummaries <$> GHC.getModuleGraph) >>=
     filterM (\ms -> GHC.isLoadedModule (ms_unitid ms) (ms_mod_name ms))
+
+getAllLoadedModulesWithPaths :: GHC.GhcMonad m => m [(AbsFilePath,ModSummary)]
+getAllLoadedModulesWithPaths = do
+  ghcCwd <- mkAbsolute <$> liftIO getCurrentDirectory
+  -- TODO: cache?
+  map (\ m -> (absoluteSourcePath ghcCwd m, m)) <$> getAllLoadedModules
+  where
+    absoluteSourcePath :: AbsFilePath -> ModSummary -> AbsFilePath
+    absoluteSourcePath ghcCwdDir ms = ghcCwdDir /> msHsFilePath ms
 
 --------------------------------------------------------------------------------
 -- * Forcing laziness

@@ -155,8 +155,9 @@ library
     hs-source-dirs:   haskell-debugger
     default-language: GHC2021
 
-library dap
+library dap-server
     import:           warnings
+    visibility:       public
     exposed-modules:  Development.Debug.Adapter.Breakpoints,
                       Development.Debug.Adapter.Stepping,
                       Development.Debug.Adapter.Stopped,
@@ -222,7 +223,7 @@ executable hdb
         unordered-containers >= 0.2.19 && < 0.3,
 
         haskell-debugger,
-        haskell-debugger:dap,
+        haskell-debugger:dap-server,
         hie-bios,
         prettyprinter ^>= 1.7.0,
         co-log-core >= 0.3.2.5 && < 0.4,

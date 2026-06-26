@@ -37,7 +37,6 @@ import Control.Monad
 import Data.Aeson as Aeson
 import GHC.Generics
 import System.Directory
-import System.FilePath
 import Data.Functor.Contravariant
 
 import Development.Debug.Adapter
@@ -126,7 +125,7 @@ initDebugger l servConf supportsRunInTerminal preferInternalInterpreter
     Nothing -> throwError ("Missing \"entryFile\" key in debugger configuration", Nothing)
     Just ef -> pure ef
 
-  projectRoot <- maybe (liftIO getCurrentDirectory) pure givenRoot
+  projectRoot <- liftIO $ mkAbsolute <$> maybe getCurrentDirectory makeAbsolute givenRoot
 
   -- Create a pipe to which messages to send to the DAP console are written and read.
   -- todo: This could just be a Haskell channel now...
@@ -147,7 +146,9 @@ initDebugger l servConf supportsRunInTerminal preferInternalInterpreter
         WithSeverity msg sev
           | sev >= Info -> dapLogger <& renderSessionSetupLog msg
           | otherwise -> mempty
-  let debugRunnerConf = DebugRunnerConf projectRoot entryFile extraGhcArgs cradleFile
+
+  let debugRunnerConf = DebugRunnerConf (unAbs projectRoot) entryFile extraGhcArgs cradleFile
+
   liftIO (getDebugRunner servConf hieBiosLogger debugRunnerConf) >>= \case
     Left e              -> throwError (ErrorMessage (T.pack e), Nothing)
     Right (ghcInvocation, debugRunner) -> do
@@ -198,7 +199,7 @@ initDebugger l servConf supportsRunInTerminal preferInternalInterpreter
               _ -> Left CreatePipe -- if not runInTerminal, just create a new pipe for stdin
           , externalInterpreterProg = hdbProgram servConf
           }
-        absEntryFile = normalise $ projectRoot </> entryFile
+        absEntryFile = projectRoot /> entryFile
         daState = DAS{entryFile=absEntryFile,..}
 
       sessionId <- liftIO $ maybe (("debug-session:" <>) . T.show <$> UUID.nextRandom) (pure . T.pack) __sessionId
