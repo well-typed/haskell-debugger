@@ -1,0 +1,3 @@
+#version with barebone cabal cradle, to make sure session structure is not important
+cradle:
+  cabal:

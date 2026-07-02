@@ -138,7 +138,7 @@ library
                       cryptohash-sha1 >= 0.11.101.0 && < 0.12,
                       base16-bytestring >= 1.0.2.0 && < 1.1,
                       aeson >= 2.2.3 && < 2.3,
-                      hie-bios >= 0.15 && < 0.20,
+                      hie-bios >= 0.15 && < 0.21,
                       file-embed >= 0.0.16 && < 0.1,
                       attoparsec >= 0.13 && < 0.15,
                       time >= 1.14 && < 2,
@@ -155,7 +155,7 @@ library
     hs-source-dirs:   haskell-debugger
     default-language: GHC2021
 
-library dap
+library dap-server
     import:           warnings
     exposed-modules:  Development.Debug.Adapter.Breakpoints,
                       Development.Debug.Adapter.Stepping,
@@ -185,7 +185,7 @@ library dap
         unordered-containers >= 0.2.19 && < 0.3,
 
         haskell-debugger,
-        hie-bios,
+        hie-bios ^>= 0.20,
         prettyprinter ^>= 1.7.0,
         co-log-core >= 0.3.2.5 && < 0.4,
         implicit-hie ^>=0.1.4.0,
@@ -222,7 +222,7 @@ executable hdb
         unordered-containers >= 0.2.19 && < 0.3,
 
         haskell-debugger,
-        haskell-debugger:dap,
+        haskell-debugger:dap-server,
         hie-bios,
         prettyprinter ^>= 1.7.0,
         co-log-core >= 0.3.2.5 && < 0.4,
