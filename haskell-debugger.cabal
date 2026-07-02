@@ -185,7 +185,7 @@ library dap-server
         unordered-containers >= 0.2.19 && < 0.3,
 
         haskell-debugger,
-        hie-bios,
+        hie-bios ^>= 0.20,
         prettyprinter ^>= 1.7.0,
         co-log-core >= 0.3.2.5 && < 0.4,
         implicit-hie ^>=0.1.4.0,

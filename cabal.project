@@ -20,7 +20,6 @@ if !os(windows)
 if impl(ghc >10.0)
     constraints:
         hashable==1.4.7.0
-        , hie-bios>=0.20
 
     allow-newer:
         ghc-boot-th,
