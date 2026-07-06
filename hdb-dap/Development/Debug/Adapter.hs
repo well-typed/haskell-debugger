@@ -14,7 +14,7 @@ import System.FilePath
 import DAP
 import qualified GHC
 import qualified GHC.Debugger.Interface.Messages as D (Command, Response, RemoteThreadId, VariableReference)
-import Network.Socket (PortNumber)
+import Network.Socket (PortNumber, Socket)
 import GHC.Debugger.Interface.Messages (AbsFilePath, unAbs, (/>))
 
 type DebugAdaptor = Adaptor DebugAdaptorState Request
@@ -38,7 +38,7 @@ data DebugAdaptorState = DAS
       , entryPoint    :: String
       , entryArgs     :: [String]
       , projectRoot   :: AbsFilePath
-      , runInTerminalProc :: RunInTerminalProc
+      , waitForDebuggee :: IO ()
         -- ^ Potentially a process launched via 'runInTerminal'.
       }
 
@@ -74,6 +74,7 @@ data RunInTerminalProc
         -- When 'NoRunInTerminal' but using external-interpreter, we'll still
         -- launch the external interpreter but in the default GHC way using the
         -- file descriptors directly.
+      , socket :: Socket
       }
 
   -- | We launched @hdb proxy ...@ on the user's terminal.

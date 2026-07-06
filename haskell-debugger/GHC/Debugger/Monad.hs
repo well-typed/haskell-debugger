@@ -15,9 +15,7 @@
 
 module GHC.Debugger.Monad where
 
-import System.Process
 import Control.Concurrent
-import Control.Concurrent.Async
 import Control.Exception
 import qualified Data.Foldable as Foldable
 import Control.Monad
@@ -25,7 +23,6 @@ import Control.Monad.Catch as MC
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.Function
-import Data.Functor.Contravariant
 import Data.IORef
 import Data.Maybe
 import qualified Data.Set as Set
@@ -34,12 +31,8 @@ import Prelude hiding (mod)
 #ifdef MIN_VERSION_unix
 import System.Posix.Signals
 #endif
-import Data.Text (Text)
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
-import Network.Socket hiding (Debug)
-import System.Process.Internals (mkProcessHandle)
-import Text.Read (readMaybe)
 
 import GHC
 import GHC.Data.StringBuffer
@@ -48,7 +41,6 @@ import GHC.Driver.Config.Logger
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env as GHC
 import GHC.Driver.Monad
-import GHC.Driver.Hooks
 import GHC.Driver.Errors
 import GHC.Driver.Errors.Types
 import GHC.Driver.Main
@@ -76,24 +68,18 @@ import GHC.Debugger.Session
 import GHC.Debugger.Session.Builtin
 import GHC.Debugger.Session.Interactive
 import GHC.Debugger.Runtime.Compile.Cache
-import GHC.Debugger.Utils
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import qualified GHC.Debugger.Runtime.Thread.Map as TM
 
 import Colog.Core as Logger
 
 import {-# SOURCE #-} GHC.Debugger.Runtime.Instances.Discover (RuntimeInstancesCache, emptyRuntimeInstancesCache)
-import GHCi.Message (mkPipeFromHandles)
-import System.IO (hGetLine, IOMode(..))
-import qualified GHC.Linker.Loader as Loader
 import GHC.Stack.Annotation
 import GHC.Platform.Ways
-#if MIN_VERSION_ghc(9,15,0)
-import GHC.Data.FastString.Env (emptyFsEnv)
-#endif
 import GHC.Unit.Home.Graph
 import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything which uses `Debugger`
 import System.Directory (getCurrentDirectory)
+import GHC.Debugger.Debuggee
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -195,15 +181,7 @@ instance Outputable BreakpointAction where ppr = text . show
 data RunDebuggerSettings = RunDebuggerSettings
       { supportsANSIStyling :: Bool
       , supportsANSIHyperlinks :: Bool
-      , preferInternalInterpreter :: Bool
-      , externalInterpreterCustomProc :: Either StdStream PortNumber
-        -- ^ Right: use a custom given existing process for the external
-        -- interpreter listening at given port. (This is used when we want to
-        -- launch the external interpreter attached to a user's terminal).
-        --
-        -- Left: we launch our own external interpreter process through
-        -- GHC's spawnIServ using the given StdStream as the stdin.
-      , externalInterpreterProg :: FilePath
+      , interpreterSettings :: InterpreterSettings
       }
 
 -- | Run a 'Debugger' action on a session constructed by a 'DebugRunner'
@@ -297,17 +275,7 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
         `GHC.gopt_set` GHC.Opt_UseBytecodeRatherThanObjects
         `GHC.gopt_set` GHC.Opt_InsertBreakpoints
 
-        -- Enable the external interpreter by default! See #169
-        -- See Note [Custom external interpreter]
-        & enableExternalInterpreter conf.preferInternalInterpreter
-        -- Ext interp is the same program as this, with "--external-interpreter"
-        -- (this is ignored on GHC 9.14, see Note [Custom external interpreter])
-        & setPgmI conf.externalInterpreterProg
-        -- ideally, we'd set "external-interpreter" *before* the file
-        -- descriptors. since there's no way to do that yet, we just have
-        -- some logic in main to detect [writefd, readfd, --external-interpreter]
-        & addOptI "--external-interpreter"
-
+        & interpreterFlags conf.interpreterSettings
         -- Really important to force -dynamic if host is dynamic
         -- See Note [Dynamic Debuggee for dynamic debugger]
         & enableDynamicDebuggee
@@ -335,59 +303,7 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
       printOrThrowDiagnostics logger (initPrintConfig dflags2) (initDiagOpts dflags2) (GhcDriverMessage <$> warns)
     return dflags2
 
-  -- Make sure to override the function which creates the external
-  -- interpreter, because we need to keep track of the standard handles
-  iserv_handles <- liftIO newEmptyMVar
-  case conf.externalInterpreterCustomProc of
-    -- Left: GHC will launch the external interpreter itself on demand if
-    -- using external interpreter, and we just provide the stdin stream
-    Left givenStdStream ->
-      modifySession $ \h -> h
-        { hsc_hooks = (hsc_hooks h)
-            { createIservProcessHook = Just $ \cp -> do
-                -- See Note [External interpreter buffering]
-                (_, Just o, Just e, ph) <-
-                  createProcess cp
-                    { std_in  = givenStdStream
-                    , std_out = CreatePipe
-                    , std_err = CreatePipe
-                    -- Override executable path
-                    -- See Note [Custom external interpreter]
-#if MIN_VERSION_ghc(9,15,0)
-#else
-                    , cmdspec = case cmdspec cp of
-                        ShellCommand (words -> ws) -> ShellCommand $ unwords $ conf.externalInterpreterProg : drop 1 ws
-                        RawCommand _fp args -> RawCommand conf.externalInterpreterProg args
-#endif
-                    }
-                putMVar iserv_handles (o, e)
-                return ph
-            }
-        }
-
-    -- Right: we supply our custom external interpreter process, which is
-    -- already running and connected to the user's terminal.
-    Right port -> do
-      extInterp <- liftIO
-        $ annotateStackStringIO "Waiting for an external interpreter run-in-terminal process"
-        $ extInterpFromTerminalProcess port
-      modifySession $ \h -> h
-        { hsc_interp = Just extInterp -- set it directly!
-        }
-
-  let
-    externalInterpFwdThread :: IO ()
-    externalInterpFwdThread = when (GHC.gopt GHC.Opt_ExternalInterpreter dflags2) $ do
-      -- The external interpreter is spawned lazily, so we block waiting for
-      -- the handles to be available in a new thread.
-      withAsync (takeMVar iserv_handles) $ \async_handles -> do
-        (serv_out, serv_err) <- wait async_handles
-        concurrently_
-          (forwardHandleToLogger serv_err (contramap LogDebuggeeErr l))
-          (forwardHandleToLogger serv_out (contramap LogDebuggeeOut l))
-
-    mainGhcThread :: Ghc a
-    mainGhcThread = do
+  interpreterSetup conf.interpreterSettings l dflags2 $ do
       -- Initializes interpreter!
       _ <- GHC.setSessionDynFlags dflags2
 
@@ -475,16 +391,6 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
               then Nothing
               else Just hdv_uid)
 
-  case conf.externalInterpreterCustomProc of
-    Left _ -> do
-      -- We launched the external interpreter ourselves, so forward its output to the logger.
-      withUnliftGhc $ \ unlift -> annotateCallStackIO $ do
-        withAsync (annotateCallStackIO $ void externalInterpFwdThread) $ \ fwd_thr -> do
-          liftIO $ annotateCallStackIO $ link fwd_thr
-          annotateCallStackIO $ unlift mainGhcThread
-    Right _ ->
-      -- Ext interp is running in user terminal, no need to forward output to logger
-      mainGhcThread
 
 findOrLoadHaskellDebuggerView :: LogAction IO DebuggerLog
              -> Ways
@@ -663,84 +569,6 @@ parseDynamicFlagsWithRootDir rootDir logger dflags cmdline = do
   dflags2 <- liftIO $ interpretPackageEnv logger1 dflags1
   return (dflags2, leftovers, warns)
 
--- | Make an 'ExtInterpInstance' based on an external interpreter process that
--- was launched by the DAP client via 'runInTerminal'. The process sends its
--- own PID as the first line on the socket before the GHCi wire protocol
--- begins.
-extInterpFromTerminalProcess :: PortNumber -> IO Interp
-extInterpFromTerminalProcess port = do
-  putStrLn $ "Trying to connect to " ++ show port
-  Control.Exception.bracketOnError
-    (openListener port >>= accept)
-    (\ (sock,_) -> close sock)
-    (\ (sock,_) -> do
-      bi_h <- socketToHandle sock ReadWriteMode
-
-      pidLine <- annotateCallStackIO $ hGetLine bi_h
-
-      pid <- case readMaybe pidLine :: Maybe Int of
-        Just pid -> pure pid
-        Nothing  -> fail $ "invalid external interpreter PID on socket: " ++ show pidLine
-      ph <- mkProcessHandle (fromIntegral pid) False
-      interpPipe <- mkPipeFromHandles bi_h bi_h
-      lock <- newMVar ()
-      let process = InterpProcess
-                      { interpHandle = ph
-                      , interpPipe
-                      , interpLock   = lock
-                      }
-
-      pending_frees <- newMVar []
-      let inst = ExtInterpInstance
-            { instProcess           = process
-            , instPendingFrees      = pending_frees
-            , instExtra             = ()
-            }
-          conf = IServConfig
-            { iservConfProgram  = "the process is already running, we should never need to run it again"
-            , iservConfOpts     = []
-              -- VERY IMPORTANT: See Note [Dynamic dependencies for dynamic debugger]
-            , iservConfDynamic  = hostIsDynamic
-            , iservConfProfiled = hostIsProfiled
-            , iservConfHook     = Nothing -- it's already running!
-            , iservConfTrace    = pure ()
-            }
-
-      lookup_cache <- mkInterpSymbolCache
-      s            <- newMVar $ InterpRunning inst
-      loader       <- Loader.uninitializedLoader
-#if MIN_VERSION_ghc(9,15,0)
-      fs_cache     <- newMVar emptyFsEnv
-      return (Interp (ExternalInterp (ExtIServ (ExtInterpState conf s))) loader lookup_cache fs_cache)
-#else
-      return (Interp (ExternalInterp (ExtIServ (ExtInterpState conf s))) loader lookup_cache)
-#endif
-      )
-
-openListener :: PortNumber -> IO Socket
-openListener port = do
-  addr <- socketAddressFromPort port
-  sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
-  -- Must set before bind!
-  setSocketOption sock ReuseAddr 1
-
-  bind sock (addrAddress addr)
-  listen sock maxListenQueue
-
-  return sock
-
-socketAddressFromPort :: PortNumber -> IO AddrInfo
-socketAddressFromPort port = do
-  let
-    hints = defaultHints
-      { addrSocketType = Stream
-      , addrFlags = [AI_PASSIVE]  -- For wildcard IP (0.0.0.0 or ::)
-      , addrFamily = AF_UNSPEC    -- Allow IPv4 or IPv6
-      }
-  addrs <- getAddrInfo (Just hints) Nothing (Just (show port))
-  case addrs of
-    addr : _ -> pure addr
-    [] -> fail ("Could not resolve address for external interpreter port " ++ show port)
 
 {-
 Note [Custom external interpreter]
@@ -1081,49 +909,8 @@ deepseqTerm hsc_env t = case t of
   _              -> do seqTerm hsc_env t
 
 
---------------------------------------------------------------------------------
--- * Logging
---------------------------------------------------------------------------------
-
--- | A debugger log. May include debuggee ouput.
-data DebuggerLog
-  = DebuggerLog !Logger.Severity !DebuggerMessage
-  | GHCLog !GHC.LogFlags !MessageClass !SrcSpan !SDoc
-  | LogDebuggeeOut !Text
-  | LogDebuggeeErr !Text
-
--- | A debugger log message
-data DebuggerMessage
-  = LogSDoc !DynFlags !SDoc
-  | LogFailedToCompileDebugViewModule !GHC.ModuleName
-  | LogSkippingViewModuleNoPkg !GHC.ModuleName String [String]
-
-instance Show DebuggerMessage where
-  show = \ case
-    LogFailedToCompileDebugViewModule mn ->
-      "Failed to compile built-in " ++ moduleNameString mn ++ " module! Ignoring these custom debug views."
-    LogSkippingViewModuleNoPkg mn pkg uids ->
-      "Skipping compilation of built-in " ++ moduleNameString mn ++ " module because package "
-          ++ show pkg ++ " wasn't found in dependencies " ++ show uids
-    LogSDoc dflags doc -> showSDoc dflags doc
-
 logSDoc :: Logger.Severity -> SDoc -> Debugger ()
 logSDoc sev doc = do
   dflags <- getDynFlags
   l <- asks dbgLogger
   l <& DebuggerLog sev (LogSDoc dflags doc)
-
-ghcLogAction :: LogAction IO DebuggerLog -> GHC.LogAction
-ghcLogAction l = \logflags mclass srcSpan sdoc -> do
-    liftLogIO l <& GHCLog logflags mclass srcSpan sdoc
-
-msgClassSeverity :: MessageClass -> Logger.Severity
-msgClassSeverity = \case
-  MCOutput -> Info
-  MCFatal -> Logger.Error
-  MCInteractive -> Info
-  MCDump -> Debug
-  MCInfo -> Info
-  MCDiagnostic SevIgnore _ _ -> Debug -- ?
-  MCDiagnostic SevWarning _ _ -> Logger.Warning
-  MCDiagnostic SevError _ _ -> Logger.Error

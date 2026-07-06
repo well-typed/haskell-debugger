@@ -13,7 +13,6 @@ module Development.Debug.Adapter.Server
 import System.Environment
 import Data.Maybe
 import Text.Read
-import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
 
@@ -39,8 +38,8 @@ import Data.Functor.Contravariant
 import Development.Debug.Adapter
 
 
-import GHC.Debugger.Monad
 import qualified GHC.Utils.Logger as GHC
+import GHC.Debugger.Debuggee (DebuggerLog(..))
 
 
 -------------------------------------------------------------------------
@@ -145,7 +144,7 @@ talk l servConf prefer_internal_interpreter = \ case
 #endif
 
     initDebugger (contramap DAPSessionLog l) servConf
-      runInTerminal prefer_internal_interpreter
+      InterpreterChoice {runInTerminal, internal = prefer_internal_interpreter}
       launch_args
 
     sendLaunchResponse   -- ack
@@ -171,13 +170,8 @@ talk l servConf prefer_internal_interpreter = \ case
   CommandConfigurationDone -> do
     sendConfigurationDoneResponse
 
-    DAS{runInTerminalProc} <- getDebugSession
-    case runInTerminalProc of
-      RunProxyInTerminal{proxyClientReady} -> liftIO $ do
-        -- Only start executing after proxy client connects succesfully (#95)
-        takeMVar proxyClientReady
-      _ ->
-        pure ()
+    DAS{waitForDebuggee} <- getDebugSession
+    liftIO $ waitForDebuggee
 
     -- Configuration is finished. Start executing until it halts.
     startExecution >>= handleEvalResult False
