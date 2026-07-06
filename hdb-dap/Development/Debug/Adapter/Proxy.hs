@@ -30,7 +30,6 @@ import System.Environment
 import System.FilePath
 import Control.Exception.Base
 import Control.Monad
-import Control.Monad.IO.Class
 import Control.Concurrent
 import qualified Data.List.NonEmpty as NE
 
@@ -61,13 +60,13 @@ mkServerSideHdbProxy :: LogAction IO (WithSeverity T.Text)
                    -> Chan BS8.ByteString
                    -> Chan BS8.ByteString
                    -> MVar ()
-                   -> Adaptor DebugAdaptorState r (PortNumber, Adaptor DebugAdaptorState s ())
-mkServerSideHdbProxy l dbIn dbOut dbErr client_conn_signal = do
+                   -> IO (PortNumber, IO ())
+mkServerSideHdbProxy l dbIn dbOut dbErr client_conn_signal =
+  bracketOnError openSocketAvailablePort close $ \ sock -> do
 
-  sock <- liftIO $ openSocketAvailablePort
-  port <- liftIO $ socketPort sock
+  port <- socketPort sock
 
-  return $ (port,) $ liftIO $ do
+  return $ (port,) $ do
    ignoreIOException $ do
     myThreadId >>= \tid -> labelThread tid "Debug/Adapter/Proxy: TCP Server"
     runTCPServerWithSocket' sock $ \scket -> do
@@ -135,10 +134,26 @@ labelMe name = do
 -- | Open a socket on an available port
 openSocketAvailablePort :: IO Socket
 openSocketAvailablePort = do
-  let hints = defaultHints { addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream }
-  addr <- NE.head <$> getAddrInfo (Just hints) (Just "127.0.0.1") (Just "0")
-  -- Bind on "0" to let the OS pick a free port
-  openTCPServerSocket addr
+  let hints = defaultHints { addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV] ++ [AI_PASSIVE]  -- For wildcard IP (0.0.0.0 or ::)
+                            , addrSocketType = Stream
+
+                        , addrFamily = AF_UNSPEC    -- Allow IPv4 or IPv6
+                        }
+  addr <- NE.head <$> getAddrInfo (Just hints) Nothing (Just "0")
+  openTCPServerSocketFixed addr
+  where
+    openTCPServerSocketFixed addr = do
+      bracketOnError (openSocket addr) Network.Socket.close $ \ sock -> do
+      setSocketOption sock ReuseAddr 1
+      -- openTCPServerSocket from network-run includes this commented out snippet which causes test failures ("runInTerminal: proxy forwards stdin correctly") on macOS.
+      -- #if !defined(openbsd_HOST_OS)
+      --   when (addrFamily addr == AF_INET6) $ setSocketOption sock IPv6Only 1
+      -- #endif
+      mapM_ (uncurry $ setSockOptValue sock) []
+      withFdSocket sock setCloseOnExecIfNeeded
+      bind sock $ addrAddress addr
+      listen sock maxListenQueue
+      return sock
 
 -- | The proxy code running on the terminal in which the @hdb proxy@ process is launched.
 --
