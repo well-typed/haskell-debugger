@@ -22,8 +22,8 @@ import System.IO
   , hSetBuffering
   , BufferMode(..)
   , Handle
-  , openFile
-  , IOMode(ReadMode, ReadWriteMode)
+
+  , IOMode(ReadWriteMode)
   )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -44,6 +44,7 @@ import Development.Debug.Interactive
 import GHC.Stack.Annotation (annotateCallStackIO)
 import GHC.Utils.Logger (defaultLogActionWithHandles)
 import Development.Debug.Session.Setup (hieDebugRunner)
+import GHC.Debugger.Debuggee (mkCliInterpreterSettings)
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -84,18 +85,11 @@ main = do
     HdbCLI{..} -> do
         setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
         l <- mainLogger hdbOpts.verbosity stdout
-        stdinStream <- case debuggeeStdin of
-          Just fp -> UseHandle <$> System.IO.openFile fp ReadMode
-          Nothing -> pure Inherit
-        -- the same program invoked with `external-interpreter` serves as the external interpreter
-        thisProg <- getExecutablePath
+        cliInterpSettings <- mkCliInterpreterSettings internalInterpreter debuggeeStdin
         let runConf = RunDebuggerSettings
               { supportsANSIStyling = True -- todo: check!!
               , supportsANSIHyperlinks = False
-              , preferInternalInterpreter = internalInterpreter
-              , externalInterpreterCustomProc = Left stdinStream
-              , externalInterpreterProg = thisProg
-              }
+              , interpreterSettings = cliInterpSettings }
         runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs cradleFile
           runConf debugInteractive
     HdbProxy{port} -> do

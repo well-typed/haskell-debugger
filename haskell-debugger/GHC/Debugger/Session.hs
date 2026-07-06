@@ -38,7 +38,7 @@ module GHC.Debugger.Session (
   withUnliftGhc,
   annotateCallStackGhc,
   lookupUnitPackageQualifier,
-  fixHomeUnitsDynFlagsForIIDecl,
+  fixHomeUnitsDynFlagsForIIDecl, getPgmI,
   )
   where
 
@@ -77,7 +77,6 @@ import GHC.Unit.Types
 import qualified GHC.Unit.State                        as State
 import GHC.Driver.Env
 import GHC.Types.SrcLoc
-import GHC.Settings (ToolSettings(..))
 import Language.Haskell.Syntax.Module.Name
 import qualified Data.Foldable as Foldable
 import qualified GHC.Unit.Home.Graph as HUG
@@ -102,6 +101,7 @@ import GHC.Plugins (SourceError, try, RawPkgQual (..), HasCallStack, FastString,
 import GHC.Types.SourceText (StringLiteral(..), SourceText (..))
 import GHC.Stack.Annotation
 import GHC.Stack (callStack)
+import GHC.Settings (ToolSettings(..))
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -643,6 +643,9 @@ enableDynamicDebuggee dflags
 setPgmI, addOptI :: String -> DynFlags -> DynFlags
 setPgmI f = alterToolSettings $ \s -> s { toolSettings_pgm_i = f }
 addOptI f = alterToolSettings $ \s -> s { toolSettings_opt_i = f : toolSettings_opt_i s }
+
+getPgmI :: DynFlags -> String
+getPgmI df = toolSettings_pgm_i (toolSettings df)
 
 alterToolSettings :: (ToolSettings -> ToolSettings) -> DynFlags -> DynFlags
 alterToolSettings f dynFlags = dynFlags { toolSettings = f (toolSettings dynFlags) }

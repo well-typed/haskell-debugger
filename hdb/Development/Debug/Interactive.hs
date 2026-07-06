@@ -22,6 +22,7 @@ import GHC.Debugger
 import Control.Monad
 import Data.List (intercalate)
 import qualified Data.Maybe as Maybe
+import GHC.Debugger.Debuggee (DebuggerLog)
 
 data RunOptions = RunOptions
   { runEntryFile :: AbsFilePath

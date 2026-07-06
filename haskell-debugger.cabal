@@ -104,6 +104,7 @@ library
                       GHC.Debugger.Runtime.Interpreter.Custom,
 
                       GHC.Debugger.Monad,
+                      GHC.Debugger.Debuggee,
                       GHC.Debugger.Utils,
                       GHC.Debugger.Utils.Orphans,
 
@@ -163,6 +164,7 @@ library dap-server
                       Development.Debug.Adapter.Stopped,
                       Development.Debug.Adapter.Evaluation,
                       Development.Debug.Adapter.ExceptionInfo,
+                      Development.Debug.Adapter.DAPDebuggee,
                       Development.Debug.Adapter.Init,
                       Development.Debug.Adapter.Interface,
                       Development.Debug.Adapter.Output,
