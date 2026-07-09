@@ -149,6 +149,7 @@ library
 
                       haskell-debugger-view >= 0.2 && < 1.0,
                       ghc-stack-annotations >=0.1 && <0.2,
+                      uuid,
 
     if !os(windows)
         build-depends: unix >= 2.8.6 && < 2.9,

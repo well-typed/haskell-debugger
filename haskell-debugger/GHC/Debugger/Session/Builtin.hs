@@ -18,6 +18,7 @@ module GHC.Debugger.Session.Builtin
   )
   where
 
+import Data.UUID.V4 qualified as UUID
 import Data.FileEmbed
 import Data.Function
 import Data.Maybe
@@ -95,6 +96,7 @@ addInMemoryHsDebuggerViewUnit
   -> DynFlags -- ^ Dynflags resulting from first downsweep of user given targets
   -> m ()
 addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
+  uuid <- liftIO $ UUID.nextRandom
   let imhdv_dflags = initialDynFlags
         { homeUnitId_ = hsDebuggerViewInMemoryUnitId
         , importPaths = []
@@ -108,6 +110,7 @@ addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
           , unitId /= ghcInternalUnitId
           ]
         , thisPackageName = Just "haskell-debugger-view"
+        , workingDirectory = Just (show uuid)
         }
         & setGeneralFlag' Opt_HideAllPackages
   hsc_env <- getSession
