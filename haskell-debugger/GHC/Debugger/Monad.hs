@@ -28,9 +28,6 @@ import Data.Maybe
 import qualified Data.Set as Set
 import Data.Version (makeVersion, showVersion)
 import Prelude hiding (mod)
-#ifdef MIN_VERSION_unix
-import System.Posix.Signals
-#endif
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
 
@@ -80,6 +77,7 @@ import GHC.Unit.Home.Graph
 import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything which uses `Debugger`
 import System.Directory (getCurrentDirectory)
 import GHC.Debugger.Debuggee
+import GHC.Plugins (panic)
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -215,6 +213,16 @@ data ProjectDebugSpec = ProjectDebugSpec
       , extraGhcArgs :: [String]
       }
 
+safeRunGhc :: Maybe FilePath  -- ^ See argument to 'initGhcMonad'.
+       -> Ghc a           -- ^ The action to perform.
+       -> IO a
+safeRunGhc mb_top_dir ghc = do
+  ref <- newIORef (panic "empty session")
+  let session = Session ref
+  flip unGhc session $ do
+    initGhcMonad mb_top_dir
+    withCleanupSession ghc
+
 -- | Construct a session from paths and flags inferred from the debugee's project.
 withProjectDebugSession
   :: GhcMonad m
@@ -222,15 +230,7 @@ withProjectDebugSession
   -> DebugRunner m a
 withProjectDebugSession ProjectDebugSpec{ghcInvocation = ghcI, ..} k = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcI
-  GHC.runGhc (Just libdir) $ do
-#ifdef MIN_VERSION_unix
-  -- Workaround #4162
-  -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
-    _ <- liftIO $ installHandler sigINT Default Nothing
-    _ <- liftIO $ installHandler sigQUIT Default Nothing
-    _ <- liftIO $ installHandler sigTERM Default Nothing
-    _ <- liftIO $ installHandler sigHUP Default Nothing
-#endif
+  safeRunGhc (Just libdir) $ do
     k rootDir extraGhcArgs $ do
     dflags2 <- getSessionDynFlags
 
