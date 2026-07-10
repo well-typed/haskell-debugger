@@ -10,8 +10,11 @@ module GHC.Debugger.Utils
 
 import Control.Monad
 import Control.Applicative
+import Control.Concurrent (MVar, newMVar, withMVar)
 import Control.Exception
+import GHC.IO (unsafePerformIO)
 import System.IO
+import qualified System.Directory as D
 
 import GHC
 import GHC.Data.FastString
@@ -111,3 +114,30 @@ srcSpanStringToSourceSpan s = parseOnly pSrcSpan (T.pack s)
 
 showModule :: Module -> String
 showModule = showSDocUnsafe . withPprStyle (PprDump alwaysQualify) . ppr
+
+----------------------------------------------------
+-- Current Directory utils
+----------------------------------------------------
+{-
+Note [ Current directory is a global property that affects HIE and GHC ]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We have to change the current directory for hie, and we concurrent debugging sessions we have to make sure we play nice with other hie api calls.
+
+Thanfully the hie calls should not be too long (as long as dependencies of the project are pre-built), so a solution is to make it a critical section with a global lock. The paths coming from HIE are made absolute at that point.
+
+We also rely on the CWD as the projectRoot if none is given, or to interpret relative paths from the session or from the DAP requests. Ideally they would all be absolute paths but we don't have full control.
+-}
+
+{-# NOINLINE cwdLock #-}
+cwdLock :: MVar ()
+cwdLock = unsafePerformIO $ newMVar ()
+
+-- | See Note [ Current directory is a global property that affects HIE and GHC ]
+withCurrentDirectory :: FilePath -> IO b -> IO b
+withCurrentDirectory fp m = withMVar cwdLock $ \ _ -> D.withCurrentDirectory fp m
+
+-- | See Note [ Current directory is a global property that affects HIE and GHC ]
+withOriginalCurrentDirectory :: (FilePath -> IO b) -> IO b
+withOriginalCurrentDirectory m = withMVar cwdLock $ \ _ ->
+  m =<< D.getCurrentDirectory

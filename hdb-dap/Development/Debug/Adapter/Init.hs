@@ -35,7 +35,6 @@ import Control.Monad.Catch
 import Control.Concurrent
 import Data.Aeson as Aeson
 import GHC.Generics
-import System.Directory
 import Data.Functor.Contravariant
 
 import Development.Debug.Adapter
@@ -44,7 +43,7 @@ import qualified Development.Debug.Adapter.Output as Output
 
 import GHC (Ghc)
 import GHC.Utils.Logger (defaultLogActionWithHandles)
-import GHC.Debugger.Utils (forwardHandleToLogger)
+import GHC.Debugger.Utils (forwardHandleToLogger,withOriginalCurrentDirectory)
 import qualified GHC.Debugger as Debugger
 import qualified GHC.Debugger.Monad as Debugger
 import qualified GHC.Debugger.Interface.Messages as D (Command, Response)
@@ -117,7 +116,9 @@ initDebugger l servConf interpChoice
     Nothing -> throwError ("Missing \"entryFile\" key in debugger configuration", Nothing)
     Just ef -> pure ef
 
-  projectRoot <- liftIO $ mkAbsolute <$> maybe getCurrentDirectory makeAbsolute givenRoot
+  -- | See Note [ Current directory is a global property that affects HIE and GHC ]
+  projectRoot <- liftIO $ withOriginalCurrentDirectory
+    $ \ (mkAbsolute -> cwd) -> pure $ maybe cwd (cwd />) givenRoot
 
   -- Create a pipe to which messages to send to the DAP console are written and read.
   -- todo: This could just be a Haskell channel now...

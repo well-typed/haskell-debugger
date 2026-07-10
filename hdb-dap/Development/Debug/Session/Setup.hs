@@ -21,7 +21,6 @@ module Development.Debug.Session.Setup
   ) where
 
 import Control.Applicative ((<|>))
-import Control.Concurrent (newMVar, MVar, withMVar)
 import Control.Exception (handleJust)
 import Control.Monad
 import Control.Monad.Except
@@ -34,12 +33,10 @@ import Data.Maybe
 import Data.Version
 import Data.Void
 import System.Directory hiding (withCurrentDirectory, findFile)
-import System.Directory qualified as D
 import System.FilePath
 import System.IO.Error
 import Text.ParserCombinators.ReadP (readP_to_S)
 import Data.Functor.Contravariant
-import GHC.IO (unsafePerformIO)
 
 import qualified Data.Text as T
 
@@ -59,6 +56,7 @@ import Prettyprinter.Render.Text
 import qualified GHC.Debugger.Monad as Debugger
 import GHC (Ghc)
 import GHC.Debugger.Monad (ProjectDebugSpec(ProjectDebugSpec))
+import GHC.Debugger.Utils (withCurrentDirectory)
 
 data GhcInvocation = GhcInvocation
   { gi_libdir :: FilePath
@@ -185,6 +183,7 @@ hieBiosFlags cradle root relTarget = runExceptT $ do
   -- To determine the flags we MUST set the current directory to the root
   -- because hie.yaml may invoke programs relative to the root (e.g. GHC's hie.yaml does)
   -- (HIE.getCompilerOptions depends on CWD being the proper root dir)
+  -- | See Note [ Current directory is a global property that affects HIE and GHC ]
   let compilerOpts = liftIO $ withCurrentDirectory root $
                           HIE.getCompilerOptions (HIE.TargetWithContext target [target]) HIE.LoadUnitsFromCradle cradle
   componentOpts <- compilerOpts >>= unwrapCradleResult "Failed to get compiler options using hie-bios cradle"
@@ -395,10 +394,3 @@ forgetPatchVersion :: Version -> Version
 forgetPatchVersion v = case versionBranch v of
   (major:minor:_patches) -> makeVersion [major, minor]
   _ -> v
-
-{-# NOINLINE cwdLock #-}
-cwdLock :: MVar ()
-cwdLock = unsafePerformIO $ newMVar ()
-
-withCurrentDirectory :: FilePath -> IO b -> IO b
-withCurrentDirectory fp m = withMVar cwdLock $ \ _ -> D.withCurrentDirectory fp m

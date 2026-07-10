@@ -75,9 +75,9 @@ import GHC.Stack.Annotation
 import GHC.Platform.Ways
 import GHC.Unit.Home.Graph
 import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything which uses `Debugger`
-import System.Directory (getCurrentDirectory)
 import GHC.Debugger.Debuggee
 import GHC.Plugins (panic)
+import GHC.Debugger.Utils (withOriginalCurrentDirectory)
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -854,7 +854,8 @@ getAllLoadedModules =
 
 getAllLoadedModulesWithPaths :: GHC.GhcMonad m => m [(AbsFilePath,ModSummary)]
 getAllLoadedModulesWithPaths = do
-  ghcCwd <- mkAbsolute <$> liftIO getCurrentDirectory
+  -- | See Note [ Current directory is a global property that affects HIE and GHC ]
+  ghcCwd <- liftIO $ withOriginalCurrentDirectory $ pure . mkAbsolute
   -- TODO: cache?
   map (\ m -> (absoluteSourcePath ghcCwd m, m)) <$> getAllLoadedModules
   where

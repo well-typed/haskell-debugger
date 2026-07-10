@@ -4,7 +4,6 @@ module Development.Debug.Interactive where
 import Data.Functor.Contravariant
 import System.IO
 import System.Exit
-import System.Directory
 import System.Console.Haskeline
 -- import System.Console.Haskeline.Completion
 import Control.Monad.State
@@ -23,6 +22,7 @@ import Control.Monad
 import Data.List (intercalate)
 import qualified Data.Maybe as Maybe
 import GHC.Debugger.Debuggee (DebuggerLog)
+import GHC.Debugger.Utils (withOriginalCurrentDirectory)
 
 data RunOptions = RunOptions
   { runEntryFile :: AbsFilePath
@@ -54,7 +54,8 @@ runIDM :: LogAction IO InteractiveLog
        -> InteractiveDM a
        -> IO a
 runIDM logger entryPoint entryFile entryArgs extraGhcArgs cradleFile runConf act = do
-  projectRoot <- mkAbsolute <$> getCurrentDirectory
+  -- | See Note [ Current directory is a global property that affects HIE and GHC ]
+  projectRoot <- withOriginalCurrentDirectory $ pure . mkAbsolute
 
   let hieBiosLogger = contramap ISessionSetupLog logger
   hieDebugRunner hieBiosLogger (DebugRunnerConf (unAbs projectRoot) entryFile extraGhcArgs cradleFile) >>= \case
