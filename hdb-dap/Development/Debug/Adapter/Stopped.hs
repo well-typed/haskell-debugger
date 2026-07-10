@@ -98,6 +98,11 @@ scopeInfoToScope six ScopeInfo{..} = do
   -- Update vars map
   varId <- freshVarIx six (scopeToVarRef kind)
 
+  expensiveLocalsCfg <- expensiveLocals <$> getDebugSession
+  let scopeExpensive_ = case kind of
+        LocalVariablesScope -> expensive || expensiveLocalsCfg
+        _ -> expensive
+
   source <- fileToSource sourceSpan.file
   return Scope
     { scopeName = case kind of
@@ -116,7 +121,7 @@ scopeInfoToScope six ScopeInfo{..} = do
     , scopeEndLine = Just sourceSpan.endLine
     , scopeEndColumn = Just sourceSpan.endCol
     , scopeVariablesReference = varId
-    , scopeExpensive = expensive
+    , scopeExpensive = scopeExpensive_
     }
 
 --------------------------------------------------------------------------------
