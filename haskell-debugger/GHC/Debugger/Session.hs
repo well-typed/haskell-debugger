@@ -102,6 +102,7 @@ import GHC.Types.SourceText (StringLiteral(..), SourceText (..))
 import GHC.Stack.Annotation
 import GHC.Stack (callStack)
 import GHC.Settings (ToolSettings(..))
+import qualified Data.UUID.V4 as UUID
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -152,7 +153,8 @@ parseHomeUnitArguments cfp compRoot units theOpts dflags rootDir = do
               Just wdir -> compRoot </> wdir
         root_canon <- liftIO $ Directory.canonicalizePath root
         let targets = HIE.makeTargetsAbsolute root_canon targets'
-        cacheDirs <- liftIO $ getCacheDirs (takeFileName root) this_opts
+        uuid <- liftIO UUID.nextRandom
+        cacheDirs <- liftIO $ getCacheDirs (takeFileName root </> show uuid) this_opts
         let dflags'' =
               makeDynFlagsDirsAbsolute compRoot $
               setWorkingDirectory root $
