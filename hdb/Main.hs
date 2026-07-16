@@ -45,6 +45,7 @@ import GHC.Stack.Annotation (annotateCallStackIO)
 import GHC.Utils.Logger (defaultLogActionWithHandles)
 import Development.Debug.Session.Setup (hieDebugRunner)
 import GHC.Debugger.Debuggee (mkCliInterpreterSettings)
+import GHC.Debugger.Session (initUniqSupplyIO)
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -71,6 +72,10 @@ main = do
       config <- getConfig port
       -- the same program invoked with `external-interpreter` serves as the external interpreter
       hdbProgram <- getExecutablePath
+
+      -- See Note [UniqueSupply is process global]
+      initUniqSupplyIO
+
       let servConf = DAPServerConf
             { getDebugRunner = hieDebugRunner
             , hdbProgram
@@ -84,6 +89,10 @@ main = do
           (ack l )
     HdbCLI{..} -> do
         setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
+
+        -- See Note [UniqueSupply is process global]
+        initUniqSupplyIO
+
         l <- mainLogger hdbOpts.verbosity stdout
         cliInterpSettings <- mkCliInterpreterSettings internalInterpreter debuggeeStdin
         let runConf = RunDebuggerSettings
