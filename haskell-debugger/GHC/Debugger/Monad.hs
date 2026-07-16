@@ -54,7 +54,6 @@ import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Context as GHCi
 import GHC.Types.Error
 import GHC.Types.SourceError
-import GHC.Types.Unique.Supply as GHC
 import GHC.Unit.Module.Graph
 import GHC.Unit.State
 import GHC.Unit.Module.ModSummary as GHC
@@ -185,6 +184,14 @@ data RunDebuggerSettings = RunDebuggerSettings
       }
 
 -- | Run a 'Debugger' action on a session constructed by a 'DebugRunner'
+--
+--  INVARIANT: The initUniqSupply has already been initialized.
+--
+--  Users of hdb-as-a-library will have to call `initUniqSupply` at their leisure,
+--  special care needed if they supply any loaded units/modules to us via the DebugRunner,
+--  as those will contain `Unique`s.
+--
+--  See Note [UniqueSupply is process global].
 runDebugger :: LogAction IO DebuggerLog -> DebugRunner Ghc a -> RunDebuggerSettings -> Debugger a -> IO a
 runDebugger l debugRunner conf action = annotateCallStackIO $ do
   debugRunner $ \ rootDir extraGhcArgs loadHomeUnit -> runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit action
@@ -310,9 +317,6 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
       -- Initialise plugins here because the plugin author might already expect this
       -- subsequent call to `getLogger` to be affected by a plugin.
       GHC.initializeSessionPlugins
-
-      GHC.getSessionDynFlags >>= \df -> liftIO $
-        GHC.initUniqSupply (GHC.initialUnique df) (GHC.uniqueIncrement df)
 
       loadHomeUnit
 
@@ -670,6 +674,30 @@ archive). This setting must definitely match the way in which the external
 interpreter was compiled (checked with `hostIsDynamic`, since the external
 interpreter and the debugger, while not necessarily the same process, are the
 same executable). Ditto for `iservConfProfiled` (with `hostIsProfiled`).
+
+Note [UniqueSupply is process global]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The generation of `Unique`s is controlled by two global pointers declared in the
+`ghc` package. The same two pointers are shared by all sessions, since the host
+ghc library is only loaded once.
+
+If the pointers get re-initialized while a session is active, that session might generate
+the same Unique again and we randomly get panics about identifiers out of scope or
+which do not match their expected type and so on.
+
+GHC calls the initialization function in main, with a comment saying it should be done
+before initializing plugins.
+
+The only safe time to initialize is if there are no existing Uniques that are still relevant,
+and since it's also cheap we do it right away in `main`, for the `cli` or `server` commands.
+
+Contrary to ghc itself, this means we do not honor the `initialUnique` and `uniqueIncrement`
+fields of DynFlags, but they seem to be there for testing anyway.
+
+Users of hdb-as-a-library, e.g. using runHDBServer, will have to do the initialization themselves,
+especially if they supply any loaded units/modules to us via the DebugRunner,
+as those will contain `Unique`s.
+
 -}
 --------------------------------------------------------------------------------
 

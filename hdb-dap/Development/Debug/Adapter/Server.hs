@@ -224,6 +224,15 @@ ack l rrr = case rrr.reverseRequestCommand of
       liftLogIO l <& DAPLaunchLog (WithSeverity (T.pack "RunInTerminal was successful") Info)
   _ -> pure ()
 
+-- | Starts a DAP server for haskell debugging.
+--
+--  INVARIANT: The initUniqSupply has already been initialized.
+--
+--  Users of hdb-as-a-library will have to call `initUniqSupply` at their leisure,
+--  special care needed if they supply any loaded units/modules to us via the `DebugRunner`,
+--  as those will contain `Unique`s.
+--
+--  See Note [UniqueSupply is process global].
 runHDBServer :: LogAction IO DAPLog -> DAPServerConf -> IO ()
 runHDBServer l servConf@DAPServerConf{ dapServerConfig = config } = do
   runDAPServerWithLogger (contramap DAPLibraryLog l) config

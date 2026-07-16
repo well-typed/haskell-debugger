@@ -39,6 +39,7 @@ module GHC.Debugger.Session (
   annotateCallStackGhc,
   lookupUnitPackageQualifier,
   fixHomeUnitsDynFlagsForIIDecl, getPgmI,
+  initUniqSupplyIO
   )
   where
 
@@ -102,6 +103,7 @@ import GHC.Types.SourceText (StringLiteral(..), SourceText (..))
 import GHC.Stack.Annotation
 import GHC.Stack (callStack)
 import GHC.Settings (ToolSettings(..))
+import qualified GHC.Types.Unique.Supply as GHC
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -663,6 +665,9 @@ addWay' w dflags0 =
                        (wayUnsetGeneralFlags platform w)
    in dflags3
 
+-- | See Note [ UniqSupply is process global ]
+initUniqSupplyIO :: IO ()
+initUniqSupplyIO = GHC.initUniqSupply 0 1
 
 -- ----------------------------------------------------------------------------
 -- Wrappers around GHC's odd behavior
