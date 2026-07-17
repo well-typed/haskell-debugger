@@ -22,7 +22,7 @@ import GHC.Conc.Sync (labelThread)
 import GHC.IO.Handle
 import qualified Data.Text as T
 import qualified System.Process as P
-import Control.Exception (displayExceptionWithInfo)
+import Control.Exception (displayExceptionWithInfo, ExceptionWithContext (ExceptionWithContext), AsyncException (..))
 import Control.Monad (when)
 import Control.Monad.Except
 import Control.Monad.Trans
@@ -168,7 +168,7 @@ initDebugger l0 servConf interpChoice
         absEntryFile = projectRoot /> entryFile
         daState = DAS{entryFile=absEntryFile,waitForDebuggee = dapdWaitForDebuggee dapd,..}
 
-      registerNewDebugSession sessionId daState $
+      registerNewDebugSession sessionId daState $ map (destroyDebugSessionOnException l) $
         [ \withAdaptor -> do
             -- The info here is already taken into account in debugRunner.
             let GhcInvocation libdir units args = ghcInvocation
@@ -186,6 +186,22 @@ initDebugger l0 servConf interpChoice
         dapdThreads dapd
 
       dapdAfterRegister dapd
+
+destroyDebugSessionOnException :: LogAction IO DAPSessionLog
+  -> ((Adaptor a r () -> IO ()) -> IO ())
+  -> (Adaptor a r () -> IO ())
+  -> IO ()
+destroyDebugSessionOnException l k withAdaptor = do
+  k withAdaptor
+    `catchNoPropagate` \ x@(ExceptionWithContext _ctx e) -> do
+      l <& DAPDebuggerLog (DebuggerSessionLog Debug $ (T.pack $ displayExceptionWithInfo (toException x)))
+      case fromException e of
+        -- TODO: would be better if destroyDebugSession from dap sent a custom exception, so we are sure we don't have to propagate it to the other threads.
+        Just ThreadKilled -> return ()
+        _ -> do
+          withAdaptor $ do
+            sendTerminatedEvent (TerminatedEvent False)
+            safeDestroyDebugSession
 
 initDAPDebuggee
   :: LogAction IO DAPSessionLog
