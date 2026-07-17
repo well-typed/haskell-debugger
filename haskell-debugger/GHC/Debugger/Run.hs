@@ -81,10 +81,11 @@ debugExecution entryFile entry args = do
     evalModule = mkModule (RealUnit (Definite unitIdOfEntryFile))
                                          (moduleName modOfEntryFile)
 
-  logSDoc Logger.Debug $ "Eval Module Context:" <+> ppr evalModule
+  logSDoc Logger.Debug $ "Eval inputs: " <+> text (show (entryFile,entry,args))
+  logSDoc Logger.Debug $ "Eval Module Context:" <+> withPprStyle (PprDump reallyAlwaysQualify) (ppr evalModule) <+> ppr (ms_location modSummaryOfEntryFile) <+> text (ms_hspp_file modSummaryOfEntryFile)
 
   old_context <- GHC.getContext
-  GHC.setContext [GHC.IIModule evalModule]
+  GHC.setContext [IIModule evalModule]
 
   (entryExp, exOpts) <- case entry of
     MainEntry nm -> do
@@ -101,9 +102,17 @@ debugExecution entryFile entry args = do
       -- be "\"some\"" "\"things\"".
       return (fn ++ " " ++ unwords args, GHC.execOptions)
 
+  logSDoc Logger.Debug "Compiled wrapper."
+
   exec_res <- GHC.execStmt entryExp exOpts
-  GHC.setContext old_context -- restore context after running `main`
-  handleExecResult exec_res
+
+  logSDoc Logger.Debug $ "Executed entryExp: " <+> text entryExp
+
+  GHC.setContext old_context
+
+  res <- handleExecResult exec_res
+  logSDoc Logger.Debug $ "Computed EvalResult."
+  pure res
   where
     -- It's not ideal to duplicate these two functions from ghci, but its unclear where they would better live. Perhaps next to compileParsedExprRemote? The issue is run
     mkEvalWrapper :: GhcMonad m => String -> [String] -> m ForeignHValue

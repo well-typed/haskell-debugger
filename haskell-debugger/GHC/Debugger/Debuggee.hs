@@ -25,6 +25,8 @@ import Prelude hiding (mod)
 import Network.Socket hiding (Debug)
 import System.Process.Internals (mkProcessHandle)
 import Text.Read (readMaybe)
+import System.Environment (getExecutablePath)
+import Data.Text (Text)
 
 import GHC
 import GHC.Driver.Env as GHC
@@ -48,7 +50,6 @@ import GHC.Platform.Ways
 import GHC.Data.FastString.Env (emptyFsEnv)
 #endif
 import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything which uses `Debugger`
-import System.Environment (getExecutablePath)
 
 data InterpreterSettings = InterpreterSettings
       { interpreterFlags :: DynFlags -> DynFlags
@@ -212,6 +213,7 @@ mkCliInterpreterSettings internalInterpreter debuggeeStdin = do
 data DebuggerLog
   = DebuggerLog !Logger.Severity !DebuggerMessage
   | GHCLog !GHC.LogFlags !MessageClass !SrcSpan !SDoc
+  | DebuggerSessionLog !Logger.Severity !Text
 
 -- | A debugger log message
 data DebuggerMessage
