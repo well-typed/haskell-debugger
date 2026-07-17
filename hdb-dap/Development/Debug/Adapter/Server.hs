@@ -15,6 +15,8 @@ import Data.Maybe
 import Text.Read
 import Control.Monad
 import Control.Monad.IO.Class
+import Control.Concurrent (ThreadId, myThreadId)
+import GHC.Conc.Sync (threadLabel)
 
 import DAP
 
@@ -40,6 +42,7 @@ import Development.Debug.Adapter
 
 import qualified GHC.Utils.Logger as GHC
 import GHC.Debugger.Debuggee (DebuggerLog(..))
+import qualified GHC.Plugins as GHC
 
 
 -------------------------------------------------------------------------
@@ -143,7 +146,7 @@ talk l servConf prefer_internal_interpreter = \ case
     let runInTerminal = fromMaybe False $ supportsRunInTerminalRequest =<< clientCaps
 #endif
 
-    initDebugger (contramap DAPSessionLog l) servConf
+    initDebugger (cmapM (\ (sId,x) -> DAPSessionLog sId <$> myThreadId <*> pure x) l) servConf
       InterpreterChoice {runInTerminal, internal = prefer_internal_interpreter}
       launch_args
 
@@ -244,40 +247,64 @@ runHDBServer l servConf@DAPServerConf{ dapServerConfig = config } = do
 --------------------------------------------------------------------------------
 
 data DAPLog
-  = DAPSessionLog DAPSessionLog
+  = DAPSessionLog !SessionId !ThreadId DAPSessionLog
   | DAPLaunchLog (WithSeverity T.Text)
   | DAPLibraryLog DAP.DAPLog
 
 logSessionLog :: Show a => LogAction IO Text -> Severity -> WithSeverity a -> IO ()
 logSessionLog l threshold (WithSeverity msg sev)
       | sev >= threshold =
-        cmapM renderWithTimestamp l <& (renderSeverity sev <> T.pack (show msg))
+        l <& (renderSeverity sev <> T.pack (show msg))
       | otherwise = pure ()
 
 logDebuggerLog :: GHC.LogAction -> LogAction IO Text -> Severity -> DebuggerLog -> IO ()
 logDebuggerLog logGhcLog l threshold = \case
-      DebuggerLog sev msg
-        | sev >= threshold ->
-          cmapM renderWithTimestamp l <&
+      DebuggerLog sev msg ->
+        when (sev >= threshold) $
+          l <&
             (renderSeverity sev <> T.pack (show msg))
       GHCLog logflags msg_class srcSpan msg ->
         logGhcLog logflags msg_class srcSpan msg
-      _ -> pure ()
+      DebuggerSessionLog sev msg ->
+        when (sev >= threshold) $
+          l <&
+            (renderSeverity sev <> T.pack (show msg))
 
 defaultLog :: LogAction IO Text -> Severity -> WithSeverity Text -> IO ()
 defaultLog l threshold (WithSeverity msg sev)
       | sev >= threshold =
-        cmapM renderWithTimestamp l <& (renderSeverity sev <> msg)
+        l <& (renderSeverity sev <> msg)
       | otherwise = pure ()
+
+renderSessionId :: Text -> Text
+renderSessionId sId = "[SESSID=" <> sId <> "]"
+
+renderThreadLabel :: ThreadId -> IO Text
+renderThreadLabel thId = do
+  let dropThreadId t = fromMaybe t $ T.stripPrefix "ThreadId " t
+  lbl <- maybe (dropThreadId $ T.show thId) T.pack <$> threadLabel thId
+  pure $ "[THREAD=" <> lbl <> "]"
+
+renderWithDAPPrefix :: Text -> ThreadId -> Text -> IO Text
+renderWithDAPPrefix sessionId thId msg = do
+  lbl <- renderThreadLabel thId
+  renderWithTimestamp (renderSessionId sessionId <> lbl <> msg)
 
 -- | Main log action for the HDB DAP server. Takes a log action for ghc messages, a
 -- Text log action for everything else, and a severity threshold.
 logDAPLog :: GHC.LogAction -> LogAction IO Text -> Severity -> LogAction IO DAPLog
 logDAPLog logGhcLog l threshold = LogAction $ \case
-      DAPSessionLog (DAPSessionSetupLog sessionLog)       -> logSessionLog l threshold sessionLog
-      DAPSessionLog (DAPDebuggerLog debuggerLog)          -> logDebuggerLog logGhcLog l threshold debuggerLog
-      DAPSessionLog (RunProxyServerLog sev_msg) -> defaultLog l threshold sev_msg
-      DAPLaunchLog sev_msg      -> defaultLog l threshold sev_msg
+      DAPSessionLog sessionId threadId msg -> do
+        let l1 = cmapM (renderWithDAPPrefix sessionId threadId) l
+            logGhcLog1 f mc sp sdoc = do
+              prefix <- renderWithDAPPrefix sessionId threadId ""
+              logGhcLog f mc sp (GHC.text (T.unpack prefix) GHC.<> sdoc)
+
+        case msg of
+          (DAPSessionSetupLog sessionLog)       -> logSessionLog l1 threshold sessionLog
+          (DAPDebuggerLog debuggerLog)          -> logDebuggerLog logGhcLog1 l1 threshold debuggerLog
+          (RunProxyServerLog sev_msg) -> defaultLog l1 threshold sev_msg
+      DAPLaunchLog sev_msg      -> defaultLog (cmapM renderWithTimestamp l) threshold sev_msg
       DAPLibraryLog t | convert t.severity >= threshold ->
         l <& DAP.renderDAPLog t
         | otherwise -> pure ()

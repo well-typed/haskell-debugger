@@ -160,7 +160,7 @@ internalInTerminalDAPD l hdbProg = do
 --------------------------------------------------------------------------------
 -- * Logging
 --------------------------------------------------------------------------------
-
+type SessionId = T.Text
 data DAPSessionLog
   = DAPSessionSetupLog (WithSeverity SessionSetupLog)
   | DAPDebuggerLog Debugger.DebuggerLog

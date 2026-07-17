@@ -23,6 +23,7 @@ import GHC.IO.Handle
 import qualified Data.Text as T
 import qualified System.Process as P
 import Control.Exception (displayExceptionWithInfo)
+import Control.Monad (when)
 import Control.Monad.Except
 import Control.Monad.Trans
 import Data.Function
@@ -99,9 +100,9 @@ data InterpreterChoice = InterpreterChoice { runInTerminal :: Bool, internal :: 
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
-initDebugger :: LogAction IO DAPSessionLog -> DAPServerConf -> InterpreterChoice
+initDebugger :: LogAction IO (T.Text,DAPSessionLog) -> DAPServerConf -> InterpreterChoice
              -> LaunchArgs -> DebugAdaptor ()
-initDebugger l servConf interpChoice
+initDebugger l0 servConf interpChoice
                LaunchArgs{ __sessionId
                          , projectRoot = givenRoot
                          , entryFile = entryFileMaybe
@@ -118,6 +119,9 @@ initDebugger l servConf interpChoice
     Just ef -> pure ef
 
   projectRoot <- liftIO $ mkAbsolute <$> maybe getCurrentDirectory makeAbsolute givenRoot
+
+  sessionId <- liftIO $ maybe (T.show <$> UUID.nextRandom) (pure . T.pack) __sessionId
+  let l = contramap (sessionId,) l0
 
   -- Create a pipe to which messages to send to the DAP console are written and read.
   -- todo: This could just be a Haskell channel now...
@@ -163,9 +167,6 @@ initDebugger l servConf interpChoice
           }
         absEntryFile = projectRoot /> entryFile
         daState = DAS{entryFile=absEntryFile,waitForDebuggee = dapdWaitForDebuggee dapd,..}
-
-      -- TODO: is nextRandom threadsafe?
-      sessionId <- liftIO $ maybe (("debug-session:" <>) . T.show <$> UUID.nextRandom) (pure . T.pack) __sessionId
 
       registerNewDebugSession sessionId daState $
         [ \withAdaptor -> do
@@ -217,6 +218,9 @@ debuggerThread :: LogAction IO Debugger.DebuggerLog
                -> MVar D.Response -- ^ Write reponses
                -> IO ()
 debuggerThread l debugRunner runConf requests replies = do
+  liftIO $ do
+    tid <- myThreadId
+    labelThread tid "Main Debugger Thread (before runDebugger)"
   Debugger.runDebugger l debugRunner runConf $ do
     liftIO $ do
       tid <- myThreadId
@@ -265,10 +269,11 @@ createDebuggerLogger l dapLogger writeDAPOutput = do
     contramap DAPDebuggerLog l <>
     -- (2) and (3) (log relevant output to DAP handle)
       LogAction (\case
-        Debugger.DebuggerLog sev msg
-          | sev >= Info -> do
+        Debugger.DebuggerLog sev msg ->
+          when (sev >= Info) $
             dapLogger <& T.pack (show msg)
         Debugger.GHCLog logflags msg_class srcSpan msg ->
           defaultLogActionWithHandles writeDAPOutput writeDAPOutput logflags msg_class srcSpan msg
-        _ -> pure () -- don't log other messages, already logged to (1)
+        -- don't log other messages, already logged to (1)
+        Debugger.DebuggerSessionLog{} -> pure ()
         )

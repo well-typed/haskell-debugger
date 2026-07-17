@@ -33,6 +33,7 @@ import System.Posix.Signals
 #endif
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified GHC.Conc.Sync as C
 
 import GHC
 import GHC.Data.StringBuffer
@@ -79,6 +80,8 @@ import GHC.Unit.Home.Graph
 import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything which uses `Debugger`
 import System.Directory (getCurrentDirectory)
 import GHC.Debugger.Debuggee
+import GHC.Plugins (HasCallStack)
+import Data.Bifunctor
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -244,8 +247,10 @@ withProjectDebugSession ProjectDebugSpec{ghcInvocation = ghcI, ..} k = do
     -- Discover the user-given flags and targets
     flagsAndTargets <- parseHomeUnitArguments absEntryFile componentDir units ghcInvocation dflags2 rootDir
 
+
+    let setVerbosity dflags = dflags {verbosity = verbosity dflags2}
     -- Setup HomeUnitGraph with debugee and interactiveGhcDebugger units
-    setupHomeUnitGraph (NonEmpty.toList flagsAndTargets)
+    setupHomeUnitGraph (map (first setVerbosity) $ NonEmpty.toList flagsAndTargets)
 
     debugee_mod_graph <- doDownsweep Nothing
 
@@ -318,7 +323,7 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
       -- subsequent call to `getLogger` to be affected by a plugin.
       GHC.initializeSessionPlugins
 
-      loadHomeUnit
+      preservingThreadLabel loadHomeUnit
 
       fixHomeUnitsDynFlagsForIIDecl
 
@@ -333,7 +338,9 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
 #ifndef DEBUG_WITH_GHC
       -- Find haskell-debugger-view in (deps of) home units, or load one from
       -- in-memory sources.
-      (hdv_uid, loadedBuiltinModNames) <- findOrLoadHaskellDebuggerView l buildWays
+      (hdv_uid, loadedBuiltinModNames) <- do
+        preservingThreadLabel $
+          findOrLoadHaskellDebuggerView l buildWays
 #else
       let hdv_uid = hsDebuggerViewInMemoryUnitId
       let loadedBuiltinModNames = [] :: [ModuleName]
@@ -394,6 +401,18 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
             (if loadedBuiltinModNames == []
               then Nothing
               else Just hdv_uid)
+
+preservingThreadLabel :: HasCallStack => Ghc a -> Ghc a
+preservingThreadLabel m = do
+  thId <- liftIO $ myThreadId
+  mlbl <- liftIO $ C.threadLabel thId
+  case mlbl of
+    Nothing -> m
+    Just lbl -> do
+      annotateCallStackGhc $ do
+        x <- m
+        liftIO $ C.labelThread thId lbl
+        pure x
 
 
 findOrLoadHaskellDebuggerView :: LogAction IO DebuggerLog
