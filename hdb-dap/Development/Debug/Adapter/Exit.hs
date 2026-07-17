@@ -22,8 +22,6 @@
 -- * @'destroyDebugSession'@ kills all threads started for this session with @'registerNewDebugSession'@.
 module Development.Debug.Adapter.Exit where
 
-import Control.Monad.Except
-import Control.Monad.IO.Class
 import DAP
 import Development.Debug.Adapter
 
@@ -43,5 +41,5 @@ commandDisconnect :: DebugAdaptor ()
 commandDisconnect = do
   -- kills debugger GHC session (which handles stopping the debuggee ext-interp too)
   -- ignore error if session has already been destroyed (e.g. client sends disconnect after terminate)
-  destroyDebugSession `catchError` \ e -> liftIO $ putStrLn ("terminateSessionCleanly: ignoring missing session: " ++ show e)
+  safeDestroyDebugSession
   sendDisconnectResponse
