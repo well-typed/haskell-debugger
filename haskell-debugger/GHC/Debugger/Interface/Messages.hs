@@ -20,17 +20,30 @@ import qualified GHC.Stack as Stack
 import System.FilePath (isAbsolute, (</>), normalise)
 import Control.Exception (assert)
 
-newtype AbsFilePath = MkAbsFilePath FilePath
-  deriving newtype Show
+{-
+Note [Paths should be made absolute at the source]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We get `FilePath`s from a few different sources, and those sources do not always agree on what the paths should be relative to.
+
+To avoid mistakes in interpreting relative paths, they should be made absolute as soon as we get them.
+
+At the time of writing (25/07/2026), we handle paths from:
+- CLI: relative to getCurrentDirectory.
+- GHC: relative to getCurrentDirectory.
+- DAP: relative to projectRoot.
+- HIE: relative to projectRoot/workingDir, these are made absolute when creating DynFlags.
+-}
+
+-- | See Note [Paths should be made absolute at the source]
+newtype AbsFilePath = MkAbsFilePath {unAbs :: FilePath}
+  deriving newtype (Eq,Show)
 
 mkAbsolute :: FilePath -> AbsFilePath
-mkAbsolute fp = assert (isAbsolute fp) $ MkAbsFilePath fp
+mkAbsolute fp = assert (null fp || isAbsolute fp) $ MkAbsFilePath fp
 
 (/>) :: AbsFilePath -> FilePath -> AbsFilePath
-MkAbsFilePath fp /> fp' = MkAbsFilePath $ fp </> fp'
-
-unAbs :: AbsFilePath -> FilePath
-unAbs (MkAbsFilePath fp) = normalise fp
+MkAbsFilePath fp /> fp' = MkAbsFilePath $ normalise $ fp </> fp'
 
 --------------------------------------------------------------------------------
 -- Commands
@@ -200,8 +213,9 @@ scopeToVarRef = \case
 
 -- | A source span type for the interface. Like 'RealSrcSpan'.
 data SourceSpan = SourceSpan
-      { file :: !FilePath
-      -- ^ Path to file where this span is located
+      { file :: !AbsFilePath
+      -- ^ Path to file where this span is located.
+      -- See Note [Paths should be made absolute at the source]
       , startLine :: {-# UNPACK #-} !Int
       -- ^ RealSrcSpan start line
       , endLine :: {-# UNPACK #-} !Int
@@ -220,17 +234,18 @@ data SourceSpan = SourceSpan
 -- Use this only as a last resort if no other source span can be provided.
 unhelpfulSourceSpan :: SourceSpan
 unhelpfulSourceSpan = SourceSpan
-  { file = ""
+  { file = mkAbsolute ""
   , startLine = 0
   , endLine = 0
   , startCol = 0
   , endCol = 0
   }
 
-srcLocToSourceSpan :: Stack.SrcLoc -> SourceSpan
-srcLocToSourceSpan srcLoc =
+-- | See Note [Paths should be made absolute at the source]
+srcLocToSourceSpan :: AbsFilePath -> Stack.SrcLoc -> SourceSpan
+srcLocToSourceSpan prefix srcLoc =
   SourceSpan
-    { file = Stack.srcLocFile srcLoc
+    { file = prefix /> Stack.srcLocFile srcLoc
     , startLine = Stack.srcLocStartLine srcLoc
     , endLine = Stack.srcLocEndLine srcLoc
     , startCol = Stack.srcLocStartCol srcLoc

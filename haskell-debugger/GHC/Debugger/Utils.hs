@@ -53,9 +53,10 @@ forwardHandleToLogger read_h logger = do
 --------------------------------------------------------------------------------
 
 -- | Convert a GHC's src span into an interface one
-realSrcSpanToSourceSpan :: RealSrcSpan -> SourceSpan
-realSrcSpanToSourceSpan ss = SourceSpan
-  { file = unpackFS $ srcSpanFile ss
+--   See Note [Paths should be made absolute at the source]
+realSrcSpanToSourceSpan :: AbsFilePath -> RealSrcSpan -> SourceSpan
+realSrcSpanToSourceSpan prefix ss = SourceSpan
+  { file = prefix /> unpackFS (srcSpanFile ss)
   , startLine = srcSpanStartLine ss
   , startCol = srcSpanStartCol ss
   , endLine = srcSpanEndLine ss
@@ -79,11 +80,12 @@ display x = do
 --
 -- - @hdb/Development/Debug/Adapter/Init.hs:(188,15)-(197,48)@
 -- - @hdb/Development/Debug/Adapter/Proxy.hs:93:34-37@
-srcSpanStringToSourceSpan :: String -> Either String SourceSpan
-srcSpanStringToSourceSpan s = parseOnly pSrcSpan (T.pack s)
+-- See Note [Paths should be made absolute at the source]
+srcSpanStringToSourceSpan :: AbsFilePath -> String -> Either String SourceSpan
+srcSpanStringToSourceSpan prefix s = parseOnly pSrcSpan (T.pack s)
   where
     pSrcSpan = do
-      fp <- pFile <* char ':'
+      fp <- (prefix />) <$> pFile <* char ':'
       pParenStyle fp <|> pColonStyle fp
 
     -- file:(l1,c1)-(l2,c2)

@@ -31,6 +31,7 @@ import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import Data.Function
+import System.Directory (getCurrentDirectory)
 
 --------------------------------------------------------------------------------
 -- * Breakpoints
@@ -61,7 +62,8 @@ getBreakpointsAt ModuleBreak{path, lineNum, columnNum} = do
       return Nothing
     Right modl -> do
       mbfnd <- findBreakpoint modl lineNum columnNum
-      return $ realSrcSpanToSourceSpan . snd <$> mbfnd
+      cwd <- mkAbsolute <$> liftIO getCurrentDirectory
+      return $ realSrcSpanToSourceSpan cwd . snd <$> mbfnd
 getBreakpointsAt _ = error "unexpected getbreakpoints without ModuleBreak"
 
 -- | Set a breakpoint in this session
@@ -87,9 +89,10 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status action = do
                         , bpInfoKind = ModuleBreakpointKind
                         , bpInfoAction = action}
           (changed, ibis) <- registerBreakpoint bid binfo
+          cwd <- mkAbsolute <$> liftIO getCurrentDirectory
           return $ BreakFound
             { changed = changed
-            , sourceSpan = realSrcSpanToSourceSpan spn
+            , sourceSpan = realSrcSpanToSourceSpan cwd spn
             , breakId = ibis
             }
 setBreakpoint FunctionBreak{function} bp_status action = do
@@ -109,9 +112,10 @@ setBreakpoint FunctionBreak{function} bp_status action = do
                         , bpInfoKind = FunctionBreakpointKind
                         , bpInfoAction = action}
             (changed, ibis) <- registerBreakpoint bid binfo
+            cwd <- mkAbsolute <$> liftIO getCurrentDirectory
             return $ BreakFound
               { changed = changed
-              , sourceSpan = realSrcSpanToSourceSpan spn
+              , sourceSpan = realSrcSpanToSourceSpan cwd spn
               , breakId = ibis
               }
       case maybe [] (findBreakForBind fun_str . imodBreaks_modBreaks) modBreaks of

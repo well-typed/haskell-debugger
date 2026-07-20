@@ -16,7 +16,7 @@ import GHC
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
   ( ExceptionInfo(..)
-  , RemoteThreadId(..)
+  , RemoteThreadId(..), AbsFilePath, (/>), mkAbsolute
   )
 import GHC.Debugger.Runtime.Thread
 import GHCi.RemoteTypes
@@ -31,6 +31,8 @@ import GHC.Utils.Outputable as Ppr
 import qualified Colog.Core as Logger
 #endif
 import Control.Exception (SomeException)
+import System.Directory (getCurrentDirectory)
+import Control.Monad.IO.Class (MonadIO(..))
 
 -- | Retrieve structured exception information for the requested thread when
 -- the debugger is currently stopped on an exception.
@@ -77,22 +79,24 @@ exceptionInfoFromContext excRef = do
 -- debuggee into our externally facing 'ExceptionInfo'.
 exceptionInfoParser :: TermParser ExceptionInfo
 exceptionInfoParser = do
+  cwd <- liftIO $ mkAbsolute <$> getCurrentDirectory
   ExceptionInfo
     <$> subtermWith 0 stringParser
     <*> subtermWith 1 stringParser
     <*> subtermWith 2 stringParser
     <*> subtermWith 3 (maybeParser stringParser)
-    <*> subtermWith 4 (maybeParser exceptionLocationTupleParser)
+    <*> subtermWith 4 (maybeParser $ exceptionLocationTupleParser cwd)
     <*> subtermWith 5 (parseList exceptionInfoParser)
   where
     -- Parsed from @(String, Int, Int)@.
-    exceptionLocationTupleParser :: TermParser SourceSpan
-    exceptionLocationTupleParser = do
+    -- See Note [Paths should be made absolute at the source]
+    exceptionLocationTupleParser :: AbsFilePath -> TermParser SourceSpan
+    exceptionLocationTupleParser prefix = do
       locFile <- subtermWith 0 stringParser
       srcLine <- subtermWith 1 intParser
       srcCol <- subtermWith 2 intParser
       pure SourceSpan
-        { file = locFile
+        { file = prefix /> locFile
         , startLine = srcLine
         , startCol = srcCol
         , endLine = srcLine

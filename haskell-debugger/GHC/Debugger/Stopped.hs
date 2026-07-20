@@ -35,6 +35,7 @@ import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
 import GHC.Debugger.Utils
 import qualified Colog.Core as Logger
+import System.Directory (getCurrentDirectory)
 
 {-
 Note [Don't crash if not stopped]
@@ -115,6 +116,7 @@ getStacktrace req_tid = do
 
   hsc_env <- getSession
   let hug = hsc_HUG hsc_env
+  cwd <- mkAbsolute <$> liftIO getCurrentDirectory
   decoded_frames <- catMaybes <$> case m_f_tid of
     Nothing -> pure []
     Just f_tid -> do
@@ -131,18 +133,18 @@ getStacktrace req_tid = do
           modl_str  <- display modl
           return $ Just DbgStackFrame
             { name = modl_str ++ "." ++ decl
-            , sourceSpan = realSrcSpanToSourceSpan $ realSrcSpan srcSpan
+            , sourceSpan = realSrcSpanToSourceSpan cwd $ realSrcSpan srcSpan
             , breakId = Just ibi
             }
         StackFrameIPEInfo ipe -> do
-          case srcSpanStringToSourceSpan (ipLoc ipe) of
+          case srcSpanStringToSourceSpan cwd (ipLoc ipe) of
             Left err -> do
               -- Couldn't parse. The srcLoc may be invalid so just keep this as info, not warning.
               logSDoc Logger.Info $
                 text "Couldn't parse StackEntry srcLoc \"" Ppr.<> text (ipLoc ipe)
                                                            Ppr.<> text "\":" <+> text err
               return Nothing
-            Right sourceSpan ->
+            Right sourceSpan -> do
               return $ Just DbgStackFrame
                 { name = ipMod ipe ++ "." ++ ipLabel ipe
                 , sourceSpan = sourceSpan
@@ -151,7 +153,7 @@ getStacktrace req_tid = do
         StackFrameAnnotation srcLoc ann -> do
             return $ Just DbgStackFrame
               { name = ann
-              , sourceSpan = maybe unhelpfulSourceSpan srcLocToSourceSpan srcLoc
+              , sourceSpan = maybe unhelpfulSourceSpan (srcLocToSourceSpan cwd) srcLoc
               , breakId = Nothing
               }
 
@@ -162,7 +164,7 @@ getStacktrace req_tid = do
       return Nothing
     r:_ -> do
       let resumeSpanR = GHC.resumeSpan r
-          mRealSpan   = realSrcSpanToSourceSpan <$> srcSpanToRealSrcSpan resumeSpanR
+          mRealSpan   = realSrcSpanToSourceSpan cwd <$> srcSpanToRealSrcSpan resumeSpanR
           firstSpan   = DbgStackFrame.sourceSpan <$> listToMaybe decoded_frames
       r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
       if r_tid /= req_tid then

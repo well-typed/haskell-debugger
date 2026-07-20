@@ -11,12 +11,11 @@ import qualified Data.IntSet as IS
 import qualified Data.Map as Map
 import qualified Data.IntMap as IM
 import qualified Data.Text as T
-import System.FilePath
 
 import DAP
 import qualified GHC
 import qualified GHC.Debugger.Interface.Messages as D (Command, Response, RemoteThreadId, VariableReference)
-import GHC.Debugger.Interface.Messages (AbsFilePath, unAbs, (/>))
+import GHC.Debugger.Interface.Messages (AbsFilePath, unAbs)
 
 type DebugAdaptor = Adaptor DebugAdaptorState Request
 type DebugAdaptorCont = Adaptor DebugAdaptorState ()
@@ -66,13 +65,10 @@ safeDestroyDebugSession = void $ do
 -- | Transform the given file into a DAP 'Source'. The file may be modified:
 --
 --    * if the given filepath is absolute, it's returned unchanged
---    * if it is relative to the project root, it's returned absolute (with the project root prepended)
-fileToSource :: FilePath -> DebugAdaptor Source
+--    * if it is relative it's made absolute by prepending the current directory.
+fileToSource :: AbsFilePath -> DebugAdaptor Source
 fileToSource file = do
-  root <- projectRoot <$> getDebugSession
-  fullPath <- if isAbsolute file
-     then return file
-     else return (unAbs $ root /> file)
+  let fullPath = unAbs file
   return defaultSource{sourcePath = Just (T.pack fullPath)}
 
 -- | Generate fresh Int identifier.

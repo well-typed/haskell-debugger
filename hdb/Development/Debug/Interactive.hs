@@ -205,7 +205,7 @@ showVarInfo VarInfo{..} = unwords [varName, ":", varType, "=", varValue]
 
 renderSourceSpan :: SourceSpan -> String
 renderSourceSpan SourceSpan{..} =
-  file ++ ":" ++ show startLine ++ ":" ++ show startCol
+  unAbs file ++ ":" ++ show startLine ++ ":" ++ show startCol
 
 renderExceptionInfo :: ExceptionInfo -> String
 renderExceptionInfo = unlines . go 0

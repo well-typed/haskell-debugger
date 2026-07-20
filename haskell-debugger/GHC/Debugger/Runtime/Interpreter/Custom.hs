@@ -32,7 +32,7 @@ import qualified GHC.Exts.Heap as Heap
 import qualified GHC.Stack as Stack
 import GHC.Unit.Module
 import Control.Exception
-import GHC.Debugger.Interface.Messages (SourceSpan (..), ExceptionInfo (..))
+import GHC.Debugger.Interface.Messages (SourceSpan (..), ExceptionInfo (..), AbsFilePath (unAbs), mkAbsolute)
 import Control.Exception.Context
 import Data.Typeable
 #if MIN_VERSION_ghc(9,15,0)
@@ -290,14 +290,14 @@ instance Bin.Binary StackFrameInfo
 instance Bin.Binary Stack.SrcLoc
 instance Bin.Binary SourceSpan where
   put SourceSpan{..} = do
-    Bin.put file
+    Bin.put (unAbs file)
     Bin.put startLine
     Bin.put endLine
     Bin.put startCol
     Bin.put endCol
 
   get = do
-    file <- Bin.get
+    file <- mkAbsolute <$> Bin.get
     startLine <- Bin.get
     endLine <- Bin.get
     startCol <- Bin.get
