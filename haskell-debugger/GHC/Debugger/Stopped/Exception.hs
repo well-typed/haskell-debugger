@@ -23,12 +23,19 @@ import GHCi.RemoteTypes
 #if MIN_VERSION_ghc(9,15,0)
 import qualified GHC.Debugger.Runtime.Interpreter as Debuggee
 #else
+import System.Directory (getCurrentDirectory)
 import GHC.Builtin.Types (anyTy)
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import GHC.Debugger.Runtime.Term.Parser
 import GHC.Debugger.Interface.Messages (SourceSpan(..))
 import GHC.Utils.Outputable as Ppr
 import qualified Colog.Core as Logger
+import GHC.Debugger.Interface.Messages
+  ( AbsFilePath
+  , (/>)
+  , mkAbsolute
+  )
+import Control.Monad.IO.Class
 #endif
 import Control.Exception (SomeException)
 
@@ -77,22 +84,24 @@ exceptionInfoFromContext excRef = do
 -- debuggee into our externally facing 'ExceptionInfo'.
 exceptionInfoParser :: TermParser ExceptionInfo
 exceptionInfoParser = do
+  cwd <- liftIO $ mkAbsolute <$> getCurrentDirectory
   ExceptionInfo
     <$> subtermWith 0 stringParser
     <*> subtermWith 1 stringParser
     <*> subtermWith 2 stringParser
     <*> subtermWith 3 (maybeParser stringParser)
-    <*> subtermWith 4 (maybeParser exceptionLocationTupleParser)
+    <*> subtermWith 4 (maybeParser $ exceptionLocationTupleParser cwd)
     <*> subtermWith 5 (parseList exceptionInfoParser)
   where
     -- Parsed from @(String, Int, Int)@.
-    exceptionLocationTupleParser :: TermParser SourceSpan
-    exceptionLocationTupleParser = do
+    -- See Note [Paths should be made absolute at the source]
+    exceptionLocationTupleParser :: AbsFilePath -> TermParser SourceSpan
+    exceptionLocationTupleParser prefix = do
       locFile <- subtermWith 0 stringParser
       srcLine <- subtermWith 1 intParser
       srcCol <- subtermWith 2 intParser
       pure SourceSpan
-        { file = locFile
+        { file = prefix /> locFile
         , startLine = srcLine
         , startCol = srcCol
         , endLine = srcLine

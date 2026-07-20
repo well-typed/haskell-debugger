@@ -32,9 +32,10 @@ import qualified GHC.Exts.Heap as Heap
 import qualified GHC.Stack as Stack
 import GHC.Unit.Module
 import Control.Exception
-import GHC.Debugger.Interface.Messages (SourceSpan (..), ExceptionInfo (..))
+import GHC.Debugger.Interface.Messages (SourceSpan (..), ExceptionInfo (..), AbsFilePath (unAbs), mkAbsolute)
 import Control.Exception.Context
 import Data.Typeable
+import System.Directory (getCurrentDirectory)
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Interface.Messages (srcLocToSourceSpan)
 import Data.Maybe
@@ -99,7 +100,8 @@ runDbgInterpCmd = \case
 #endif
   CollectExceptionInfo excRef -> do
     exc  <- localRef excRef
-    let info = exceptionInfo exc
+    cwd <- mkAbsolute <$> getCurrentDirectory
+    let info = exceptionInfo cwd exc
     return info
 
 
@@ -207,8 +209,8 @@ lookupBCOBreakpoint Heap.BCOClosure{..}
     brk_info_ix_lo   = index_at 5#
 lookupBCOBreakpoint _ = pure Nothing
 
-exceptionInfo :: SomeException -> ExceptionInfo
-exceptionInfo se'@(SomeException exc) =
+exceptionInfo :: AbsFilePath -> SomeException -> ExceptionInfo
+exceptionInfo cwd se'@(SomeException exc) =
     ExceptionInfo
        { exceptionInfoTypeName = simpleTypeName
        , exceptionInfoFullTypeName = fullTypeName
@@ -221,7 +223,7 @@ exceptionInfo se'@(SomeException exc) =
     ctx = someExceptionContext se'
     rendered = displayExceptionContext ctx
     whileHandling = getExceptionAnnotations ctx
-    innerNodes = map (exceptionInfo . unwrap) whileHandling
+    innerNodes = map (exceptionInfo cwd . unwrap) whileHandling
     simpleTypeName = tyConName tc
     modulePrefix = case tyConModule tc of
       mdl | null mdl -> ""
@@ -238,7 +240,7 @@ exceptionInfo se'@(SomeException exc) =
 #if MIN_VERSION_ghc(9,15,0)
     exceptionContextLocation =
       let fromCallStack cs = case listToMaybe (getCallStack cs) of
-            Just (_, loc) -> Just (srcLocToSourceSpan loc)
+            Just (_, loc) -> Just (srcLocToSourceSpan cwd loc)
             Nothing       -> Nothing
           bts :: [Backtraces]
           bts = getExceptionAnnotations ctx
@@ -290,14 +292,14 @@ instance Bin.Binary StackFrameInfo
 instance Bin.Binary Stack.SrcLoc
 instance Bin.Binary SourceSpan where
   put SourceSpan{..} = do
-    Bin.put file
+    Bin.put (unAbs file)
     Bin.put startLine
     Bin.put endLine
     Bin.put startCol
     Bin.put endCol
 
   get = do
-    file <- Bin.get
+    file <- mkAbsolute <$> Bin.get
     startLine <- Bin.get
     endLine <- Bin.get
     startCol <- Bin.get
