@@ -19,6 +19,7 @@ import GHC.Data.Maybe
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Env
 import GHC.Driver.Ppr as GHC
+import GHC.Unit.Module.Graph as GHC
 import GHC.Runtime.Interpreter
 import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Utils.Error (logOutput)
@@ -60,7 +61,7 @@ getBreakpointsAt ModuleBreak{path, lineNum, columnNum} = do
       logSDoc Logger.Warning e
       return Nothing
     Right modl -> do
-      mbfnd <- findBreakpoint modl lineNum columnNum
+      mbfnd <- findBreakpoint (GHC.moduleNodeInfoModule modl) lineNum columnNum
       return $ realSrcSpanToSourceSpan . snd <$> mbfnd
 getBreakpointsAt _ = error "unexpected getbreakpoints without ModuleBreak"
 
@@ -77,10 +78,10 @@ setBreakpoint ModuleBreak{path, lineNum, columnNum} bp_status action = do
       logSDoc Logger.Warning e
       return BreakNotFound
     Right modl -> do
-      findBreakpoint modl lineNum columnNum >>= \case
+      findBreakpoint (GHC.moduleNodeInfoModule modl) lineNum columnNum >>= \case
         Nothing -> return BreakNotFound
         Just (bix, spn) -> do
-          let bid = BreakpointId { bi_tick_mod = ms_mod modl
+          let bid = BreakpointId { bi_tick_mod = GHC.moduleNodeInfoModule modl
                                  , bi_tick_index = bix }
               binfo = BreakpointInfo
                         { bpInfoStatus = bp_status
@@ -196,7 +197,7 @@ getActiveBreakpoints mfile = do
           map fst <$> filterM (\(ibi, info)  -> do
             ibi_occ_mod <- getBreakSourceMod ibi <$> readIModBreaks hug ibi & liftIO
             assert (bpInfoStatus info /= BreakpointDisabled) $
-              return (ibi_occ_mod == ms_mod ms)
+              return (ibi_occ_mod == GHC.moduleNodeInfoModule ms)
             ) (BM.toList bm)
         Left e -> do
           logSDoc Logger.Warning e
@@ -273,7 +274,7 @@ parseQC a ('{':xs)     = Literal (reverse a) : unQC [] xs
 parseQC a (x:xs)       = parseQC (x:a) xs
 
 -- | Get a 'ModSummary' of a loaded module given its 'FilePath'
-getModuleByPath :: AbsFilePath -> Debugger (Either SDoc ModSummary)
+getModuleByPath :: AbsFilePath -> Debugger (Either SDoc GHC.ModuleNodeInfo)
 getModuleByPath path = do
   -- TODO (bytecode libraries): getAllLoadedModules skips any ModuleNodeFixed, and only includes modules from home units.
   -- get all loaded modules every time as the loaded modules may have changed
@@ -285,16 +286,16 @@ getModuleByPath path = do
                $$ text "Loaded modules:"
                $$ vcat (map (text . unAbs . fst) lms)
                $$ text "Perhaps you've set a breakpoint on a module that isn't loaded into the session?"
-    xs -> Left $ text "Too many modules (" <> ppr (map snd xs) <> text ") matched" <+> text (unAbs path)
+    xs -> Left $ text "Too many modules (" <> ppr (map (GHC.moduleNodeInfoModule . snd) xs) <> text ") matched" <+> text (unAbs path)
               <> text ". Please report a bug at https://github.com/well-typed/haskell-debugger."
 
 -- | Find a 'BreakpointId' index and its span from a module + line + column.
 --
 -- Used by 'setBreakpoints' and 'GetBreakpointsAt' requests
-findBreakpoint :: ModSummary {-^ module -} -> Int {-^ line num -} -> Maybe Int {-^ column num -} -> Debugger (Maybe (Int, RealSrcSpan))
+findBreakpoint :: Module {-^ module -} -> Int {-^ line num -} -> Maybe Int {-^ column num -} -> Debugger (Maybe (Int, RealSrcSpan))
 findBreakpoint modl lineNum columnNum = do
   -- TODO: Cache moduleLineMap?
-  mticks <- makeModuleLineMap (ms_mod modl)
+  mticks <- makeModuleLineMap modl
   let mbid = do
         ticks <- mticks
         case columnNum of

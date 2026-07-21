@@ -57,7 +57,6 @@ import GHC.Types.Error
 import GHC.Types.SourceError
 import GHC.Unit.Module.Graph
 import GHC.Unit.State
-import GHC.Unit.Module.ModSummary as GHC
 import GHC.Unit.Types
 import qualified GHC.Utils.Logger as GHC
 import GHC.Utils.Outputable as GHC
@@ -82,6 +81,7 @@ import System.Directory (getCurrentDirectory)
 import GHC.Debugger.Debuggee
 import GHC.Plugins (HasCallStack)
 import Data.Bifunctor
+import qualified GHC.Unit.Module.Graph as GHC
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -375,7 +375,7 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
         instancesOnly =
             dbgViewImps ++
             [ packageImportDecl pkgName (moduleName modl)
-            | modl <- map GHC.ms_mod mss
+            | modl <- map moduleNodeInfoModule mss
             , let uid = moduleUnitId modl
             , let pkgName = fromMaybe (error $ "No package name for: " ++ unitIdString uid) $ lookupUnitPackageQualifier hsc_env_new uid
             ]
@@ -894,19 +894,23 @@ expectRight s = case s of
 --------------------------------------------------------------------------------
 
 -- | List all loaded modules 'ModSummary's
-getAllLoadedModules :: GHC.GhcMonad m => m [GHC.ModSummary]
+getAllLoadedModules :: GHC.GhcMonad m => m [GHC.ModuleNodeInfo]
 getAllLoadedModules =
-  (GHC.mgModSummaries <$> GHC.getModuleGraph) >>=
-    filterM (\ms -> GHC.isLoadedModule (ms_unitid ms) (ms_mod_name ms))
+  (mgInfos . mg_mss <$> GHC.getModuleGraph) >>=
+    filterM (\ms -> GHC.isLoadedModule (moduleNodeInfoUnitId ms) (moduleNodeInfoModuleName ms))
+  where
+    mgInfos xs = [ info | ModuleNode _ info <- xs ]
 
-getAllLoadedModulesWithPaths :: GHC.GhcMonad m => m [(AbsFilePath,ModSummary)]
+getAllLoadedModulesWithPaths :: GHC.GhcMonad m =>
+  m [(AbsFilePath,GHC.ModuleNodeInfo)]
 getAllLoadedModulesWithPaths = do
   ghcCwd <- mkAbsolute <$> liftIO getCurrentDirectory
   -- TODO: cache?
   map (\ m -> (absoluteSourcePath ghcCwd m, m)) <$> getAllLoadedModules
   where
-    absoluteSourcePath :: AbsFilePath -> ModSummary -> AbsFilePath
-    absoluteSourcePath ghcCwdDir ms = ghcCwdDir /> msHsFilePath ms
+    absoluteSourcePath :: AbsFilePath -> ModuleNodeInfo -> AbsFilePath
+    absoluteSourcePath ghcCwdDir ms
+      = ghcCwdDir /> (fromMaybe (error $ "missing source path: " ++ show (moduleNodeInfoModuleName ms)) $ ml_hs_file (moduleNodeInfoLocation ms))
 
 --------------------------------------------------------------------------------
 -- * Forcing laziness

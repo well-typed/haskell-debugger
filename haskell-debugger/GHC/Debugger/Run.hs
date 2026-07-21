@@ -63,6 +63,7 @@ import qualified GHC.Debugger.Breakpoint.Map as BM
 import GHC.Debugger.Runtime.Thread
 import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
 import Data.List (find)
+import GHC.Unit.Module.Graph as GHC
 
 --------------------------------------------------------------------------------
 -- * Evaluation
@@ -74,15 +75,15 @@ debugExecution entryFile entry args = do
   -- consider always using :trace like ghci-dap to always have a stacktrace?
   -- better solution could involve profiling stack traces or from IPE info?
   modSummaryOfEntryFile <- findUnitIdOfEntryFile entryFile
-  let modOfEntryFile = GHC.ms_mod modSummaryOfEntryFile
-      unitIdOfEntryFile = GHC.ms_unitid modSummaryOfEntryFile
+  let modOfEntryFile = GHC.moduleNodeInfoModule modSummaryOfEntryFile
+      unitIdOfEntryFile = GHC.moduleNodeInfoUnitId modSummaryOfEntryFile
 
   let
     evalModule = mkModule (RealUnit (Definite unitIdOfEntryFile))
                                          (moduleName modOfEntryFile)
 
   logSDoc Logger.Debug $ "Eval inputs: " <+> text (show (entryFile,entry,args))
-  logSDoc Logger.Debug $ "Eval Module Context:" <+> withPprStyle (PprDump reallyAlwaysQualify) (ppr evalModule) <+> ppr (ms_location modSummaryOfEntryFile) <+> text (ms_hspp_file modSummaryOfEntryFile)
+  logSDoc Logger.Debug $ "Eval Module Context:" <+> withPprStyle (PprDump reallyAlwaysQualify) (ppr evalModule) <+> ppr (moduleNodeInfoLocation modSummaryOfEntryFile)
 
   old_context <- GHC.getContext
   GHC.setContext [IIModule evalModule]
@@ -140,7 +141,7 @@ debugExecution entryFile entry args = do
               `gopt_set` Opt_ImplicitImportQualified
           )
 
-    findUnitIdOfEntryFile :: GhcMonad m => AbsFilePath -> m GHC.ModSummary
+    findUnitIdOfEntryFile :: GhcMonad m => AbsFilePath -> m GHC.ModuleNodeInfo
     findUnitIdOfEntryFile afp = do
       modSums <- getAllLoadedModulesWithPaths
       case find ((== unAbs afp) . unAbs . fst) modSums of
