@@ -48,7 +48,6 @@ import GHC.Driver.Monad as GHC
 import GHC.Driver.Env as GHC
 import qualified GHC.Driver.Config.Parser as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
-import qualified GHC.Unit.Module.ModSummary as GHC
 import GHC.Types.Name.Occurrence (mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig)
 import qualified GHCi.Message as GHCi

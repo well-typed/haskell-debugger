@@ -421,16 +421,15 @@ findOrLoadHaskellDebuggerView :: LogAction IO DebuggerLog
 findOrLoadHaskellDebuggerView l buildWays = do
   let ghcLog = liftLogIO l
   hsc_env <- getSession
-  let mod_graph_base = hsc_mod_graph hsc_env
 
   -- Try to find or load the built-in classes from `haskell-debugger-view`
-  findHsDebuggerViewUnitId mod_graph_base >>= \case
+  findHsDebuggerViewUnitId >>= \case
     Nothing -> (hsDebuggerViewInMemoryUnitId,) <$> do
       -- Not imported by any module: no custom views. Therefore, the builtin
       -- ones haven't been loaded. In this case, we will load the package ourselves.
 
       -- Add the custom unit to the HUG
-      let base_dep_uids = [uid | UnitNode _ uid <- mg_mss mod_graph_base]
+      let base_dep_uids = graphsUnits hsc_env
       addInMemoryHsDebuggerViewUnit base_dep_uids . setDynFlagWays buildWays =<< getDynFlags
 
       -- Load unit modules using in-memory contents.
@@ -805,13 +804,13 @@ getHsDebuggerViewUid = asks hsDbgViewUnitId
 -- version of the library to find the built-in instances in).
 --
 -- See also comment on the @'hsDbgViewUnitId'@ field of @'DebuggerState'@
-findHsDebuggerViewUnitId :: ModuleGraph -> GHC.Ghc (Maybe UnitId)
-findHsDebuggerViewUnitId mod_graph = do
+findHsDebuggerViewUnitId :: GHC.Ghc (Maybe UnitId)
+findHsDebuggerViewUnitId = do
   hsc_env <- getSession
   let unitState = hsc_units hsc_env
 
   -- Note: linear in the module graph but only happens once.
-  let potential_units = graphUnits mod_graph
+  let potential_units = graphsUnits hsc_env
   -- Note: the intermediate set is expected to be small (<= 2).
   let hskl_dbgr_vws = Set.toList . Set.fromList $
         [ uid

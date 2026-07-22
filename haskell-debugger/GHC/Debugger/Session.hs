@@ -31,7 +31,7 @@ module GHC.Debugger.Session (
   makeDynFlagsAbsoluteOverall,
   resumeExec,
   exposeModGraphUnitsInInteractiveGhcDebuggerUnit,
-  graphUnits,
+  graphsUnits,
   compileModuleWithDepsInHpt,
   home_unit_dflags,
   packageImportDecl,
@@ -270,16 +270,26 @@ addInteractiveGhcDebuggerUnit exposed env = do
 exposeModGraphUnitsInInteractiveGhcDebuggerUnit :: Ghc ()
 exposeModGraphUnitsInInteractiveGhcDebuggerUnit =
   modifySessionM $ \ env -> do
-    liftIO $ addInteractiveGhcDebuggerUnit (graphUnits . hsc_mod_graph $ env) env
+    liftIO $ addInteractiveGhcDebuggerUnit (graphsUnits env) env
 
 -- | Extracts @UnitId@s from the graph.
-graphUnits :: GHC.ModuleGraph -> [UnitId]
-graphUnits mod_graph = ListUtils.nubOrd .
-  (`mapMaybe` mg_mss mod_graph) $ \case
+graphsUnits :: HscEnv -> [UnitId]
+graphsUnits env = ListUtils.nubOrd $ explicit ++ mods
+  where
+    -- TODO: redundant?
+    mods = (`mapMaybe` mg_mss mod_graph) $ \case
          UnitNode _deps uid -> Just uid
          ModuleNode _ modl -> Just $ mnkUnitId $ mnKey modl
          InstantiationNode uid _ -> Just uid
          LinkNode _ _ -> Nothing
+    mod_graph = hsc_mod_graph env
+    hug = hsc_HUG env
+    -- external deps do not always end up as UnitNodes,
+    -- so we look at the preloadUnits as well.
+    explicit =
+      [ uid
+      | (_,hue) <- unitEnv_assocs hug
+      , uid <- GHC.preloadUnits $ homeUnitEnv_units hue ]
 
 -- | WARNING: callback is not to be used from other threads.
 withUnliftGhc :: ((Ghc b -> IO b) -> IO a) -> Ghc a
