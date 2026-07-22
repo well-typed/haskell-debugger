@@ -31,7 +31,7 @@ module GHC.Debugger.Session (
   makeDynFlagsAbsoluteOverall,
   resumeExec,
   exposeModGraphUnitsInInteractiveGhcDebuggerUnit,
-  graphUnits,
+  graphsUnits,
   compileModuleWithDepsInHpt,
   home_unit_dflags,
   packageImportDecl,
@@ -270,16 +270,27 @@ addInteractiveGhcDebuggerUnit exposed env = do
 exposeModGraphUnitsInInteractiveGhcDebuggerUnit :: Ghc ()
 exposeModGraphUnitsInInteractiveGhcDebuggerUnit =
   modifySessionM $ \ env -> do
-    liftIO $ addInteractiveGhcDebuggerUnit (graphUnits . hsc_mod_graph $ env) env
+    liftIO $ addInteractiveGhcDebuggerUnit (graphsUnits env) env
 
--- | Extracts @UnitId@s from the graph.
-graphUnits :: GHC.ModuleGraph -> [UnitId]
-graphUnits mod_graph = ListUtils.nubOrd .
-  (`mapMaybe` mg_mss mod_graph) $ \case
-         UnitNode _deps uid -> Just uid
+-- | Extracts @UnitId@s from @ModuleGraph@ and @HomeUnitGraph@.
+graphsUnits :: HscEnv -> [UnitId]
+graphsUnits env = ListUtils.nubOrd $ modGraphUIDs ++ hugPreloadUIDs
+  where
+    -- [TODO](https://github.com/well-typed/haskell-debugger/issues/351): redundant?
+    modGraphUIDs = (`mapMaybe` mg_mss mod_graph) $ \case
+         UnitNode  _deps uid -> Just uid
          ModuleNode _ modl -> Just $ mnkUnitId $ mnKey modl
          InstantiationNode uid _ -> Just uid
          LinkNode _ _ -> Nothing
+    mod_graph = hsc_mod_graph env
+    hug = hsc_HUG env
+    -- external deps do not always show up in the ModuleGraph
+    -- (e.g. when we are given a cached session),
+    -- so we also include the preloadUnits of the home units.
+    hugPreloadUIDs =
+      [ uid
+      | (_,hue) <- unitEnv_assocs hug
+      , uid <- GHC.preloadUnits $ homeUnitEnv_units hue ]
 
 -- | WARNING: callback is not to be used from other threads.
 withUnliftGhc :: ((Ghc b -> IO b) -> IO a) -> Ghc a
