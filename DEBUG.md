@@ -2,7 +2,7 @@
 
 ## prerequisites
 
-- GHC source tree at ./ghc with a ghc/compiler that allows Cabal-16.*
+- GHC source tree at ./ghc with a ghc/compiler that allows Cabal-3.16.*
   - For 9.14 cherry-pick b5508f2cb4e46aedb8f6232c1d42bd697e3dd2f0 
     - See https://gitlab.haskell.org/trac-Saizan/ghc/-/commits/debug-9.14
   - Gone through early stages of prep and build so `./ghc/_build/stageBoot/bin/` is populated. 
