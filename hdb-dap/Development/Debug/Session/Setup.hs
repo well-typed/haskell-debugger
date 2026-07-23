@@ -80,7 +80,7 @@ data DebugRunnerConf = DebugRunnerConf
     -- ^ specified cradle file rather than letting be inferred from
     -- @drcEntryFile@, relative to @drcProjectRoot@ if so. @DebugRunnerProvider@s
     -- must WARN if this field is @Just@ but they do not use hie cradles.
-  }
+  } deriving Show
 
 data SessionSetupLog
   = HieBiosLog HIE.Log
