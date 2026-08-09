@@ -37,7 +37,7 @@ jobs:
       - uses: haskell-actions/setup@v2
         with:
           ghc-version: 9.14.1
-          cabal-version: 3.14
+          cabal-version: 3.16
           ghcup-release-channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
 
       - name: Build docs for haskell-debugger
@@ -104,6 +104,12 @@ jobs:
           name: Haskell Debugger Docs
           path: ${{ runner.temp }}/docs/
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hdb-*
+          path: ${{ runner.temp }}/hdb-binaries/
+          merge-multiple: true
+
       - name: Publish to Visual Studio Marketplace
         uses: HaaLeo/publish-vscode-extension@v2
         with:
@@ -130,7 +136,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}
-          files: ${{ runner.temp }}/extension/*.vsix
+          files: |
+            ${{ runner.temp }}/extension/*.vsix
+            ${{ runner.temp }}/hdb-binaries/*.tar.gz
           fail_on_unmatched_files: true
           generate_release_notes: true
-

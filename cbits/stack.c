@@ -250,7 +250,7 @@ StgInt bco_frame_args_offset(StgClosure * frame)
         case BCO_FRAME_NOT_BCO:
         case BCO_FRAME_UNKNOWN:
             return -1;
-        default:
+        default: {
             const void * return_frame_info = frame_entry.return_info;
             if (return_frame_info == NULL){
                 // No return frame used (e.g. stg_apply_interp), so constant offset.
@@ -269,6 +269,7 @@ StgInt bco_frame_args_offset(StgClosure * frame)
                 StgWord stub[2] = { (StgWord)return_frame_info, (StgWord)return_bco };
                 return (StgInt)stack_frame_sizeW((StgClosure *)stub) + 2;
             }
+        }
     }
 
 }
