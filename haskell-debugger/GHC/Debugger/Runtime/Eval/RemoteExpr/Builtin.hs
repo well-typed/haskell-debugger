@@ -28,6 +28,21 @@ import GHC.Debugger.Runtime.Eval.RemoteExpr (RemoteExpr)
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import GHC.Stack.Annotation.Experimental
 import GHC.Types.SrcLoc
+import GHC.Debugger.Session.Builtin (debuggerRuntimeFFIInspectModName)
+
+pair :: Remote.RemoteExpr (a -> b -> (a,b))
+pair = Remote.raw "(,)"
+
+fst :: Remote.RemoteExpr ((a,b) -> a)
+fst = Remote.raw "Prelude.fst"
+
+snd :: Remote.RemoteExpr ((a,b) -> b)
+snd = Remote.raw "Prelude.snd"
+
+bcoArgsOffset :: Remote.RemoteExpr (StackSnapshot -> Word -> Maybe Word)
+bcoArgsOffset = Remote.var
+  debuggerRuntimeFFIInspectModName
+  "bcoArgsOffset" []
 
 -- | Remote 'GHC.Stack.CloneStack.cloneThreadStack'
 cloneThreadStack :: RemoteExpr ThreadId -> RemoteExpr (IO StackSnapshot)

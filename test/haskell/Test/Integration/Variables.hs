@@ -12,6 +12,7 @@ import Test.Tasty.HUnit
 import Test.Tasty.ExpectedFailure
 #endif
 import DAP (Variable, variableValue)
+import GHC.Debugger.Runtime.FFIInspect (stack_bco_frame_selftest)
 
 variableTests :: TestTree
 variableTests =
@@ -34,6 +35,12 @@ variableTests =
     , testCase "hdv in-memory with containers (issue #47d)" hdvContainersMemTest
     , testCase "hdv in-memory with text (issue #47e)" hdvTextMemTest
     , testCase "force thunk in IntMap value persists (issue #47f)" thunkIntMapTest
+    , testGroup "variables from earlier stack frames (issue #160)"
+      [ testCase "multiple stack frames" stackFramesTest
+      , testCase "RetBCO waiting for unboxed tuple" stackFramesUnboxedTupleTest
+      , testCase "stack_bco_frame_self_test"
+          stackBCOFrameSelfTest
+      ]
     ]
 
 intsAndStringsTest :: Assertion
@@ -344,3 +351,39 @@ thunkIntMapTest =
       (ac2 % "1") @==? "5050"
       disconnect
 
+stackFramesTest :: Assertion
+stackFramesTest =
+  withTestDAPServer "test/integration/T160" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "Main.hs"
+      hitBreakpointIn cfg "X.hs" 22
+      locals <- fetchScopeVarsOfFrame 1 "Locals"
+      xs <- expandVar (locals % "xs")
+      (xs % "0") @==? "1"
+
+      locals2 <- fetchScopeVarsOfFrame 2 "Locals"
+      s <- pure (locals2 % "s")
+      s @==? "\"hello\""
+
+      locals3 <- fetchScopeVarsOfFrame 3 "Locals"
+      x <- pure (locals3 % "x")
+      x @==? "5"
+
+      disconnect
+
+stackFramesUnboxedTupleTest :: Assertion
+stackFramesUnboxedTupleTest =
+  withTestDAPServer "test/integration/T160" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "Main.hs"
+      hitBreakpointIn cfg "X.hs" 27
+      locals <- fetchScopeVarsOfFrame 1 "Locals"
+      x <- pure (locals % "x")
+      x @==? "1"
+
+      disconnect
+
+stackBCOFrameSelfTest :: Assertion
+stackBCOFrameSelfTest = do
+  b <- stack_bco_frame_selftest
+  assertEqual "Errors, see stderr" b True

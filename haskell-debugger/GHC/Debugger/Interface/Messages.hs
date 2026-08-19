@@ -13,12 +13,15 @@ module GHC.Debugger.Interface.Messages where
 
 import qualified GHC
 import qualified GHC.Utils.Outputable as GHC
+import GHCi.RemoteTypes (ForeignRef)
 
 import GHC.Debugger.Runtime.Term.Key
 import Data.Binary (Binary)
 import qualified GHC.Stack as Stack
 import System.FilePath (isAbsolute, (</>), normalise)
 import Control.Exception (assert)
+import qualified GHC.Exts.Heap.Closures as Heap
+import GHC.Generics
 
 {-
 Note [Paths should be made absolute at the source]
@@ -334,15 +337,27 @@ data DebuggeeThread
     }
     deriving (Show)
 
+
+data DbgStackFrameBCOArgs ref
+  = DbgStackFrameBCOArgs
+    { bcoArgs :: NoShow (ref [Heap.StackField])
+    -- ^ payload of the frame, c.f. @Heap.RetBCO@.
+    , bcoArgsOffset :: Maybe Word
+    -- ^ offset of bcoArgs in an hypotethical AP_STACK closure,
+    --   see Note [Ask the RTS for memory layout of AP_STACK].
+    }
+  deriving (Generic, Show)
+
 data DbgStackFrame
   = DbgStackFrame
     { name :: String
     -- ^ Title of stack frame
     , sourceSpan :: SourceSpan
     -- ^ Source span for this stack frame
-    , breakId :: Maybe GHC.InternalBreakpointId
+    , breakId :: Maybe (GHC.InternalBreakpointId)
     -- ^ Is this a BCO continuation frame with a breakpoint?
     -- If yes, we can leverage the breakpoint info to report scopes.
+    , args :: Maybe (DbgStackFrameBCOArgs ForeignRef)
     }
   deriving (Show)
 
@@ -362,3 +377,8 @@ data ExceptionInfo = ExceptionInfo
 
 instance Show GHC.InternalBreakpointId where
   show (GHC.InternalBreakpointId m ix) = "InternalBreakpointId " ++ GHC.showPprUnsafe m ++ " " ++ show ix
+
+newtype NoShow a = NoShow a
+
+instance Show (NoShow a) where
+  show _ = "<noshow>"

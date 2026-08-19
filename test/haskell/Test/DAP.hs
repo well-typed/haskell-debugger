@@ -228,15 +228,19 @@ mkVarsView ctxDesc vs = VarsView
 -- | Fetch all variables from the scope with the given name in the top-most
 -- frame of the first thread.
 fetchScopeVars :: T.Text -> TestDAP VarsView
-fetchScopeVars scopeName_ = do
+fetchScopeVars = fetchScopeVarsOfFrame 0
+
+fetchScopeVarsOfFrame :: Int -> T.Text -> TestDAP VarsView
+fetchScopeVarsOfFrame frameIx scopeName_ = do
   Response{responseBody=Just ThreadsResponse{threads=t:_}} <- sync threadsRequest
-  Response{responseBody=Just StackTraceResponse{stackFrames=fr:_}} <- sync $ stackTraceRequest $
+  Response{responseBody=Just StackTraceResponse{stackFrames=frames}} <- sync $ stackTraceRequest $
     StackTraceArguments
       { DAP.stackTraceArgumentsThreadId = threadId t
       , DAP.stackTraceArgumentsStartFrame = Nothing
       , DAP.stackTraceArgumentsLevels = Nothing
       , DAP.stackTraceArgumentsFormat = Nothing
       }
+  Just fr <- pure $ frames List.!? frameIx
   Response{responseBody=Just ScopesResponse{scopes=scs}} <- sync $ scopesRequest $
     ScopesArguments { DAP.scopesArgumentsFrameId = stackFrameId fr }
   case List.find ((== scopeName_) . scopeName) scs of

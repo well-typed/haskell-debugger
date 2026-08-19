@@ -54,6 +54,12 @@ newtype TermParser a = TermParser { runTermParser :: Term -> Debugger (Either [T
 liftDebugger :: Debugger a -> TermParser a
 liftDebugger action = TermParser $ \_ -> Right <$> action
 
+liftDebuggerOrFail :: Show e => Debugger (Either e a) -> TermParser a
+liftDebuggerOrFail action = do
+  liftDebugger action >>= \case
+    Left e -> fail (show e)
+    Right x -> pure x
+
 instance MonadIO TermParser where
   liftIO action = TermParser $ \_ -> Right <$> liftIO action
 

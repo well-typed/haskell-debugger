@@ -25,6 +25,7 @@ import GHC.Utils.Outputable as Ppr
 import qualified GHC.Unit.Home.Graph as HUG
 
 import GHC.Debugger.Stopped.Exception
+import GHC.Debugger.Stopped.Frames
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Thread
@@ -36,6 +37,9 @@ import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame
 import GHC.Debugger.Utils
 import qualified Colog.Core as Logger
 import System.Directory (getCurrentDirectory)
+#if MIN_VERSION_ghc(9,14,2)
+import GHC.Linker.Types
+#endif
 
 {-
 Note [Don't crash if not stopped]
@@ -124,7 +128,7 @@ getStacktrace req_tid = do
       -- and use the BRK_FUN src locations.
       stack_frames <- getRemoteThreadStackCopy f_tid
       forM stack_frames $ \case
-        StackFrameBreakpointInfo ibi -> do
+        StackFrameBreakpointInfo ibi s -> do
           info_brks <- liftIO $ readIModBreaks hug ibi
           let modl  = getBreakSourceMod ibi info_brks
           srcSpan   <- liftIO $ getBreakLoc (readIModModBreaks hug) ibi info_brks
@@ -135,6 +139,7 @@ getStacktrace req_tid = do
             { name = modl_str ++ "." ++ decl
             , sourceSpan = realSrcSpanToSourceSpan cwd $ realSrcSpan srcSpan
             , breakId = Just ibi
+            , args = Just s
             }
         StackFrameIPEInfo ipe -> do
           case srcSpanStringToSourceSpan cwd (ipLoc ipe) of
@@ -149,12 +154,14 @@ getStacktrace req_tid = do
                 { name = ipMod ipe ++ "." ++ ipLabel ipe
                 , sourceSpan = sourceSpan
                 , breakId = Nothing
+                , args = Nothing
                 }
         StackFrameAnnotation srcLoc ann -> do
             return $ Just DbgStackFrame
               { name = ann
               , sourceSpan = maybe unhelpfulSourceSpan (srcLocToSourceSpan cwd) srcLoc
               , breakId = Nothing
+              , args = Nothing
               }
 
   -- Add the latest resume context at the head.
@@ -182,6 +189,7 @@ getStacktrace req_tid = do
                   { name = modl_str ++ "." ++ GHC.resumeDecl r
                   , sourceSpan = ss
                   , breakId = Just ibi
+                  , args = Nothing
                   }
         _ -> do
           mExcSpan <- exceptionInfoSourceSpan <$> getExceptionInfo req_tid
@@ -190,6 +198,7 @@ getStacktrace req_tid = do
                                   { name = GHC.resumeDecl r
                                   , sourceSpan
                                   , breakId = Nothing
+                                  , args = Nothing
                                   }
             Nothing -> return Nothing
   return (maybe id (:) head_frame $ decoded_frames)
@@ -272,6 +281,7 @@ getVariables threadId frameIx vk = do
     -- Only `seq` the variable when inspecting a specific one (`SpecificVariable`)
     -- (VARR)(b,c)
     SpecificVariable key -> do
+
       term <- obtainTerm key
 
       case term of
@@ -300,10 +310,14 @@ getVariables threadId frameIx vk = do
             VarFields vfs -> pure (VariableFields vfs)
 
     -- (VARR)(a) from here onwards
-
     LocalVariables -> fmap VariableFields $ do
-      -- bindLocalsAtBreakpoint hsc_env (GHC.resumeApStack r) (GHC.resumeSpan r) (GHC.resumeBreakpointId r)
-      mapM (tyThingToVarInfo fam_envs) =<< GHC.getBindings
+      vars <- if frameIx == 0
+        then
+          -- top frame vars already bound when stopping
+          GHC.getBindings
+        else
+          map AnId <$> getStackFrameBindings frame
+      mapM (tyThingToVarInfo fam_envs) vars
 
     ModuleVariables
       | frameIx < length frames

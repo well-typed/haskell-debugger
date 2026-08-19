@@ -218,12 +218,12 @@ data DebuggerLog
 -- | A debugger log message
 data DebuggerMessage
   = LogSDoc !DynFlags !SDoc
-  | LogFailedToCompileDebugViewModule !GHC.ModuleName
+  | LogFailedToCompileBuiltinModule !GHC.ModuleName
   | LogSkippingViewModuleNoPkg !GHC.ModuleName String [String]
 
 instance Show DebuggerMessage where
   show = \ case
-    LogFailedToCompileDebugViewModule mn ->
+    LogFailedToCompileBuiltinModule mn ->
       "Failed to compile built-in " ++ moduleNameString mn ++ " module! Ignoring these custom debug views."
     LogSkippingViewModuleNoPkg mn pkg uids ->
       "Skipping compilation of built-in " ++ moduleNameString mn ++ " module because package "

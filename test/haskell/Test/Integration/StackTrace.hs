@@ -57,4 +57,3 @@ stackAnnotationsTest =
         assertBool ("should contain '[1,2,3,4]': " ++ show names)
           (any ("[1,2,3,4]" `Text.isPrefixOf`) names)
       disconnect
-

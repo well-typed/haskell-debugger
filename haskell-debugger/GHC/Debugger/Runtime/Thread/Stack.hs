@@ -28,5 +28,5 @@ import qualified GHC.Debugger.Runtime.Interpreter.Legacy as Debuggee
 --------------------------------------------------------------------------------
 
 -- | Clone the stack of the given remote thread and get the breakpoint ids of available frames
-getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [StackFrameInfo]
+getRemoteThreadStackCopy :: ForeignRef ThreadId -> Debugger [StackFrameInfo ForeignRef]
 getRemoteThreadStackCopy = Debuggee.decodeThreadStack

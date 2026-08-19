@@ -53,7 +53,7 @@ import Control.Monad.IO.Class
 import GHCi.RemoteTypes
 import GHC.Debugger.Monad
 
-import GHC.Debugger.Interface.Messages (ExceptionInfo)
+import GHC.Debugger.Interface.Messages (ExceptionInfo,NoShow(..),DbgStackFrameBCOArgs(..))
 import GHC.Debugger.Runtime.Interpreter.Custom
 import GHC.Debugger.Runtime.Interpreter.Types
 
@@ -81,11 +81,17 @@ listThreads = do
     threadInfoForeignRef <- liftIO $ mkFinalizedHValue interp threadInfoRef
     pure ti{threadInfoRef = threadInfoForeignRef}
 
-decodeThreadStack :: ForeignRef ThreadId -> Debugger [StackFrameInfo]
+decodeThreadStack :: ForeignRef ThreadId -> Debugger [StackFrameInfo ForeignRef]
 decodeThreadStack ftid = do
   interp  <- hscInterp <$> getSession
-  liftIO $ withForeignRef ftid $
+  fis <- liftIO $ withForeignRef ftid $
     interpDbgCmd interp . DecodeThreadStack
+  forM fis $ \case
+    StackFrameBreakpointInfo ibi (DbgStackFrameBCOArgs (NoShow bcoArgsRef) tag) -> do
+      bcoArgsForeignRef <- liftIO $ mkFinalizedHValue interp bcoArgsRef
+      pure $ StackFrameBreakpointInfo ibi (DbgStackFrameBCOArgs (NoShow bcoArgsForeignRef) tag)
+    StackFrameIPEInfo x -> pure $ StackFrameIPEInfo x
+    StackFrameAnnotation x y -> pure $ StackFrameAnnotation x y
 
 collectExceptionInfo :: ForeignRef SomeException -> Debugger ExceptionInfo
 collectExceptionInfo excRef = do
