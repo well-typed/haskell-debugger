@@ -41,6 +41,7 @@ import GHCi.RemoteTypes
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
 import qualified GHC.Stack.Types as Stack
+import qualified GHC.Stack.CloneStack as Stack
 
 -- GHC 9.14: use @evalX@ and @TermParser@ to do this all without custom commands
 
@@ -114,12 +115,12 @@ blockedReasonParser = do
 -- * Thread stack frames
 --------------------------------------------------------------------------------
 
-decodeThreadStack :: ForeignRef ThreadId -> Debugger [StackFrameInfo]
+decodeThreadStack :: ForeignRef ThreadId -> Debugger [StackFrameInfo ForeignRef]
 decodeThreadStack threadIdRef = do
-  l <- Remote.evalIOList $ Remote.do
+  l <- Remote.evalIO $ Remote.do
     clonedStack <- Remote.cloneThreadStack (Remote.ref threadIdRef)
     frames      <- Remote.decodeStackWithIpe clonedStack
-    Remote.return frames
+    Remote.return $ Remote.pair `Remote.app` clonedStack `Remote.app` frames
 
   case l of
     Left (EvalRaisedException e) -> do
@@ -128,14 +129,22 @@ decodeThreadStack threadIdRef = do
     Left e -> do
       logSDoc Logger.Warning (text "Failed to decode the stack with" <+> text (show e) $$ text "No StackTrace will be returned...")
       return []
-    Right stack_frames_fvs -> fmap catMaybes $
-      forM stack_frames_fvs $ \ stack_frame_fv -> do
+    Right p_fv -> do
+      stack_frames_fvs <-
+          (expectRight =<<) $ Remote.evalIOList $ Remote.do
+            Remote.return $ Remote.snd `Remote.appRef` p_fv
+      cloned_stack_fv <-
+          (expectRight =<<) $ Remote.evalIO $ Remote.do
+            Remote.return $ Remote.fst `Remote.appRef` p_fv
+
+      fmap catMaybes $ do
+       forM (zip stack_frames_fvs [0..]) $ \ (stack_frame_fv,ix) -> do
         obtainParsedTerm "ghc-heap:StackFrame" 2 True anyTy{-todo:stackframety?-} (castForeignRef stack_frame_fv)
-          stackFrameInfoParser >>= \case
+          (stackFrameInfoParser cloned_stack_fv ix) >>= \case
             Left errs -> do
               logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
               return Nothing
-            Right tm ->
+            Right tm -> do
               return tm
 
 --------------------------------------------------------------------------------
@@ -143,8 +152,8 @@ decodeThreadStack threadIdRef = do
 --------------------------------------------------------------------------------
 
 -- | Try to decode a 'StackFrameInfo' from a @(StackFrame, Maybe InfoProv)@ term
-stackFrameInfoParser :: TermParser (Maybe StackFrameInfo)
-stackFrameInfoParser = do
+stackFrameInfoParser :: ForeignRef Stack.StackSnapshot -> Int -> TermParser (Maybe (StackFrameInfo ForeignRef))
+stackFrameInfoParser stack frameIx = do
   -- Try a stack annotation first
   stackAnno <- subtermWith 0 stackAnnoParser
   case stackAnno of
@@ -154,8 +163,8 @@ stackFrameInfoParser = do
       case mipe of
         Nothing -> do
           -- Try decoding a continuation BCO with a breakpoint next
-          fmap StackFrameBreakpointInfo
-            <$> subtermWith 0 retBCOParser
+          fmap (uncurry StackFrameBreakpointInfo)
+            <$> subtermWith 0 (retBCOParser stack frameIx)
         Just ipe -> pure $
           Just (StackFrameIPEInfo ipe)
     Just (srcLoc, ann) -> pure $
@@ -174,24 +183,29 @@ infoProvParser = InfoProv
   <*> subtermWith 7 stringParser -- ipSrcSpan
 
 -- | Try to decode an 'InternalBreakpointId' from a @StackFrame@ term
-retBCOParser :: TermParser (Maybe InternalBreakpointId)
-retBCOParser = do
+retBCOParser :: ForeignRef Stack.StackSnapshot
+             -> Int
+             -> TermParser (Maybe (InternalBreakpointId, DbgStackFrameBCOArgs ForeignRef))
+retBCOParser stack_fv frame_ix = do
   -- Match against "RetBCO" frames and extract the BCOClosure information
-  (matchConstructorTerm "RetBCO" *> subtermWith 1 (subtermWith 0{-take from Box-} (Just <$> anyTerm)) <|> pure Nothing)
+  let bcoParser = subtermWith 1 (subtermWith 0{-take from Box-} anyTerm)
+      bcoArgsParser = subtermWith 2 (seqTermP ensureTerm)
+  optional (matchConstructorTerm "RetBCO" *> liftA2 (,) bcoParser bcoArgsParser)
     >>= \case
-      Just Suspension{val, ctype=BCO} -> do
+      Just (Suspension{val, ctype=BCO},Term{val=bcoArgs}) -> do
         {-"the otherwise case: Unknown closure", hence Suspension-}
+        tag_fv <- liftDebuggerOrFail $ Remote.eval (Remote.bcoArgsOffset `Remote.appRef` stack_fv `Remote.app` (Remote.raw (show frame_ix ++ " :: Int")))
+        tag <- liftDebuggerOrFail $ obtainParsedTerm "tag" 3 True anyTy (castForeignRef tag_fv) (maybeParser $ wordParser <|> wordPrimParser)
 
         -- Decode the BCO closure using 'getClosureData' on the foreign heap
         bco_closure_fv <- liftDebugger $
           expectRight =<< Remote.evalIO
             (Remote.getClosureData (Remote.ref (castForeignRef val)))
 
-        r <- liftDebugger $
+        r <- liftDebuggerOrFail $
           obtainParsedTerm "BCO BRK_FUN info" 2 True anyTy (castForeignRef bco_closure_fv) bcoInternalBreakpointId
-        case r of
-          Left err -> fail (show err)
-          Right t  -> return t
+        let bcorefs = NoShow $ castForeignRef bcoArgs
+        return $ (, DbgStackFrameBCOArgs bcorefs tag) <$> r
       _ -> pure Nothing
 
 -- | Try to decode an 'StackAnnotation' from a @StackFrame@ term

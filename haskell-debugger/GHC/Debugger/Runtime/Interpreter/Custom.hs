@@ -31,12 +31,12 @@ import qualified GHC.Stack as Stack
 import GHC.Unit.Module
 import Control.Exception
 import System.Directory (getCurrentDirectory)
-import GHC.Debugger.Interface.Messages (SourceSpan (..), ExceptionInfo (..), AbsFilePath (unAbs), mkAbsolute)
+import GHC.Debugger.Interface.Messages (SourceSpan (..), ExceptionInfo (..), AbsFilePath (unAbs), mkAbsolute, NoShow(..))
 import GHC.Debugger.Runtime.Interpreter.Types
 import Control.Exception.Context
 import Data.Typeable
 #if MIN_VERSION_ghc(9,15,0)
-import GHC.Debugger.Interface.Messages (srcLocToSourceSpan)
+import GHC.Debugger.Interface.Messages (srcLocToSourceSpan, DbgStackFrameBCOArgs(..))
 import Data.Maybe
 import Control.Exception.Backtrace
 import GHC.Exception
@@ -44,6 +44,7 @@ import qualified GHC.Stack.CloneStack as Stack
 import qualified GHC.Stack.Decode.Experimental as Stack
 import qualified GHC.Exception.Backtrace.Experimental as Backtrace
 #endif
+import qualified GHC.Debugger.Runtime.FFIInspect as FFIInspect
 
 --------------------------------------------------------------------------------
 -- * Custom Commands
@@ -51,7 +52,7 @@ import qualified GHC.Exception.Backtrace.Experimental as Backtrace
 
 data DbgInterpCmd a where
   ListThreads :: DbgInterpCmd [ThreadInfo RemoteRef]
-  DecodeThreadStack :: RemoteRef ThreadId -> DbgInterpCmd [StackFrameInfo]
+  DecodeThreadStack :: RemoteRef ThreadId -> DbgInterpCmd [StackFrameInfo RemoteRef]
   CollectExceptionInfo :: RemoteRef SomeException -> DbgInterpCmd ExceptionInfo
 
 dbgInterpCmdTag :: Word8
@@ -75,7 +76,7 @@ runDbgInterpCmd = \case
     threadId    <- localRef threadIdRef
     clonedStack <- Stack.cloneThreadStack threadId
     frames      <- Stack.decodeStackWithIpe clonedStack
-    catMaybes <$> mapM stackFrameInfo frames
+    catMaybes <$> mapM (stackFrameInfo clonedStack) (zip [0..] frames)
   CollectExceptionInfo excRef -> do
     exc  <- localRef excRef
     cwd  <- mkAbsolute <$> getCurrentDirectory
@@ -117,20 +118,24 @@ threadInfo threadId = do
 -- 1. Try stack annotations first
 -- 2. Try IPE next
 -- 3. Try decoding a continuation BCO with a breakpoint next
-stackFrameInfo :: (StackFrame, Maybe InfoProv) -> IO (Maybe StackFrameInfo)
-stackFrameInfo (AnnFrame{annotation}, _)
+stackFrameInfo :: Stack.StackSnapshot -> (Word,(StackFrame, Maybe InfoProv)) -> IO (Maybe (StackFrameInfo RemoteRef))
+stackFrameInfo _ss (_,(AnnFrame{annotation}, _))
   | let Box annVal = annotation
   , let stack_frame = stackAnnoToStackFrameInfo (unsafeCoerce @_ @SomeStackAnnotation annVal)
   = pure $ Just stack_frame
-stackFrameInfo (_, Just ipe)
+stackFrameInfo _ss (_,(_, Just ipe))
   = pure $ Just (StackFrameIPEInfo ipe)
-stackFrameInfo (RetBCO{bco}, _)
+stackFrameInfo ss (frameIx,(RetBCO{bco,bcoArgs}, _))
   | let !(Box !bco_hval) = bco -- needs to be forced for `getClosureData` to look at the right thing.
-  = fmap StackFrameBreakpointInfo <$> (lookupBCOBreakpoint =<< Heap.getClosureData bco_hval)
-stackFrameInfo _
+  = do
+    xs <- NoShow <$> mkRemoteRef bcoArgs
+    -- TODO: change ghc upstream so this offset is available from CgBreakInfo.
+    let offset = FFIInspect.bcoArgsOffset ss frameIx
+    fmap (\ ibi -> StackFrameBreakpointInfo ibi (DbgStackFrameBCOArgs xs offset)) <$> (lookupBCOBreakpoint =<< Heap.getClosureData bco_hval)
+stackFrameInfo _ _
   = pure Nothing
 
-stackAnnoToStackFrameInfo :: SomeStackAnnotation -> StackFrameInfo
+stackAnnoToStackFrameInfo :: SomeStackAnnotation -> StackFrameInfo ref
 stackAnnoToStackFrameInfo stack_anno =
 #if MIN_VERSION_ghc_experimental(9,1402,0)
   StackFrameAnnotation (stackAnnotationSourceLocation stack_anno) (displayStackAnnotationShort stack_anno)
@@ -266,7 +271,9 @@ instance Bin.Binary (Some Bin.Binary DbgInterpCmd) where
       _ -> fail ("Unknown debugger thread command tag: " ++ show tag)
 
 instance Bin.Binary (ThreadInfo RemoteRef)
-instance Bin.Binary StackFrameInfo
+deriving instance Bin.Binary a => Bin.Binary (NoShow a)
+instance Bin.Binary (DbgStackFrameBCOArgs RemoteRef)
+instance Bin.Binary (StackFrameInfo RemoteRef)
 instance Bin.Binary Stack.SrcLoc
 instance Bin.Binary SourceSpan where
   put SourceSpan{..} = do

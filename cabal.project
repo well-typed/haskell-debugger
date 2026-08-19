@@ -25,3 +25,6 @@ if impl(ghc >10.0)
         *:ghc-experimental,
         ghc-boot,
         ghc-prim,
+
+package haskell-debugger
+  flags: +testing

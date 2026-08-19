@@ -1,0 +1,19 @@
+cabal-version:   3.14
+name:            T160-tmp
+version:         0.1.0.0
+license:         NONE
+author:          Andrea Vezzosi
+maintainer:      andrea@well-typed.com
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+common warnings
+    ghc-options: -Wall
+
+executable T160-tmp
+    import:           warnings
+    main-is:          Main.hs
+    build-depends:    base
+    hs-source-dirs:   .
+    other-modules: X
+    default-language: Haskell2010

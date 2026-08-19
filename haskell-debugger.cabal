@@ -77,6 +77,11 @@ Flag hdb-dep
   default: True
   manual: True
 
+Flag testing
+  description: Includes extra checks useful when running tests.
+  default: False
+  manual: True
+
 library
     import:           warnings
     exposed-modules:  GHC.Debugger,
@@ -85,6 +90,7 @@ library
                       GHC.Debugger.Run,
                       GHC.Debugger.Stopped,
                       GHC.Debugger.Stopped.Exception,
+                      GHC.Debugger.Stopped.Frames,
                       GHC.Debugger.Stopped.Variables,
 
                       GHC.Debugger.Runtime,
@@ -98,6 +104,8 @@ library
 
                       GHC.Debugger.Runtime.Compile,
                       GHC.Debugger.Runtime.Compile.Cache,
+
+                      GHC.Debugger.Runtime.FFIInspect,
 
                       GHC.Debugger.Runtime.Term.Parser,
                       GHC.Debugger.Runtime.Term.Key,
@@ -158,11 +166,20 @@ library
 
                       haskell-debugger-view >= 0.2 && < 1.0,
                       ghc-stack-annotations >=0.1 && <0.2,
+                      rts,
 
     if !os(windows)
         build-depends: unix >= 2.8.6 && < 2.9,
+    if impl(ghc>=10.1)
+        -- from 10.1, we have much fewer stg_ctoi_t<N>_info hardcoded frames
+        cc-options: -DFEW_TUPLE_FRAMES
+    if flag(testing)
+        cpp-options: -DTESTING
 
     hs-source-dirs:   haskell-debugger
+    include-dirs:     cbits
+    c-sources:        cbits/stack.c
+    install-includes: stack.h
     default-language: GHC2021
 
 library dap-server

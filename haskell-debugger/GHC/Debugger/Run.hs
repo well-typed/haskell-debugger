@@ -310,7 +310,6 @@ handleExecResult = \case
       return EvalStopped{ breakId = Nothing
                         , breakThread = rt_id }
     ExecBreak {breakNames = _, breakPointId = Just bid} -> do
-
       let performAction BreakpointStop = do
 
                 rt_id <- getRemoteThreadIdFromContext

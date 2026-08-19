@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- | Built-in units and modules
 module GHC.Debugger.Session.Builtin
@@ -6,11 +7,16 @@ module GHC.Debugger.Session.Builtin
     debuggerViewBuiltinMods
   , debuggerViewInstancesMods
   , debuggerViewClassModName, debuggerViewClassContents
+  , debuggerRuntimeFFIInspectModName, debuggerRuntimeFFIInspectContents
 
     -- * In memory unit
   , hsDebuggerViewInMemoryUnitId
   , addInMemoryHsDebuggerViewUnit
   , makeInMemoryTarget
+#if !MIN_VERSION_ghc(9,14,2)
+  , addInMemoryFFIInspectUnit
+  , hsDebuggerFFIInspectUnitId
+#endif
 
   -- Note:
   -- Don't export instances mods individually to make sure we get warnings if
@@ -35,6 +41,10 @@ import GHC.Data.StringBuffer
 import qualified GHC.Unit.Home.Graph as HUG
 import qualified GHC.Unit.Home.PackageTable as HPT
 import qualified GHC.Unit.State as State
+import GHC.Data.FastString (unpackFS)
+#if !MIN_VERSION_ghc(9,14,2)
+import Data.Coerce
+#endif
 
 --------------------------------------------------------------------------------
 -- * Built-in Modules
@@ -96,9 +106,34 @@ addInMemoryHsDebuggerViewUnit
   => [UnitId] -- ^ The unit-ids from the transitive dependencies closure of the user-given targets
   -> DynFlags -- ^ Dynflags resulting from first downsweep of user given targets
   -> m ()
-addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
+addInMemoryHsDebuggerViewUnit = addInMemoryUnit
+  hsDebuggerViewInMemoryUnitId
+  (PackageName "haskell-debugger-view")
+
+#if !MIN_VERSION_ghc(9,14,2)
+-- | The fixed unit-id (@haskell-debugger-ffi-inspect@) used to load @GHC.Debugger.Runtime.FFIInspect@ in the debuggee when we can't have custom ghci-serv commands.
+hsDebuggerFFIInspectUnitId :: UnitId
+hsDebuggerFFIInspectUnitId = stringToUnitId "haskell-debugger-ffi-inspect"
+
+addInMemoryFFIInspectUnit :: GhcMonad m => [UnitId] -> DynFlags -> m UnitId
+addInMemoryFFIInspectUnit deps dflags = do
+  addInMemoryUnit
+    hsDebuggerFFIInspectUnitId
+    (coerce hsDebuggerFFIInspectUnitId)
+    deps dflags
+  return hsDebuggerFFIInspectUnitId
+#endif
+
+
+addInMemoryUnit :: GhcMonad m
+  => UnitId      -- ^ The unit-id for the unit to add
+  -> PackageName -- ^ The package name for the unit to add
+  -> [UnitId]    -- ^ The unit-ids for dependencies
+  -> DynFlags    -- ^ Dynflags to base the unit on.
+  -> m ()
+addInMemoryUnit uid (PackageName pkgName) base_uids initialDynFlags = do
   let imhdv_dflags = initialDynFlags
-        { homeUnitId_ = hsDebuggerViewInMemoryUnitId
+        { homeUnitId_ = uid
         , importPaths = []
         , packageFlags =
           [ ExposePackage
@@ -109,7 +144,7 @@ addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
           , unitId /= rtsUnitId
           , unitId /= ghcInternalUnitId
           ]
-        , thisPackageName = Just "haskell-debugger-view"
+        , thisPackageName = Just $ unpackFS pkgName
         }
         & setGeneralFlag' Opt_HideAllPackages
 #if MIN_VERSION_ghc(9,14,2)
@@ -139,8 +174,9 @@ addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
                , HUG.homeUnitEnv_hpt = emptyHpt
                , HUG.homeUnitEnv_home_unit = Just home_unit
                }
-           in HUG.unitEnv_insert hsDebuggerViewInMemoryUnitId hdv_hue hug
+           in HUG.unitEnv_insert uid hdv_hue hug
       )
+
 
 -- | Make an in-memory 'GHC.Target' for a module from the module name and contents
 makeInMemoryTarget :: UnitId -> ModuleName -> StringBuffer -> IO GHC.Target
@@ -173,3 +209,10 @@ debuggerViewTextContents = stringToStringBuffer $(embedStringFile =<< makeRelati
 -- | GHC.Debugger.View.ByteString
 debuggerViewByteStringContents :: StringBuffer
 debuggerViewByteStringContents = stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger-view/src/GHC/Debugger/View/ByteString.hs")
+
+debuggerRuntimeFFIInspectModName :: ModuleName
+debuggerRuntimeFFIInspectModName = mkModuleName "GHC.Debugger.Runtime.FFIInspect"
+
+-- | The contents of GHC.Debugger.Runtime.FFIInspect in memory
+debuggerRuntimeFFIInspectContents :: StringBuffer
+debuggerRuntimeFFIInspectContents = stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger/GHC/Debugger/Runtime/FFIInspect.hs")

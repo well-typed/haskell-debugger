@@ -348,6 +348,9 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
       let loadedBuiltinModNames = [] :: [ModuleName]
 #endif
 
+#if !MIN_VERSION_ghc(9,14,2)
+      loadFFIInspect l buildWays
+#endif
       -- See Note [Must explicitly expose module graph units]
       exposeModGraphUnitsInInteractiveGhcDebuggerUnit
 
@@ -421,6 +424,35 @@ preservingThreadLabel m = do
         liftIO $ C.labelThread thId lbl
         pure x
 
+#if !MIN_VERSION_ghc(9,14,2)
+data FailedToLoadFFIInspectModule = FailedToLoadFFIInspectModule
+  deriving Show
+instance Exception FailedToLoadFFIInspectModule
+
+-- | Throws exception when module fails to load.
+--   Needed for GHC.Debugger.Runtime.Interpreter.Legacy
+loadFFIInspect
+  :: LogAction IO DebuggerLog
+  -> Ways
+  -> Ghc ()
+loadFFIInspect l buildWays = do
+  let ghcLog = liftLogIO l
+
+  dflags <- getDynFlags
+  uid <- addInMemoryFFIInspectUnit [baseUnitId dflags] (setDynFlagWays buildWays dflags)
+
+  successes <- loadInMemoryModules l uid modsToLoad
+  forM_ (zip successes modsToLoad) $ \case
+    (Failed,(modName,_)) -> do
+      ghcLog <& DebuggerLog Logger.Debug
+        (LogFailedToCompileBuiltinModule modName)
+      liftIO $ throwIO FailedToLoadFFIInspectModule
+    (Succeeded,_) ->
+      return ()
+  where
+    modsToLoad =
+      [(debuggerViewClassModName,debuggerRuntimeFFIInspectContents)]
+#endif
 
 findOrLoadHaskellDebuggerView :: LogAction IO DebuggerLog
              -> Ways
@@ -459,7 +491,7 @@ findOrLoadHaskellDebuggerView l buildWays = do
       fmap catMaybes . forM (zip successes modsToLoad) $ \case
         (Failed,(modName,_)) -> do
           ghcLog <& DebuggerLog Logger.Debug
-            (LogFailedToCompileDebugViewModule modName)
+            (LogFailedToCompileBuiltinModule modName)
           return $ Nothing
         (Succeeded,(modName,_)) ->
           return $ Just modName
