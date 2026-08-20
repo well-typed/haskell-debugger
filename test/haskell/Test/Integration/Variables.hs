@@ -8,9 +8,7 @@ import qualified Data.Text as T
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
-#ifdef mingw32_HOST_OS
 import Test.Tasty.ExpectedFailure
-#endif
 import DAP (Variable, variableValue)
 
 variableTests :: TestTree
@@ -34,6 +32,8 @@ variableTests =
     , testCase "hdv in-memory with containers (issue #47d)" hdvContainersMemTest
     , testCase "hdv in-memory with text (issue #47e)" hdvTextMemTest
     , testCase "force thunk in IntMap value persists (issue #47f)" thunkIntMapTest
+    , expectFailBecause "issue #301" $
+      testCase "force thunk in custom DebugView field (issue #301)" thunkFieldTest
     ]
 
 intsAndStringsTest :: Assertion
@@ -344,3 +344,28 @@ thunkIntMapTest =
       (ac2 % "1") @==? "5050"
       disconnect
 
+-- | A custom DebugView field that wraps a thunk, when forced, should return
+-- the forced value. A subsequent request should still show the result forced.
+-- It is no longer a thunk after being forced the first time!
+--
+-- Issue #301 observes that the subsequent request showed the field again as a
+-- thunk.
+thunkFieldTest :: Assertion
+thunkFieldTest =
+  withTestDAPServer "test/integration/T301" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "Main.hs"
+      hitBreakpointWith cfg 21
+      locals <- fetchLocalVars
+      action <- forceLazy (locals % "action")
+      action @==? "T301-X"
+      ac <- expandVar action
+      ti <- forceLazy (ac % "thunkInt")
+      ti @==? "5050"
+
+      -- Re-request the parent and check the field is still evaluated.
+      -- (it does not need to be forced again!)
+      locals2 <- fetchLocalVars
+      ac2 <- expandVar (locals2 % "action")
+      (ac2 % "thunkInt") @==? "5050"
+      disconnect
