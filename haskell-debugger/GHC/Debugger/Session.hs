@@ -56,6 +56,9 @@ import qualified Data.ByteString.Base16              as B16
 import qualified Data.ByteString.Char8               as B
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
+#if MIN_VERSION_ghc(10,1,0)
+import Data.IORef (newIORef)
+#endif
 import qualified Data.List as L
 import qualified Data.Containers.ListUtils as ListUtils
 import GHC.ResponseFile (expandResponse)
@@ -74,6 +77,9 @@ import GHC.Utils.Monad as GHC
 import GHC.Unit.Home.Graph
 import GHC.Unit.Home.PackageTable
 import GHC.Unit.Env
+#if MIN_VERSION_ghc(10,1,0)
+import GHC.Unit.External.Index (UnitIndexCache, initUnitIndexCache)
+#endif
 import GHC.Unit.Types
 import qualified GHC.Unit.State                        as State
 import GHC.Driver.Env
@@ -99,7 +105,11 @@ import qualified GHC.Unit.Home.ModInfo as GHC
 import GHC.Utils.TmpFs
 import Data.Foldable (for_)
 import GHC.Plugins (SourceError, try, RawPkgQual (..), HasCallStack, FastString, mkFastString, lookupUnitId)
+#if MIN_VERSION_ghc(10,1,0)
+import GHC.Types.SourceText (SourceText (..))
+#else
 import GHC.Types.SourceText (StringLiteral(..), SourceText (..))
+#endif
 import GHC.Stack.Annotation
 import GHC.Stack (callStack)
 import GHC.Settings (ToolSettings(..))
@@ -178,9 +188,16 @@ createHomeUnitGraph :: GHC.Logger -> [DynFlags] -> IO HomeUnitGraph
 createHomeUnitGraph logger unitDflags = do
   let home_units = Set.fromList $ map homeUnitId_ unitDflags
 
+#if MIN_VERSION_ghc(10,1,0)
+  uic <- initUnitIndexCache
+#endif
   unitEnvList <- flip traverse unitDflags $ \ dflags -> do
     let uid = homeUnitId_ dflags
+#if MIN_VERSION_ghc(10,1,0)
+    hue <- setupNewHomeUnitEnv home_units logger dflags uic
+#else
     hue <- setupNewHomeUnitEnv home_units logger dflags Nothing
+#endif
     assert (homeUnitId_ (homeUnitEnv_dflags hue) == uid) $
       pure (uid, hue)
 
@@ -203,12 +220,21 @@ fixHomeUnitsDynFlagsForIIDecl = do
 
 -- | The first argument should contain the home units the new @HomeUnitEnv@ depends on (@allUnits (hsc_HUG env)@ is always safe to give).
 --   The actual dependencies are specified by the @packageFlags@ in the @DynFlags@ argument.
+#if MIN_VERSION_ghc(10,1,0)
+setupNewHomeUnitEnv :: Set UnitId -> GHC.Logger -> DynFlags -> UnitIndexCache -> IO HomeUnitEnv
+setupNewHomeUnitEnv hug_keys logger dflags uic = do
+  emptyHpt <- emptyHomePackageTable
+  (unit_state,home_unit,mconstants) <- State.initUnits logger dflags uic hug_keys
+  updated_dflags <- GHC.updatePlatformConstants dflags mconstants
+  pure $ mkHomeUnitEnv unit_state updated_dflags emptyHpt (Just home_unit)
+#else
 setupNewHomeUnitEnv :: Set UnitId -> GHC.Logger -> DynFlags -> Maybe [GHC.UnitDatabase UnitId] -> IO HomeUnitEnv
 setupNewHomeUnitEnv hug_keys logger dflags cached_dbs = do
   emptyHpt <- emptyHomePackageTable
   (dbs,unit_state,home_unit,mconstants) <- State.initUnits logger dflags cached_dbs hug_keys
   updated_dflags <- GHC.updatePlatformConstants dflags mconstants
   pure $ mkHomeUnitEnv unit_state (Just dbs) updated_dflags emptyHpt (Just home_unit)
+#endif
 
 -- | Given a set of 'DynFlags', set up the 'UnitEnv' and 'HomeUnitEnv' for this
 -- 'HscEnv'.
@@ -249,8 +275,12 @@ addInteractiveGhcDebuggerUnit exposed env = do
             ]
         }
 
+#if MIN_VERSION_ghc(10,1,0)
+    setupNewHomeUnitEnv (allUnits initial_home_graph) (hsc_logger env) interactiveDynFlags (hscUIC env)
+#else
     let cached_unit_dbs = concat . catMaybes . fmap homeUnitEnv_unit_dbs $ Foldable.toList initial_home_graph
     setupNewHomeUnitEnv (allUnits initial_home_graph) (hsc_logger env) interactiveDynFlags (Just cached_unit_dbs)
+#endif
 
   let home_unit_graph =
         HUG.unitEnv_insert interactiveGhcDebuggerUnitId interactiveHomeUnit initial_home_graph
@@ -438,11 +468,15 @@ packageImportDecl :: PackageQualifier -> ModuleName -> ImportDecl GhcPs
 packageImportDecl (PackageQualifier pkgName) mn =
   (GHC.simpleImportDecl $ mn)
     { ideclPkgQual = RawPkgQual
+#if MIN_VERSION_ghc(10,1,0)
+        NoSourceText pkgName
+#else
         StringLiteral
           { sl_st = NoSourceText
           , sl_fs = pkgName
           , sl_tc = Nothing
           }
+#endif
     }
 -- ----------------------------------------------------------------------------
 -- Session cache directory
@@ -485,6 +519,10 @@ getTargetFileSummary hsc_env target
   = do
     let offset_file = GHC.augmentByWorkingDirectory dflags file
     exists <- liftIO $ doesFileExist offset_file
+#if MIN_VERSION_ghc(10,1,0)
+    -- summariseFile now takes a mutable ModSummary cache (an IORef).
+    old_summary_map <- newIORef Map.empty
+#endif
     if exists || isJust maybe_buf
     then summariseFile hsc_env home_unit old_summary_map offset_file mb_phase
          maybe_buf
@@ -493,7 +531,9 @@ getTargetFileSummary hsc_env target
       GHC.mkPlainErrorMsgEnvelope noSrcSpan (GHC.DriverFileNotFound offset_file)
   | otherwise = error "FIXME"
   where
+#if !MIN_VERSION_ghc(10,1,0)
       old_summary_map = Map.empty
+#endif
       GHC.Target {targetId, targetContents = maybe_buf, targetUnitId = uid} = target
       home_unit = ue_unitHomeUnit uid (hsc_unit_env hsc_env)
       dflags = homeUnitEnv_dflags (ue_findHomeUnitEnv uid (hsc_unit_env hsc_env))

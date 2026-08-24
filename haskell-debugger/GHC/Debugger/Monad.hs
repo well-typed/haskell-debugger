@@ -367,8 +367,13 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = f
       let
         imports
           = map GHC.IIDecl $ preludeImp :
+#if MIN_VERSION_ghc(10,1,0)
+            [ i { ideclImportList = Just (Exactly, []) }
+            | i <- instancesOnly ]
+#else
             [ i { ideclImportList = Just (Exactly, L noAnn []) }
             | i <- instancesOnly ]
+#endif
 
         -- We import (only the instances of) all the home unit
         -- modules to bring any orphan DebugView instances in scope.

@@ -32,6 +32,7 @@ import qualified GHC.Exts.Heap as Heap
 import qualified GHC.Stack as Stack
 import GHC.Unit.Module
 import Control.Exception
+import System.Directory (getCurrentDirectory)
 import GHC.Debugger.Interface.Messages (SourceSpan (..), ExceptionInfo (..), AbsFilePath (unAbs), mkAbsolute)
 import Control.Exception.Context
 import Data.Typeable
@@ -99,7 +100,8 @@ runDbgInterpCmd = \case
 #endif
   CollectExceptionInfo excRef -> do
     exc  <- localRef excRef
-    let info = exceptionInfo exc
+    cwd  <- mkAbsolute <$> getCurrentDirectory
+    let info = exceptionInfo cwd exc
     return info
 
 
@@ -207,8 +209,8 @@ lookupBCOBreakpoint Heap.BCOClosure{..}
     brk_info_ix_lo   = index_at 5#
 lookupBCOBreakpoint _ = pure Nothing
 
-exceptionInfo :: SomeException -> ExceptionInfo
-exceptionInfo se'@(SomeException exc) =
+exceptionInfo :: AbsFilePath -> SomeException -> ExceptionInfo
+exceptionInfo prefix se'@(SomeException exc) =
     ExceptionInfo
        { exceptionInfoTypeName = simpleTypeName
        , exceptionInfoFullTypeName = fullTypeName
@@ -221,7 +223,7 @@ exceptionInfo se'@(SomeException exc) =
     ctx = someExceptionContext se'
     rendered = displayExceptionContext ctx
     whileHandling = getExceptionAnnotations ctx
-    innerNodes = map (exceptionInfo . unwrap) whileHandling
+    innerNodes = map (exceptionInfo prefix . unwrap) whileHandling
     simpleTypeName = tyConName tc
     modulePrefix = case tyConModule tc of
       mdl | null mdl -> ""
@@ -238,7 +240,7 @@ exceptionInfo se'@(SomeException exc) =
 #if MIN_VERSION_ghc(9,15,0)
     exceptionContextLocation =
       let fromCallStack cs = case listToMaybe (getCallStack cs) of
-            Just (_, loc) -> Just (srcLocToSourceSpan loc)
+            Just (_, loc) -> Just (srcLocToSourceSpan prefix loc)
             Nothing       -> Nothing
           bts :: [Backtraces]
           bts = getExceptionAnnotations ctx
