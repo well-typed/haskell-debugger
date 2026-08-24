@@ -111,8 +111,12 @@ addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
         }
         & setGeneralFlag' Opt_HideAllPackages
   hsc_env <- getSession
+#if MIN_VERSION_ghc(10,1,0)
+  (unit_state,home_unit,mconstants) <- liftIO $ State.initUnits (hsc_logger hsc_env) imhdv_dflags (hscUIC hsc_env) $ HUG.allUnits $ hsc_HUG $ hsc_env
+#else
   let cached_unit_dbs = concat . catMaybes . fmap HUG.homeUnitEnv_unit_dbs $ Foldable.toList (hsc_HUG hsc_env)
   (dbs,unit_state,home_unit,mconstants) <- liftIO $ State.initUnits (hsc_logger hsc_env) imhdv_dflags (Just cached_unit_dbs) $ HUG.allUnits $ hsc_HUG $ hsc_env
+#endif
   updated_dflags <- liftIO $ updatePlatformConstants imhdv_dflags mconstants
   emptyHpt <- liftIO HPT.emptyHomePackageTable
   modifySession $ \env ->
@@ -121,7 +125,9 @@ addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
       & hscUpdateHUG (\hug ->
           let hdv_hue = HUG.HomeUnitEnv
                { HUG.homeUnitEnv_units = unit_state
+#if !MIN_VERSION_ghc(10,1,0)
                , HUG.homeUnitEnv_unit_dbs = Just dbs
+#endif
                , HUG.homeUnitEnv_dflags = updated_dflags
                , HUG.homeUnitEnv_hpt = emptyHpt
                , HUG.homeUnitEnv_home_unit = Just home_unit

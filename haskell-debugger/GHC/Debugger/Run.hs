@@ -39,7 +39,11 @@ import GHC (
   unLoc,
   )
 import GHC.Plugins (SourceError)
+#if MIN_VERSION_ghc(10,1,0)
+import GHC.Builtin.Modules (gHC_INTERNAL_GHCI_HELPERS)
+#else
 import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
+#endif
 import GHC.Unit.Types
 import GHC.Data.FastString
 import GHC.Driver.DynFlags as GHC

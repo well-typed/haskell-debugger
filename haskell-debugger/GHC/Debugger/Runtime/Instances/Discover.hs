@@ -18,7 +18,11 @@ import Control.Exception
 import Control.Monad.Reader
 
 import GHC
+#if MIN_VERSION_ghc(10,1,0)
+import GHC.Builtin.KnownKeys (ioTyConKey)
+#else
 import GHC.Builtin.Names
+#endif
 import GHC.Core.TyCon
 import GHC.Core.Type
 import GHC.Core.Map.Type
@@ -117,13 +121,22 @@ findDebugViewInstance needle_ty = do
 #endif
           hsc_env $ do
 
-        -- Types used by DebugView
+        -- Types used by DebugView.
+#if MIN_VERSION_ghc(10,1,0)
+        let lookupTyConName occ = greName <$> lookupTypeOccRn occ
+#else
+        let lookupTyConName occ = lookupTypeOccRn occ
+#endif
         varValueIOTy    <-  fmap mkTyConTy . tcLookupTyCon
-                        =<< lookupTypeOccRn (mkOrig modl (mkTcOcc "VarValueIO"))
+                        =<< lookupTyConName (mkOrig modl (mkTcOcc "VarValueIO"))
         varFieldsIOTy   <-  fmap mkTyConTy . tcLookupTyCon
-                        =<< lookupTypeOccRn (mkOrig modl (mkTcOcc "VarFieldsIO"))
+                        =<< lookupTyConName (mkOrig modl (mkTcOcc "VarFieldsIO"))
 
+#if MIN_VERSION_ghc(10,1,0)
+        ioTyCon <- tcLookupKnownKeyTyCon ioTyConKey
+#else
         ioTyCon <- tcLookupTyCon ioTyConName
+#endif
 
         -- Try to compile and load an expression for all methods of `DebugView`
         -- applied to the dictionary for the given Type (`needle_ty`)

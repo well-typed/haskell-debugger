@@ -24,7 +24,11 @@ import Control.Monad.Reader
 import Data.IORef
 import GHC.Conc.Sync
 
+#if MIN_VERSION_ghc(10,1,0)
+import GHC.Builtin.WiredIn.Types
+#else
 import GHC.Builtin.Types
+#endif
 import GHC.Runtime.Heap.Inspect
 import GHC.Utils.Outputable
 
