@@ -7,8 +7,6 @@
 {-# OPTIONS_GHC -Wno-orphans #-} -- necessary Binary instances
 module GHC.Debugger.Runtime.Interpreter.Custom where
 
-import GHC.Generics (Generic)
-
 import GHCi.Message
 import GHCi.RemoteTypes
 
@@ -34,6 +32,7 @@ import GHC.Unit.Module
 import Control.Exception
 import System.Directory (getCurrentDirectory)
 import GHC.Debugger.Interface.Messages (SourceSpan (..), ExceptionInfo (..), AbsFilePath (unAbs), mkAbsolute)
+import GHC.Debugger.Runtime.Interpreter.Types
 import Control.Exception.Context
 import Data.Typeable
 #if MIN_VERSION_ghc(9,15,0)
@@ -49,23 +48,6 @@ import qualified GHC.Exception.Backtrace.Experimental as Backtrace
 --------------------------------------------------------------------------------
 -- * Custom Commands
 --------------------------------------------------------------------------------
-
-data ThreadInfo ref = ThreadInfo
-  { threadInfoRef    :: !(ref ThreadId)
-  , threadInfoLabel  :: !(Maybe String)
-  , threadInfoStatus :: !ThreadStatus
-  }
-  deriving (Generic)
-
--- | Information about a stack frame
-data StackFrameInfo
-  -- | Information derived from an IPE entry
-  = StackFrameIPEInfo !InfoProv
-  -- | User-defined Stack Frame annotation
-  | StackFrameAnnotation !(Maybe Stack.SrcLoc) !String
-  -- | Information derived from a continuation BCO breakpoint info.
-  | StackFrameBreakpointInfo !InternalBreakpointId
-  deriving (Generic)
 
 data DbgInterpCmd a where
   ListThreads :: DbgInterpCmd [ThreadInfo RemoteRef]
@@ -83,7 +65,6 @@ dbgInterpCmdTag = 0x25
 runDbgInterpCmd :: DbgInterpCmd a -> IO a
 runDbgInterpCmd = \case
   ListThreads -> mapM threadInfo =<< listThreads
-#if MIN_VERSION_ghc(9,14,2)
   -- decodeStackWithIpe exposed from 9.14.2 onwards (see #27065)
   DecodeThreadStack threadIdRef -> do
     -- We clone the stack of the thread and decode it in the external interpreter to avoid
@@ -95,9 +76,6 @@ runDbgInterpCmd = \case
     clonedStack <- Stack.cloneThreadStack threadId
     frames      <- Stack.decodeStackWithIpe clonedStack
     catMaybes <$> mapM stackFrameInfo frames
-#else
-  DecodeThreadStack _ -> fail "Decoding thread stacks is not supported on GHC versions prior to 9.14.2, which exposes the necessary decodeStackWithIpe functions. Please upgrade to GHC 9.14.2 or later to use this feature."
-#endif
   CollectExceptionInfo excRef -> do
     exc  <- localRef excRef
     cwd  <- mkAbsolute <$> getCurrentDirectory
