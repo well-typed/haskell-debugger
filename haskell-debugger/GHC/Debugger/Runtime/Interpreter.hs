@@ -55,6 +55,7 @@ import GHC.Debugger.Monad
 
 import GHC.Debugger.Interface.Messages (ExceptionInfo)
 import GHC.Debugger.Runtime.Interpreter.Custom
+import GHC.Debugger.Runtime.Interpreter.Types
 
 import Data.Binary
 import GHC.Driver.Env (hscInterp)

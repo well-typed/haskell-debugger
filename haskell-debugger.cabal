@@ -101,7 +101,7 @@ library
                       GHC.Debugger.Runtime.Thread.Stack,
                       GHC.Debugger.Runtime.Thread.Map,
 
-                      GHC.Debugger.Runtime.Interpreter.Custom,
+                      GHC.Debugger.Runtime.Interpreter.Types,
 
                       GHC.Debugger.Monad,
                       GHC.Debugger.Debuggee,
@@ -113,10 +113,14 @@ library
                       GHC.Debugger.Session.Interactive,
                       GHC.Debugger.Interface.Messages
 
-    if impl(ghc >= 9.15)
+    if impl(ghc >= 9.14.2)
       exposed-modules:
-                      GHC.Debugger.Runtime.Interpreter
+                      GHC.Debugger.Runtime.Interpreter,
+                      GHC.Debugger.Runtime.Interpreter.Custom
 
+    if impl(ghc <= 9.14.1)
+      exposed-modules:
+                      GHC.Debugger.Runtime.Interpreter.Legacy
 
     default-extensions: CPP
     build-depends:    base >= 4.22 && < 5,
