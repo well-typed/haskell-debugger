@@ -1,0 +1,9 @@
+import: cabal.project
+-- Forces you to have the file, but it can be empty.
+-- Less error-prone than HLS ignoring cabal.project.local by default.
+import: cabal.project.local
+
+-- Removes exe:hdb from build-tool-depends for haskell-debugger-test,
+-- letting keep haskell-debugger-test in the session at all times.
+package haskell-debugger
+  flags: -hdb-dep
