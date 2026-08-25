@@ -4,6 +4,18 @@
         {
             "type": "haskell-debugger",
             "request": "launch",
+            "name": "T160 on Port 12345",
+            "projectRoot": "${workspaceFolder}/test/integration/T160/",
+            "entryFile": "Main.hs",
+            "entryArgs": [],
+            "entryPoint": "main",
+            "extraGhcArgs": [],
+            "cradleFile" : "${workspaceFolder}/test/integration/T160/hie.yaml",
+            "debugServer": 12345
+        },
+        {
+            "type": "haskell-debugger",
+            "request": "launch",
             "name": "Debugger Server on Port 12345",
             "projectRoot": "${workspaceFolder}",
             "entryFile": "hdb/Main.hs",
