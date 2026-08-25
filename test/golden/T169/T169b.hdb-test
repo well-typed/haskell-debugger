@@ -1,3 +1,5 @@
 #!/bin/sh
 
-$HDB -v0 T169b.hs < T169b.hdb-stdin 2>&1
+# We don't care to see ScopeInfos when we stop at a breakpoint, just care about
+# the debuggee outputting
+$HDB -v0 T169b.hs < T169b.hdb-stdin 2>&1 | grep -v 'ScopeInfo'
