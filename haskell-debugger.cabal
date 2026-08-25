@@ -72,6 +72,11 @@ common warnings
 --     base        >= 4.21 && < 5,
 --     Cabal-hooks >= 3.14 && < 3.18,
 
+Flag hdb-dep
+  description: Include hdb as build-tool-dependency of haskell-debugger-test. To be disabled by HLS so the project can get setup even when exe:hdb's build is broken.
+  default: True
+  manual: True
+
 library
     import:           warnings
     exposed-modules:  GHC.Debugger,
@@ -311,8 +316,8 @@ test-suite haskell-debugger-test
         exceptions,
         retry,
         stm >= 2.5.3.1,
-
-    build-tool-depends: haskell-debugger:hdb
+    if flag(hdb-dep)
+        build-tool-depends: haskell-debugger:hdb
     ghc-options: -threaded
     -- TODO: Investigate apparent race condition on windows
     if !os(windows)
