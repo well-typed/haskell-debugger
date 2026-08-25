@@ -1,6 +1,9 @@
 {-# LANGUAGE DerivingStrategies, CPP, RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NondecreasingIndentation #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-x-partial #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Initialise the GHC session for one or more home units.
 --
@@ -60,6 +63,7 @@ import qualified Data.Map as Map
 import Data.IORef (newIORef)
 #endif
 import qualified Data.List as L
+import qualified Data.List as List
 import qualified Data.Containers.ListUtils as ListUtils
 import GHC.ResponseFile (expandResponse)
 import HIE.Bios.Environment as HIE
@@ -78,7 +82,7 @@ import GHC.Unit.Home.Graph
 import GHC.Unit.Home.PackageTable
 import GHC.Unit.Env
 #if MIN_VERSION_ghc(10,1,0)
-import GHC.Unit.External.Index (UnitIndexCache, initUnitIndexCache)
+import GHC.Unit.External.Index (UnitIndexCache)
 #endif
 import GHC.Unit.Types
 import qualified GHC.Unit.State                        as State
@@ -114,6 +118,7 @@ import GHC.Stack.Annotation
 import GHC.Stack (callStack)
 import GHC.Settings (ToolSettings(..))
 import qualified GHC.Types.Unique.Supply as GHC
+import Data.Containers.ListUtils (nubOrd)
 
 -- | Throws if package flags are unsatisfiable
 parseHomeUnitArguments :: GhcMonad m
@@ -184,17 +189,14 @@ setupHomeUnitGraph flagsAndTargets = do
 
 -- | Set up the 'HomeUnitGraph' with empty 'HomeUnitEnv's.
 -- The first 'DynFlags' are the 'DynFlags' for the interactive session.
-createHomeUnitGraph :: GHC.Logger -> [DynFlags] -> IO HomeUnitGraph
-createHomeUnitGraph logger unitDflags = do
+createHomeUnitGraph :: GHC.Logger -> UnitEnv -> [DynFlags] -> IO HomeUnitGraph
+createHomeUnitGraph logger _uenv unitDflags = do
   let home_units = Set.fromList $ map homeUnitId_ unitDflags
 
-#if MIN_VERSION_ghc(10,1,0)
-  uic <- initUnitIndexCache
-#endif
   unitEnvList <- flip traverse unitDflags $ \ dflags -> do
     let uid = homeUnitId_ dflags
 #if MIN_VERSION_ghc(10,1,0)
-    hue <- setupNewHomeUnitEnv home_units logger dflags uic
+    hue <- setupNewHomeUnitEnv home_units logger dflags (ue_uic _uenv)
 #else
     hue <- setupNewHomeUnitEnv home_units logger dflags Nothing
 #endif
@@ -220,17 +222,21 @@ fixHomeUnitsDynFlagsForIIDecl = do
 
 -- | The first argument should contain the home units the new @HomeUnitEnv@ depends on (@allUnits (hsc_HUG env)@ is always safe to give).
 --   The actual dependencies are specified by the @packageFlags@ in the @DynFlags@ argument.
+setupNewHomeUnitEnv
+  :: Set UnitId -> GHC.Logger -> DynFlags
 #if MIN_VERSION_ghc(10,1,0)
-setupNewHomeUnitEnv :: Set UnitId -> GHC.Logger -> DynFlags -> UnitIndexCache -> IO HomeUnitEnv
-setupNewHomeUnitEnv hug_keys logger dflags uic = do
+  -> UnitIndexCache
+#else
+  -> Maybe [GHC.UnitDatabase UnitId]
+#endif
+  -> IO HomeUnitEnv
+setupNewHomeUnitEnv hug_keys logger dflags cached_dbs = do
   emptyHpt <- emptyHomePackageTable
-  (unit_state,home_unit,mconstants) <- State.initUnits logger dflags uic hug_keys
+#if MIN_VERSION_ghc(10,1,0)
+  (unit_state,home_unit,mconstants) <- State.initUnits logger dflags cached_dbs hug_keys
   updated_dflags <- GHC.updatePlatformConstants dflags mconstants
   pure $ mkHomeUnitEnv unit_state updated_dflags emptyHpt (Just home_unit)
 #else
-setupNewHomeUnitEnv :: Set UnitId -> GHC.Logger -> DynFlags -> Maybe [GHC.UnitDatabase UnitId] -> IO HomeUnitEnv
-setupNewHomeUnitEnv hug_keys logger dflags cached_dbs = do
-  emptyHpt <- emptyHomePackageTable
   (dbs,unit_state,home_unit,mconstants) <- State.initUnits logger dflags cached_dbs hug_keys
   updated_dflags <- GHC.updatePlatformConstants dflags mconstants
   pure $ mkHomeUnitEnv unit_state (Just dbs) updated_dflags emptyHpt (Just home_unit)
@@ -243,7 +249,7 @@ setupNewHomeUnitEnv hug_keys logger dflags cached_dbs = do
 initHomeUnitEnv :: [DynFlags] -> HscEnv -> IO HscEnv
 initHomeUnitEnv unitDflags env = do
 
-  initial_home_graph <- createHomeUnitGraph (hsc_logger env) unitDflags
+  initial_home_graph <- createHomeUnitGraph (hsc_logger env) (hsc_unit_env env) unitDflags
 
   -- We need one of the units to be the `ue_currentUnit`: by default it's "main", but we don't create such a unit and Ghc panics.
   addInteractiveGhcDebuggerUnit (Set.toList . allUnits $ initial_home_graph) $ hscUpdateHUG (const initial_home_graph) env
@@ -273,6 +279,8 @@ addInteractiveGhcDebuggerUnit exposed env = do
             , uid /= interactiveGhcDebuggerUnitId
             -- TODO: other uids to filter?
             ]
+        , packageDBFlags = concatPackageDbStacksUsingLongestCommonPrefix $
+            (fmap (packageDBFlags . homeUnitEnv_dflags) (Foldable.toList initial_home_graph))
         }
 
 #if MIN_VERSION_ghc(10,1,0)
@@ -293,6 +301,20 @@ addInteractiveGhcDebuggerUnit exposed env = do
         , ue_namever         = GHC.ghcNameVersion interactiveDFlags
         }
   pure $ hscSetFlags interactiveDFlags $ hscSetUnitEnv unit_env env
+  where
+    -- inlined from GHCi. Patiently waiting for a nice Dev UX to units and flags...
+    concatPackageDbStacksUsingLongestCommonPrefix :: Ord a => [[a]] -> [a]
+    concatPackageDbStacksUsingLongestCommonPrefix (fmap reverse -> stacks) =
+      let
+        -- O (m * n)
+        -- m ... Number of PackageDBFlag stacks
+        -- n ... Size of the stacks
+        longestCommonPrefix =
+          map List.head . List.takeWhile ((List.all . (==) . List.head) <*> List.tail) . List.transpose
+        prefix =
+          longestCommonPrefix stacks
+      in
+        prefix ++ nubOrd (concatMap (List.drop (length prefix)) stacks)
 
 -- | Sets the units from the @ModuleGraph@ as the exposed ones for @InteractiveGhcDebuggerUnit@.
 --
@@ -773,3 +795,8 @@ dropEnd i xs
     | otherwise = f xs (drop i xs)
     where f (a:as) (_:bs) = a : f as bs
           f _ _ = []
+
+#if !MIN_VERSION_ghc(10,1,0)
+deriving instance Ord PkgDbRef
+deriving instance Ord PackageDBFlag
+#endif

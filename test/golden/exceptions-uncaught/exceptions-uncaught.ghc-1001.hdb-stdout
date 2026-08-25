@@ -6,7 +6,12 @@ Stopped at breakpoint
 Exception: ErrorCall
 Message: boom while handling
 Call stack:
-  While handling boom outer
+  While handling ghc-internal:GHC.Internal.Exception.ErrorCall:
+    |
+    | boom outer
+    |
+    | HasCallStack backtrace:
+    |   error, called at <TEMPORARY-DIRECTORY>/prog/Main.hs:8:10 in main:Main
   
   HasCallStack backtrace:
     error, called at <TEMPORARY-DIRECTORY>/prog/Main.hs:14:3 in main:Main

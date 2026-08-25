@@ -20,9 +20,11 @@ module GHC.Debugger.Session.Builtin
 
 import Data.FileEmbed
 import Data.Function
-import Data.Maybe
 import Data.Time
+#if !MIN_VERSION_ghc(10,1,0)
+import Data.Maybe
 import qualified Data.Foldable as Foldable
+#endif
 
 import GHC
 import GHC.Unit
