@@ -106,6 +106,7 @@ extInterpParser =
          <> short 'p'
          <> metavar "PORT"
          <> help "port on which the external interpreter should connect to the debugger" )
+        <*> verbosityParser Error
   <|> HdbExternalInterpreter
         <$> argument auto
           ( metavar "WRITE_FD"
@@ -113,6 +114,7 @@ extInterpParser =
         <*> argument auto
           ( metavar "READ_FD"
          <> help "external interpreter read file descriptor" )
+        <*> verbosityParser Error
 
 -- | Combined parser for HdbOptions
 hdbOptionsParser :: Parser HdbOptions

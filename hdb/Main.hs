@@ -64,7 +64,7 @@ main = do
          -- Special case to detect --external-interpreter in the third
          -- position. If we could specify -opti options to put *before* the
          -- descriptors we could get rid of this.
-         pure (HdbExternalInterpreter (read writeFd) (read readFd))
+         pure (HdbExternalInterpreter (read writeFd) (read readFd) Error)
     _ -> parseHdbOptions
   case hdbOpts of
     HdbDAPServer{port, internalInterpreter, disableIpeBacktraces} -> do
@@ -108,20 +108,20 @@ main = do
     HdbExternalInterpreter{writeFd, readFd} -> do
       inh  <- GHCi.readGhcHandle (show readFd)
       outh <- GHCi.readGhcHandle (show writeFd)
-      runExternalInterpreterServer inh outh
+      runExternalInterpreterServer inh outh hdbOpts.verbosity
     HdbExternalInterpreterPort{port} -> do
       pid <- getCurrentPid
       withExternalInterpreterPort (fromIntegral port) $ \h -> do
         hPutStrLn h (show pid)
         hFlush h
-        runExternalInterpreterServer h h
+        runExternalInterpreterServer h h hdbOpts.verbosity
   where
-    runExternalInterpreterServer inh outh = do
+    runExternalInterpreterServer inh outh verbosity = do
       GHCi.installSignalHandlers
       pipe <- GHCi.mkPipeFromHandles inh outh
-      let verbose = False
-#if MIN_VERSION_ghc(9,15,0)
-      uninterruptibleMask $ \restore ->
+      let verbose = verbosity <= Info -- Debug || Info
+#if MIN_VERSION_ghc(9,14,2)
+      uninterruptibleMask $ \restore -> do
         GHCi.servWithCustom verbose hook pipe restore dbgInterpCmdHandler
 #else
       uninterruptibleMask $ GHCi.serv verbose hook pipe
