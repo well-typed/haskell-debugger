@@ -69,10 +69,12 @@ data HdbOptions
   | HdbExternalInterpreter
       { writeFd :: Int
       , readFd  :: Int
+      , verbosity :: Severity
       }
 
   -- | Launch the custom-for-the-debugger external interpreter and connect it
   -- to the debugger through a TCP socket.
   | HdbExternalInterpreterPort
       { port :: Int
+      , verbosity :: Severity
       }
