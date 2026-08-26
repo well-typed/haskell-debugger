@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# Running hdb on a non-existent entry file should yield readable error and not
+# something internal/inscrutable down the line
+$HDB -v0 app/Main.hs 2>&1 || true
