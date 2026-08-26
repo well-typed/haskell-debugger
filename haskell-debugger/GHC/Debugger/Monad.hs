@@ -267,7 +267,9 @@ runDebuggerAction :: forall a. LogAction IO DebuggerLog
   -> Ghc () -- ^ load home units action
   -> Debugger a
   -> Ghc a
-runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) = flip MC.finally cleanupInterp $ -- See Note [Shutting down the external interpreter]
+runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
+  = flip MC.finally cleanupInterp $
+          -- See Note [Shutting down the external interpreter]
   do
   dflags0 <- GHC.getSessionDynFlags
   let dflags1 = dflags0
@@ -699,7 +701,7 @@ interpreter and the debugger, while not necessarily the same process, are the
 same executable). Ditto for `iservConfProfiled` (with `hostIsProfiled`).
 
 Note [UniqueSupply is process global]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 The generation of `Unique`s is controlled by two global pointers declared in the
 `ghc` package. The same two pointers are shared by all sessions, since the host
 ghc library is only loaded once.

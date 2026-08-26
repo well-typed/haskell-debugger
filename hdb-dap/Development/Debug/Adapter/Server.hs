@@ -268,7 +268,7 @@ logDebuggerLog logGhcLog l threshold = \case
       DebuggerSessionLog sev msg ->
         when (sev >= threshold) $
           l <&
-            (renderSeverity sev <> T.pack (show msg))
+            (renderSeverity sev <> msg)
 
 defaultLog :: LogAction IO Text -> Severity -> WithSeverity Text -> IO ()
 defaultLog l threshold (WithSeverity msg sev)
