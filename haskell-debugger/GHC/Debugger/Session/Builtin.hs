@@ -112,6 +112,11 @@ addInMemoryHsDebuggerViewUnit base_uids initialDynFlags = do
         , thisPackageName = Just "haskell-debugger-view"
         }
         & setGeneralFlag' Opt_HideAllPackages
+#if MIN_VERSION_ghc(9,14,2)
+        -- In memory modules should not write .hi nor .gbc files.
+        & flip gopt_unset Opt_WriteByteCode
+        & flip gopt_unset Opt_WriteInterface
+#endif
   hsc_env <- getSession
 #if MIN_VERSION_ghc(10,1,0)
   (unit_state,home_unit,mconstants) <- liftIO $ State.initUnits (hsc_logger hsc_env) imhdv_dflags (hscUIC hsc_env) $ HUG.allUnits $ hsc_HUG $ hsc_env
