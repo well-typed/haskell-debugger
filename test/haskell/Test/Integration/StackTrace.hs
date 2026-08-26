@@ -10,6 +10,9 @@ import Test.Tasty.HUnit
 #ifdef mingw32_HOST_OS
 import Test.Tasty.ExpectedFailure
 #endif
+#if __GLASGOW_HASKELL__ >= 1001
+import Test.Tasty.ExpectedFailure
+#endif
 import qualified Data.Text as Text
 import DAP (threadId, stackFrameName)
 
@@ -19,7 +22,11 @@ stackTraceTests =
   ignoreTestBecause "Needs to be fixed for Windows (#199)" $
 #endif
   testGroup "DAP.Integration.StackTrace"
-    [ testCase "contains mixed IPE and breakpoint frames (issue #107)" mixedFramesTest
+    [
+#if __GLASGOW_HASKELL__ >= 1001
+      expectFailBecause "Needs to be fixed upstream ASAP (#27749): the thenDo continuation is getting assigned a `bindIO` source location" $
+#endif
+      testCase "contains mixed IPE and breakpoint frames (issue #107)" mixedFramesTest
     , testCase "displays stack annotation frames (issue #159)" stackAnnotationsTest
     ]
 
