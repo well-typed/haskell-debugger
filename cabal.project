@@ -7,13 +7,6 @@ source-repository-package
     location: https://github.com/haskell/hie-bios
     tag: 96ceadb49af86f77248f12dc3ae77d0dbb1457d5
 
--- See issue https://gitlab.haskell.org/ghc/ghc/-/issues/27419
--- We can remove this, once the upstream issue is solved and the
--- nightly GHC version is updated to include the fix from #27419.
-if impl(ghc <10.1)
-    package *
-        ghc-options: -finfo-table-map
-
 if !os(windows)
     package *
         -- Speeds up a bit
