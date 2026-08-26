@@ -53,11 +53,17 @@ runIDM :: LogAction IO InteractiveLog
        -> RunDebuggerSettings
        -> InteractiveDM a
        -> IO a
-runIDM logger entryPoint entryFile entryArgs extraGhcArgs cradleFile runConf act = do
-  projectRoot <- mkAbsolute <$> getCurrentDirectory
+runIDM logger runEntryPoint entryFile runEntryArgs extraGhcArgs cradleFile runConf act = do
+  runProjectRoot <- mkAbsolute <$> getCurrentDirectory
 
   let hieBiosLogger = contramap ISessionSetupLog logger
-  hieDebugRunner hieBiosLogger (DebugRunnerConf (unAbs projectRoot) entryFile extraGhcArgs cradleFile) >>= \case
+  let runEntryFile = runProjectRoot /> entryFile
+
+  entryFileExists <- doesFileExist (unAbs runEntryFile)
+  when (not entryFileExists) $ do
+    exitWithMsg $ "Entry file \"" ++ (unAbs runEntryFile) ++ "\" does not exist or is a directory."
+
+  hieDebugRunner hieBiosLogger (DebugRunnerConf (unAbs runProjectRoot) entryFile extraGhcArgs cradleFile) >>= \case
     Left e               -> exitWithMsg e
     Right (_ghcInvocation, debugRunner)
                          -> do
@@ -66,7 +72,7 @@ runIDM logger entryPoint entryFile entryArgs extraGhcArgs cradleFile runConf act
       runDebugger debugRec debugRunner runConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
-                   (RunOptions { runProjectRoot = projectRoot, runEntryFile = projectRoot /> entryFile, runEntryPoint = entryPoint, runEntryArgs = entryArgs })
+                   (RunOptions { runProjectRoot, runEntryFile, runEntryPoint, runEntryArgs })
                    (RunContext { runLastCommand = Nothing, runCurrentThread = Nothing } )
   where
     exitWithMsg txt = do
