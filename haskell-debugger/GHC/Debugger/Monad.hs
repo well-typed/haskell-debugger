@@ -742,11 +742,17 @@ doDownsweep reuse_mg = do
 #endif
       [] False
   when (not $ null errs_base) $ do
+    -- Print the errors to the user, rather than just throwing. When using DAP,
+    -- outputting to the logger the error is what displays it in the "Debug
+    -- Console" rather than "Output" DAP log.
+    logger <- getLogger
+    dflags <- hsc_dflags <$> getSession
+    let ghc_errs = fmap GhcDriverMessage (unionManyMessages errs_base)
+    liftIO $ printMessages logger (initPrintConfig dflags) (initDiagOpts dflags) ghc_errs
 #if MIN_VERSION_ghc(9,15,0)
-    sec <- initSourceErrorContext . hsc_dflags <$> getSession
-    throwErrors sec (fmap GhcDriverMessage (unionManyMessages errs_base))
+    throwErrors (initSourceErrorContext dflags) ghc_errs
 #else
-    throwErrors (fmap GhcDriverMessage (unionManyMessages errs_base))
+    throwErrors ghc_errs
 #endif
   return mod_graph
 
