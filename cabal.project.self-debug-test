@@ -5,3 +5,8 @@
 -- Referenced by hie-self-debug-test.yaml
 
 import: cabal.project
+
+package haskell-debugger
+  ghc-options: -w
+package haskell-debugger-view
+  ghc-options: -w
