@@ -33,6 +33,7 @@ fi
 $HDB -v0 --cradle-file="$yaml_file" hdb/Main.hs < "test/golden/self-debug-cli/self-debug-cli.hdb-stdin" 2>&1 \
   | grep -v "BreakFound" \
   | grep -v "] Compiling" \
+  | grep -v "ld: warning: -U option is redundant when using -undefined dynamic_lookup" \
   | sed \
       -e 's|[^ ]*/Paths_haskell_debugger.hs|<AUTOGEN-DIR>/Paths_haskell_debugger.hs|g' \
       -e 's|haskell-debugger-[0-9.][0-9.]*-inplace|haskell-debugger-<VERSION>-inplace|g' \
