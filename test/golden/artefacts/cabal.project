@@ -1,0 +1,7 @@
+packages: .
+
+library-bytecode: True
+
+-- hdb sets -fbyte-code -fwrite-byte-code -fwrite-interface itself, but these might be relevant for debugging in ghci
+package artefacts
+  ghc-options: -fbyte-code-and-object-code -fwrite-byte-code -fwrite-interface 
