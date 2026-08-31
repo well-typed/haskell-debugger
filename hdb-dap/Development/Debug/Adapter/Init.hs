@@ -80,6 +80,9 @@ data LaunchArgs
     -- ^ Additional arguments to pass to the GHC invocation inferred by hie-bios for this project
   , cradleFile :: Maybe FilePath
     -- ^ specify cradle file rather than let it be inferred from @entryFile@, relative to @projectRoot@.
+  , externalInterpreterArgs :: Maybe [String]
+    -- ^ Extra arguments to append to the external interpreter invocation. No
+    -- effect when using the internal interpreter.
   } deriving stock (Show, Eq, Generic)
     deriving anyclass FromJSON
 
@@ -110,6 +113,7 @@ initDebugger l0 servConf interpChoice
                          , entryArgs  = fromMaybe [] -> entryArgs
                          , extraGhcArgs = fromMaybe [] -> extraGhcArgs
                          , cradleFile
+                         , externalInterpreterArgs = fromMaybe [] -> externalInterpreterArgs
                          } = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
@@ -157,7 +161,7 @@ initDebugger l0 servConf interpChoice
 
       dbgLog <- liftIO $ createDebuggerLogger l dapLogger writeDAPOutput
 
-      dapd <- initDAPDebuggee l (hdbProgram servConf) interpChoice
+      dapd <- initDAPDebuggee l (hdbProgram servConf) interpChoice externalInterpreterArgs
 
       let
         defaultRunConf = Debugger.RunDebuggerSettings
@@ -207,14 +211,15 @@ initDAPDebuggee
   :: LogAction IO DAPSessionLog
   -> FilePath
   -> InterpreterChoice
+  -> [String]
   -> DebugAdaptor DAPDebuggee
-initDAPDebuggee _ _ InterpreterChoice{runInTerminal = False, internal = True}
+initDAPDebuggee _ _ InterpreterChoice{runInTerminal = False, internal = True} _
   = internalNoInTerminalDAPD
-initDAPDebuggee _ hdbProg InterpreterChoice{runInTerminal = False, internal = False}
-  = externalNoInTerminalDAPD hdbProg
-initDAPDebuggee _ hdbProg InterpreterChoice{internal = False, runInTerminal = True}
-  = externalInTerminalDAPD hdbProg
-initDAPDebuggee l hdbProg InterpreterChoice{runInTerminal = True, internal = True}
+initDAPDebuggee _ hdbProg InterpreterChoice{runInTerminal = False, internal = False} extraInterpArgs
+  = externalNoInTerminalDAPD hdbProg extraInterpArgs
+initDAPDebuggee _ hdbProg InterpreterChoice{internal = False, runInTerminal = True} extraInterpArgs
+  = externalInTerminalDAPD hdbProg extraInterpArgs
+initDAPDebuggee l hdbProg InterpreterChoice{runInTerminal = True, internal = True} _
   = internalInTerminalDAPD l hdbProg
 
 

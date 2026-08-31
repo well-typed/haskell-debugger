@@ -57,21 +57,24 @@ data InterpreterSettings = InterpreterSettings
       }
 
 mkInternalInterpreterFlags :: DynFlags -> DynFlags
-mkExternalInterpreterFlags :: String -> DynFlags -> DynFlags
-(mkInternalInterpreterFlags, mkExternalInterpreterFlags) = (mkInterpreterFlags True "", mkInterpreterFlags False)
-  where
-    mkInterpreterFlags :: Bool -> String -> DynFlags -> DynFlags
-    mkInterpreterFlags preferInternalInterpreter externalInterpreterProg df = df
-      -- Enable the external interpreter by default! See #169
-      -- See Note [Custom external interpreter]
-      & enableExternalInterpreter preferInternalInterpreter
-      -- Ext interp is the same program as this, with "--external-interpreter"
-      -- (this is ignored on GHC 9.14, see Note [Custom external interpreter])
-      & setPgmI externalInterpreterProg
-      -- ideally, we'd set "external-interpreter" *before* the file
-      -- descriptors. since there's no way to do that yet, we just have
-      -- some logic in main to detect [writefd, readfd, --external-interpreter]
-      & addOptI "--external-interpreter"
+mkInternalInterpreterFlags = mkInterpreterFlags True "" []
+
+mkExternalInterpreterFlags :: String -> [String] -> DynFlags -> DynFlags
+mkExternalInterpreterFlags = mkInterpreterFlags False
+
+mkInterpreterFlags :: Bool -> String -> [String] -> DynFlags -> DynFlags
+mkInterpreterFlags preferInternalInterpreter externalInterpreterProg extraArgs df = df
+  -- Enable the external interpreter by default! See #169
+  -- See Note [Custom external interpreter]
+  & enableExternalInterpreter preferInternalInterpreter
+  -- Ext interp is the same program as this, with "--external-interpreter"
+  -- (this is ignored on GHC 9.14, see Note [Custom external interpreter])
+  & setPgmI externalInterpreterProg
+  -- ideally, we'd set "external-interpreter" *before* the file
+  -- descriptors. since there's no way to do that yet, we just have
+  -- some logic in main to detect [writefd, readfd, --external-interpreter, extraArgs...]
+  & addOptI "--external-interpreter"
+  & \d -> foldl (flip addOptI) d extraArgs
 
 
 mkInternalInterpreterSetup :: LogAction IO DebuggerLog -> DynFlags -> Ghc a -> Ghc a
@@ -201,7 +204,7 @@ mkCliInterpreterSettings internalInterpreter debuggeeStdin = do
     Nothing -> pure Inherit
   -- the same program invoked with `external-interpreter` serves as the external interpreter
   thisProg <- getExecutablePath
-  pure InterpreterSettings { interpreterFlags = mkExternalInterpreterFlags thisProg
+  pure InterpreterSettings { interpreterFlags = mkExternalInterpreterFlags thisProg []
     , interpreterSetup = mkExternalInterpreterSubProcessSetup stdinStream Inherit Inherit (const $ pure ())
     }
 

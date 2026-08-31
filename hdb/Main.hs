@@ -58,14 +58,7 @@ main = do
   setBacktraceMechanismState CostCentreBacktrace False
   setBacktraceMechanismState HasCallStackBacktrace True
 
-  allArgs <- getArgs
-  hdbOpts <- case allArgs of
-    [writeFd, readFd, "--external-interpreter"] ->
-         -- Special case to detect --external-interpreter in the third
-         -- position. If we could specify -opti options to put *before* the
-         -- descriptors we could get rid of this.
-         pure (HdbExternalInterpreter (read writeFd) (read readFd) Error)
-    _ -> parseHdbOptions
+  hdbOpts <- parseHdbOptions
   case hdbOpts of
     HdbDAPServer{port, internalInterpreter, disableIpeBacktraces} -> do
       setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)

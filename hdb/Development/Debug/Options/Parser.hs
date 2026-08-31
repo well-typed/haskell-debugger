@@ -9,6 +9,7 @@ module Development.Debug.Options.Parser
 import Options.Applicative hiding (command)
 
 import Data.Version
+import System.Environment (getArgs)
 import qualified Options.Applicative
 import qualified Paths_haskell_debugger as P
 
@@ -195,6 +196,18 @@ hdbParserInfo = info (hdbOptionsParser <**> versioner <**> helper)
 
 -- | Parse command line arguments
 parseHdbOptions :: IO HdbOptions
-parseHdbOptions = customExecParser
-  defaultPrefs{prefShowHelpOnError = True, prefShowHelpOnEmpty = True}
-  hdbParserInfo
+parseHdbOptions = do
+  args <- normalizeExternalInterpreterArgs <$> getArgs
+  handleParseResult $ execParserPure
+    defaultPrefs{prefShowHelpOnError = True, prefShowHelpOnEmpty = True}
+    hdbParserInfo
+    args
+
+-- | Rewrite the arguments GHC passes when spawning the custom external
+-- interpreter (@\<writefd\> \<readfd\> --external-interpreter [extra args...]@)
+-- into the canonical @external-interpreter \<writefd\> \<readfd\> [extra args...]@
+-- form, so 'extInterpParser' handles it. See Note [Custom external interpreter].
+normalizeExternalInterpreterArgs :: [String] -> [String]
+normalizeExternalInterpreterArgs (writeFd : readFd : "--external-interpreter" : rest) =
+  "external-interpreter" : writeFd : readFd : rest
+normalizeExternalInterpreterArgs args = args
