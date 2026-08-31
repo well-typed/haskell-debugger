@@ -71,11 +71,11 @@ internalNoInTerminalDAPD
         [ stdoutCaptureThread Nothing, stderrCaptureThread Nothing ]
         (pure ())
 
-externalNoInTerminalDAPD :: MonadIO f => FilePath -> f DAPDebuggee
-externalNoInTerminalDAPD hdbProg = do
+externalNoInTerminalDAPD :: MonadIO f => FilePath -> [String] -> f DAPDebuggee
+externalNoInTerminalDAPD hdbProg extraInterpArgs = do
   iserv_handles <- liftIO newEmptyMVar
   let interpSettings = InterpreterSettings
-        { interpreterFlags = mkExternalInterpreterFlags hdbProg
+        { interpreterFlags = mkExternalInterpreterFlags hdbProg extraInterpArgs
         , interpreterSetup = mkExternalInterpreterSubProcessSetup CreatePipe CreatePipe CreatePipe (putMVar iserv_handles)
         }
   pure $
@@ -92,8 +92,8 @@ externalNoInTerminalDAPD hdbProg = do
         (annotateStackStringIO "External interpreter stderr forwarding" $ forwardHandleToLogger serv_err logErr)
         (annotateStackStringIO "External interpreter stdout forwarding" $ forwardHandleToLogger serv_out logOut)
 
-externalInTerminalDAPD :: MonadIO m => FilePath -> m DAPDebuggee
-externalInTerminalDAPD hdbProg
+externalInTerminalDAPD :: MonadIO m => FilePath -> [String] -> m DAPDebuggee
+externalInTerminalDAPD hdbProg extraInterpArgs
   -- No additional bookkeeping is needed in this case because GHC will
   -- naturally have to wait for the external interpreter in order to start execution
   = liftIO $ do
@@ -101,7 +101,9 @@ externalInTerminalDAPD hdbProg
   bracketOnError openSocketAvailablePort Network.Socket.close $ \ sock -> do
   let
     interpSettings = InterpreterSettings
-      { interpreterFlags = mkExternalInterpreterFlags hdbProg
+      -- The process is spawned by the DAP client (runInTerminal below), so the
+      -- extra args are passed there rather than through these flags.
+      { interpreterFlags = mkExternalInterpreterFlags hdbProg []
       , interpreterSetup = mkExternalInterpreterFromIOSetup
           $ annotateStackStringIO "Waiting for an external interpreter run-in-terminal process"
           $ extInterpFromListeningSocket sock
@@ -120,6 +122,7 @@ externalInTerminalDAPD hdbProg
         , runInTerminalRequestArgumentsCwd = ""
         , runInTerminalRequestArgumentsArgs =
             [T.pack hdbProg, "external-interpreter", "--port", T.pack (show extInterpPort)]
+            ++ map T.pack extraInterpArgs
         , runInTerminalRequestArgumentsEnv = Nothing
         , runInTerminalRequestArgumentsArgsCanBeInterpretedByShell = False
         })
