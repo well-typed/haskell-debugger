@@ -1,6 +1,8 @@
+{-# LANGUAGE RecordWildCards #-}
 module Development.Debug.Adapter.Stepping where
 
 import DAP
+import Data.Maybe
 
 import GHC.Debugger.Interface.Messages hiding (Command, Response)
 
@@ -10,8 +12,12 @@ import Development.Debug.Adapter.Evaluation
 
 commandContinue :: DebugAdaptor ()
 commandContinue = do
+  ContinueArguments {..} <- getArguments
+  let mremoteThread = if fromMaybe False continueArgumentsSingleThread
+        then Just (RemoteThreadId continueArgumentsThreadId)
+        else Nothing
   resetObjectReferences
-  DidContinue er <- sendInterleaved DoContinue $
+  DidContinue er <- sendInterleaved (DoContinue mremoteThread) $
     sendContinueResponse (ContinueResponse True)
   handleEvalResult False er
 

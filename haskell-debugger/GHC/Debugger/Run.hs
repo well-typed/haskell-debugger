@@ -154,8 +154,12 @@ debugExecution entryFile entry args = do
         Just (_,summary) -> pure summary
 
 -- | Resume execution of the stopped debuggee program
-doContinue :: Debugger EvalResult
-doContinue = do
+doContinue :: Maybe RemoteThreadId -> Debugger EvalResult
+doContinue _TODO_mti = do
+  -- TODO: RESUME PER THREAD; hard-ish (see my impl notes)
+  --  - needs a way for many threads to be resumed simultaneously and to wait
+  --  for breakpoints to be hit in any of them also asynchronously. Then need
+  --  to find the matching TID in the resumecontext and put that at the head
   resumeExec RunToCompletion Nothing
     >>= handleExecResult
 

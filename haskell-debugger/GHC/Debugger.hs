@@ -29,7 +29,7 @@ execute = \case
   GetVariables threadId frameIx varRef -> GotVariables <$> getVariables threadId frameIx varRef
   GetExceptionInfo threadId -> GotExceptionInfo <$> getExceptionInfo threadId
   DoEval exp_s -> DidEval <$> doEvalCommand exp_s
-  DoContinue -> DidContinue <$> doContinue
+  DoContinue mt -> DidContinue <$> doContinue mt
   DoSingleStep -> DidStep <$> doSingleStep
   DoStepOut -> DidStep <$> doStepOut
   DoStepLocal -> DidStep <$> doLocalStep

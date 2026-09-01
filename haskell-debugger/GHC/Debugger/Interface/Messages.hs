@@ -97,7 +97,7 @@ data Command
   | GetExceptionInfo RemoteThreadId
 
   -- | Continue executing from the current breakpoint
-  | DoContinue
+  | DoContinue (Maybe RemoteThreadId) {- resume all threads if Nothing, just the given otherwise -}
 
   -- | Step local, which executes until next breakpoint in the same function.
   | DoStepLocal

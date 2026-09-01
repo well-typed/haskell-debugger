@@ -329,7 +329,7 @@ cmdParser opts ctx = hsubparser
       ( progDesc "Step-out of the current function into the caller/its continuation" ) )
   <>
     Options.Applicative.command "continue"
-    ( info (pure $ Do DoContinue)
+    ( info (pure $ Do (DoContinue Nothing))
       ( progDesc "Continue executing from the current breakpoint" ) )
   <>
     Options.Applicative.command "print"
