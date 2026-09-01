@@ -138,6 +138,18 @@ jobs:
             version: 9.14.1
           - channel: https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml
             version: 10.1.20260817
+          - runner: ubuntu-latest
+            asset_arch: linux-x86_64
+          - runner: macOS-latest
+            asset_arch: macos-arm64
+          - runner: ubuntu-24.04-arm
+            version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            asset_arch: linux-aarch64
+          - runner: macos-15-intel
+            version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            asset_arch: macos-x86_64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -198,3 +210,19 @@ jobs:
           else
             cabal run haskell-debugger-test --enable-executable-dynamic
           fi
+
+      - name: Package hdb binary for release
+        if: inputs.is-release == true && matrix.version == '9.14.1'
+        shell: bash
+        run: |
+          BIN=$(cabal list-bin hdb)
+          mkdir -p dist-bin
+          cp "$BIN" dist-bin/hdb
+          tar -C dist-bin -czf hdb-${{ env.haskellDebuggerVersion }}-${{ matrix.asset_arch }}.tar.gz hdb
+
+      - name: Upload hdb binary artifact
+        if: inputs.is-release == true && matrix.version == '9.14.1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-${{ matrix.asset_arch }}
+          path: hdb-*.tar.gz
