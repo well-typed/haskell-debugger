@@ -63,45 +63,17 @@ because of the termination event we sent.
 
 getThreads :: Debugger [DebuggeeThread]
 getThreads = do
-  -- TODO: we want something more like 'listThreads', but ensure that we only
-  -- report the threads of the debuggee (and not the debugger, if they
-  -- are the same process). Perhaps the solution is to not allow them to be in
-  -- the same process, in which case 'listThreads' would be correct as is by
-  -- construction.
-  --
-  -- For now, we approximate by just listing out the ThreadsMap, under the
-  -- assumption the debugger client will only care about threads we've already
-  -- stopped at (which are the only ones we've inserted in the threads map),
-  -- but for full multi threaded debugging we need the listThreads.
-  --
-  -- tmap <- liftIO . readIORef =<< asks threadMap
-  -- let (t_ids, remote_refs) = unzip (threadMapToList tmap)
-  --
-  -- Oh, try the listThreads just for fun.
   (t_ids, t_infos) <- unzip <$> listAllLiveRemoteThreads
   let
-    _mkDebuggeeThread tid tinfo
+    mkDebuggeeThread tid tinfo
       = DebuggeeThread
         { tId = tid
         , tName = tinfo.threadInfoLabel
         }
-    _all_threads
-      = zipWith _mkDebuggeeThread t_ids t_infos
+    all_threads
+      = zipWith mkDebuggeeThread t_ids t_infos
 
-  -- TODO: We ignore _all_threads and report only the main execution thread for now.
-  -- See #138 for progress on Multi-threaded debugging.
-  GHC.getResumeContext >>= \case
-    [] ->
-      -- See Note [Don't crash if not stopped]
-      return []
-    r:_ -> do
-      r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
-      return
-        [ DebuggeeThread
-          { tId = r_tid
-          , tName = Just "Main Thread"
-          }
-        ]
+  return all_threads
 
 --------------------------------------------------------------------------------
 -- * Stack trace
