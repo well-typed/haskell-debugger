@@ -30,6 +30,8 @@ import Control.Exception (SomeException)
 -- | Retrieve structured exception information for the requested thread when
 -- the debugger is currently stopped on an exception.
 getExceptionInfo :: RemoteThreadId -> Debugger ExceptionInfo
+        -- The only context in which it is excusable to use getResumeContext with
+        -- latest GHC because we haven't yet per-thread exception breakpoints upstream.
 getExceptionInfo req_tid = GHC.getResumeContext >>= \case
   [] -> return defaultExceptionInfo
   r:_ -> do

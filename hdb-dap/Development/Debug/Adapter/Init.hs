@@ -248,6 +248,7 @@ debuggerThread l debugRunner runConf requests replies = do
       labelThread tid "Main Debugger Thread"
     let loop = do
           req <- takeMVar requests & liftIO
+          -- TODO: this will no longer be serial if we want to support async resume
           resp <- (Debugger.execute req <&> Right)
                     `catch` \(e :: SomeException) -> do
                         pure (Left (displayExceptionWithInfo e))
