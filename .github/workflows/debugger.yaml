@@ -146,7 +146,7 @@ jobs:
             version: 9.14.1
             channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
             asset_arch: linux-aarch64
-          - runner: macos-13
+          - runner: macos-15-intel
             version: 9.14.1
             channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
             asset_arch: macos-x86_64
