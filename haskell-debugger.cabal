@@ -227,7 +227,7 @@ library dap-server
         network-run >= 0.4.4 && < 0.5,
         async >= 2.2.5 && < 2.3,
         text >= 2.1 && < 2.3,
-        dap >= 0.7 && < 0.8,
+        dap >= 0.8 && < 0.9,
 
         haskeline >= 0.8 && < 1,
         optparse-applicative >= 0.18 && < 0.20,
@@ -266,7 +266,7 @@ executable hdb
         network-run >= 0.4.4 && < 0.5,
         async >= 2.2.5 && < 2.3,
         text >= 2.1 && < 2.3,
-        dap >= 0.7 && < 0.8,
+        dap >= 0.8 && < 0.9,
 
         haskeline >= 0.8 && < 1,
         optparse-applicative >= 0.18 && < 0.20,

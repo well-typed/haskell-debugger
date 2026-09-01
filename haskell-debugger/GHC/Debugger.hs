@@ -29,8 +29,15 @@ execute = \case
   GetVariables threadId frameIx varRef -> GotVariables <$> getVariables threadId frameIx varRef
   GetExceptionInfo threadId -> GotExceptionInfo <$> getExceptionInfo threadId
   DoEval exp_s -> DidEval <$> doEvalCommand exp_s
-  DoContinue -> DidContinue <$> doContinue
-  DoSingleStep -> DidStep <$> doSingleStep
-  DoStepOut -> DidStep <$> doStepOut
-  DoStepLocal -> DidStep <$> doLocalStep
+
+-- TODO: We shouldn't block waiting for the result of these operations, because that means we can never resume/step two threads simultaneously. Recall
+-- Recall we take things to evaluate from the message queue, but we execute them serially. Here we should do something like `forkIO $ reply`
+-- We need an async model that sets them off running and replies once the answer comes back
+-- We should just do this in the dap side thread which is running serially
+--
+-- Even more generally, I think when we read an handleExecResult we should
+-- probably clear the MVar as soon as possible so we can receive as many paused
+-- thread hits as possible and emit thread paused events.
+  DoResume tid step world -> DidResume <$> doResume tid step world
+
   DebugExecution { entryPoint, entryFile, runArgs } -> DidExec <$> debugExecution entryFile entryPoint runArgs

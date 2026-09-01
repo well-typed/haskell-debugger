@@ -218,7 +218,11 @@ rttiEnvironment hsc_env0@HscEnv{hsc_IC=ic0} = do
            case mb_new_ty of
              Nothing -> return hsc_env
              Just new_ty -> do
+#if MIN_VERSION_ghc(10,1,0)
+              case GHC.improveRTTIType old_ty new_ty of
+#else
               case GHC.improveRTTIType hsc_env old_ty new_ty of
+#endif
                Nothing -> warnPprTrace True (":print failed to calculate the "
                                              ++ "improvement for a type")
                               (vcat [ text "id" <+> ppr id'
