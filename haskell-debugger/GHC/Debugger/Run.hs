@@ -109,6 +109,7 @@ debugExecution entryFile entry args = do
   logSDoc Logger.Debug "Compiled wrapper."
 
   exec_res <- GHC.execStmt entryExp exOpts
+    { execIsolateMode = GHC.MultiThreadedBreaks } -- yeah!
 
   logSDoc Logger.Debug $ "Executed entryExp: " <+> text entryExp
 

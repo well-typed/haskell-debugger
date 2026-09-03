@@ -32,7 +32,9 @@ import GHC.Builtin.Types
 import GHC.Runtime.Heap.Inspect
 import GHC.Utils.Outputable
 
+#if !MIN_VERSION_ghc(10,1,0)
 import GHCi.Message
+#endif
 import GHCi.RemoteTypes
 
 import Colog.Core as Logger
@@ -52,11 +54,19 @@ import qualified GHC.Debugger.Runtime.Interpreter.Legacy as Debuggee
 #endif
 
 -- | Get a 'RemoteThreadId' from a remote 'ResumeContext' gotten from an 'ExecBreak'
+#if MIN_VERSION_ghc(10,1,0)
+getRemoteThreadIdFromRemoteContext :: ForeignRef ThreadId -> Debugger RemoteThreadId
+#else
 getRemoteThreadIdFromRemoteContext :: ForeignRef (ResumeContext [HValueRef]) -> Debugger RemoteThreadId
+#endif
 getRemoteThreadIdFromRemoteContext fctxt = do
   -- Get the ResumeContext term and fetch the resumeContextThreadId field
   parsed_threadid <- obtainParsedTerm "RemoteContext's ThreadId" 2 True anyTy (castForeignRef fctxt)
+#if MIN_VERSION_ghc(10,1,0)
+                        anyTerm
+#else
                         (subtermWith 2{-RemoteContext's ThreadId-} anyTerm)
+#endif
   case parsed_threadid of
     Left errs -> do
       logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))

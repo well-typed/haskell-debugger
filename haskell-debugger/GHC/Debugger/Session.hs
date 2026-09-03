@@ -94,7 +94,8 @@ import qualified GHC.Unit.Home.Graph as HUG
 import qualified Data.Set as Set
 import Data.Maybe
 import GHC.Types.Target (InputFileBuffer)
-import GHC (SingleStep, ExecResult, ModSummary (ms_hspp_opts), ideclPkgQual, ImportDecl, GhcPs)
+import GHC.Runtime.Eval.Types
+import GHC (ModSummary (ms_hspp_opts), ideclPkgQual, ImportDecl, GhcPs)
 import Data.Set (Set)
 import qualified GHC.Unit as GHC
 import GHC.Unit.Module.Graph (mg_mss, ModuleGraphNode (..), mnKey)
@@ -752,7 +753,7 @@ resumeExec a b = do
   -- this call later, but why rely on that.
   imports <- GHC.getContext
 
-  v <- GHC.resumeExec a b
+  v <- GHC.resumeExec a MultiThreadedBreaks b
 
   -- To have interactive imports persist after a `continue` command we have to
   -- work around how GHC.resumeExec handles the InteractiveContext (IC).
