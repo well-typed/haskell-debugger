@@ -11,6 +11,14 @@ on:
       is-release:
         required: true
         type: boolean
+      # Always expected to use the default.
+      release-extra-runners:
+        required: false
+        type: string
+        default: >-
+          [{"runner":"ubuntu-24.04-arm", "version":"9.14.1"}
+          ,{"runner":"macos-15-intel"  , "version":"9.14.1"}
+          ]
 
 env:
   haskellDebuggerViewVersion: 0.2.1.0
@@ -124,6 +132,9 @@ jobs:
 
   # Tests run on the git checkout
   build-n-more-test-haskell-debugger:
+    env:
+      asset_arch: ${{ fromJSON('{"ubuntu-latest":"linux-x86_64","macOS-latest":"macos-arm64","ubuntu-24.04-arm":"linux-aarch64","macos-15-intel":"macos-x86_64"}')[matrix.runner] }}
+      ghcup_channel: ${{ fromJSON('{"9.14.1":"https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml","10.1.20260817":"https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml"}')[matrix.version] }}
     timeout-minutes: 30
     name: Build and Run Tests on checkout (${{ matrix.runner }}, GHC ${{ matrix.version }})
     runs-on: ${{ matrix.runner }}
@@ -131,26 +142,14 @@ jobs:
     continue-on-error: ${{ inputs.is-release == false }}
     strategy:
       matrix:
+        version: ["9.14.1", "10.1.20260817"]
         runner: [ubuntu-latest, macOS-latest] # windows-latest is broken, see #246
-        version: [9.14.1, 10.1.20260817]
-        include:
-          - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
-            version: 9.14.1
-          - channel: https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml
-            version: 10.1.20260817
-          - runner: ubuntu-latest
-            asset_arch: linux-x86_64
-          - runner: macOS-latest
-            asset_arch: macos-arm64
-          - runner: ubuntu-24.04-arm
-            version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
-            asset_arch: linux-aarch64
-          - runner: macos-15-intel
-            version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
-            asset_arch: macos-x86_64
+        # the || '[{"runner":"ubuntu-latest"}]' part is there to avoid an empty include, should be noop.
+        include: ${{ fromJSON(inputs.is-release && inputs.release-extra-runners || '[{"runner":"ubuntu-latest"}]') }}
     steps:
+      - run: test -n "${{ env.ghcup_channel }}" || { echo "No ghcup channel for GHC ${{ matrix.version }}"; exit 1; }
+      - run: test -n "${{ env.asset_arch }}" || { echo "No asset arch defined for runner ${{ matrix.runner }}"; exit 1; }
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -169,7 +168,7 @@ jobs:
         with:
           ghc-version: ${{ matrix.version }}
           cabal-version: 3.16
-          ghcup-release-channel: ${{ matrix.channel }}
+          ghcup-release-channel: ${{ env.ghcup_channel }}
 
       - name: Configure the build
         run: |
@@ -218,11 +217,11 @@ jobs:
           BIN=$(cabal list-bin hdb)
           mkdir -p dist-bin
           cp "$BIN" dist-bin/hdb
-          tar -C dist-bin -czf hdb-${{ env.haskellDebuggerVersion }}-${{ matrix.asset_arch }}.tar.gz hdb
+          tar -C dist-bin -czf hdb-${{ env.haskellDebuggerVersion }}-${{ env.asset_arch }}.tar.gz hdb
 
       - name: Upload hdb binary artifact
         if: inputs.is-release == true && matrix.version == '9.14.1'
         uses: actions/upload-artifact@v4
         with:
-          name: hdb-${{ matrix.asset_arch }}
+          name: hdb-${{ env.asset_arch }}
           path: hdb-*.tar.gz
