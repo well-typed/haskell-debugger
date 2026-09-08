@@ -57,6 +57,7 @@ jobs:
           fetch-depth: 0
 
       - name: Ensure tag points to master HEAD
+        if: inputs.publish
         shell: bash
         run: |
           echo "Tag ref: $GITHUB_REF"
