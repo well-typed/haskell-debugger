@@ -7,10 +7,10 @@ on:
 
   workflow_dispatch:
     inputs:
-      draft:
-        description: "Create a draft release (unchecked: full release)"
+      publish:
+        description: "Actually publish the release, otherwise build artifacts and dry-run."
         required: true
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -82,6 +82,10 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     needs: [validate-tag, build-haskell-debugger, docs-haskell-debugger]
+    env:
+      ## handles inputs.publish being null on push.
+      DRY_RUN: ${{ inputs.publish && 'false' || 'true'  }}
+      PUBLISH: ${{ inputs.publish && 'true'  || 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -113,29 +117,31 @@ jobs:
       - name: Publish to Visual Studio Marketplace
         uses: HaaLeo/publish-vscode-extension@v2
         with:
-          pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
+          dryRun: ${{ env.DRY_RUN }}
+          pat: ${{ env.DRY_RUN == 'true' && 'dry-run-stub' || secrets.VS_MARKETPLACE_TOKEN }}
           registryUrl: https://marketplace.visualstudio.com
           extensionFile: ${{ runner.temp }}/extension/haskell-debugger-extension-0.13.1.vsix
 
       - name: Publish to Open VSX Registry
         uses: HaaLeo/publish-vscode-extension@v2
         with:
-          pat: ${{ secrets.OPEN_VSX_TOKEN }}
+          dryRun: ${{ env.DRY_RUN }}
+          pat: ${{ env.DRY_RUN == 'true' && 'dry-run-stub' || secrets.OPEN_VSX_TOKEN }}
           registryUrl: https://open-vsx.org
           extensionFile: ${{ runner.temp }}/extension/haskell-debugger-extension-0.13.1.vsix
 
       - name: Hackage Release
         uses: haskell-actions/hackage-publish@v1
         with:
+          publish: ${{ env.PUBLISH }}
           hackageToken: ${{ secrets.HACKAGE_AUTH_TOKEN }}
           packagesPath: ${{ runner.temp }}/packages
           docsPath: ${{ runner.temp }}/docs
-          publish: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true && 'false' || 'true' }}
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}
+          draft: ${{ env.DRY_RUN }}
           files: |
             ${{ runner.temp }}/extension/*.vsix
             ${{ runner.temp }}/hdb-binaries/*.tar.gz
