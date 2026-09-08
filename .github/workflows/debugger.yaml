@@ -5,9 +5,6 @@ on:
   pull_request: {}
   workflow_call:
     inputs:
-      use-haskell-debugger-view-from-hackage:
-        required: true
-        type: boolean
       is-release:
         required: true
         type: boolean
@@ -23,11 +20,6 @@ on:
 env:
   haskellDebuggerViewVersion: 0.2.1.0
   haskellDebuggerVersion: 0.13.1.0
-  USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE: ${{
-      github.event_name == 'workflow_call'
-        && inputs.use-haskell-debugger-view-from-hackage
-        || false
-    }}
 
 name: Debugger CI
 jobs:
@@ -68,6 +60,34 @@ jobs:
 
       - name: Package haskell-debugger-view
         run: cabal sdist haskell-debugger-view
+
+      ## At release time, we want to enforce one of these are true:
+      ## - haskell-debugger-view-$ver does not exist on Hackage.
+      ## - it does exist, and the tarball from Hackage matches ours.
+      - name: Compare haskell-debugger-view against Hackage
+        id: view
+        if: inputs.is-release
+        run: |
+          set -u
+
+          NAME=haskell-debugger-view
+          LOCAL=$(ls dist-newstyle/sdist/$NAME-*.tar.gz)
+          PKG=$(basename "$LOCAL" .tar.gz)
+          VER=${PKG#"$NAME-"}
+          echo "local sdist: $PKG"
+
+          cabal list --simple-output "$NAME" > index-versions.txt
+          if ! grep -qx "$NAME $VER" index-versions.txt; then
+            echo "::notice::$PKG is not on Hackage, nothing to check."
+            exit 0
+          fi
+
+          cabal get -d hackage "$PKG"
+          mkdir ours && tar xzf "$LOCAL" -C ours
+
+          set -e
+          echo "$PKG — Hackage (-) vs this repo (+)"
+          diff -ru "hackage/$PKG" "ours/$PKG"
 
       - name: Upload haskell-debugger source distribution
         uses: actions/upload-artifact@v4
@@ -118,15 +138,13 @@ jobs:
         run: |
           (cd ${{ runner.temp }}/dist && tar xzf "haskell-debugger-${{env.haskellDebuggerVersion}}.tar.gz")
 
-      - name: Setup local version of haskell-debugger-view
-        if: env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE
+      - name: Setup local version of haskell-debugger-view from sdist.
         run: |
           (cd ${{ runner.temp }}/dist && tar xzf "haskell-debugger-view-${{env.haskellDebuggerViewVersion}}.tar.gz" && mv "haskell-debugger-view-${{env.haskellDebuggerViewVersion}}" "haskell-debugger-${{env.haskellDebuggerVersion}}/haskell-debugger-view")
           (cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}} && echo 'packages: . ./haskell-debugger-view' > cabal.project)
 
       - name: Build and Run tests
         run: |
-          echo "Using haskell-debugger-view from hackage: ${{env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE}}"
           cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}}
           cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell --ghc-options=-Werror
 
