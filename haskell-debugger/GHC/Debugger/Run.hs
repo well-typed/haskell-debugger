@@ -9,6 +9,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wredundant-record-wildcards #-} -- bc CPP
 module GHC.Debugger.Run where
 
 import GHC.Utils.Outputable
@@ -17,10 +18,10 @@ import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.IORef
 import Data.Maybe
+import Data.Function
 
 import GHC qualified
 import GHC (
-  ExecOptions (..),
   ExecResult (..),
   execStmt',
   ForeignHValue,
@@ -64,9 +65,13 @@ import GHC.Debugger.Interface.Messages
 import Colog.Core as Logger
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import GHC.Debugger.Runtime.Thread
+import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
 import Data.List (find)
 import GHC.Unit.Module.Graph as GHC
+import GHC.Types.Var
+import GHC.Runtime.Eval.Types
+import GHC.Stack
 
 --------------------------------------------------------------------------------
 -- * Evaluation
@@ -109,7 +114,9 @@ debugExecution entryFile entry args = do
   logSDoc Logger.Debug "Compiled wrapper."
 
   exec_res <- GHC.execStmt entryExp exOpts
+#if MIN_VERSION_ghc(10,1,0)
     { execIsolateMode = GHC.MultiThreadedBreaks } -- yeah!
+#endif
 
   logSDoc Logger.Debug $ "Executed entryExp: " <+> text entryExp
 
@@ -156,32 +163,31 @@ debugExecution entryFile entry args = do
 
 -- | Resume execution of the stopped debuggee program
 doContinue :: Maybe RemoteThreadId -> Debugger EvalResult
-doContinue _TODO_mti = do
-  -- TODO: RESUME PER THREAD; hard-ish (see my impl notes)
-  --  - needs a way for many threads to be resumed simultaneously and to wait
-  --  for breakpoints to be hit in any of them also asynchronously. Then need
-  --  to find the matching TID in the resumecontext and put that at the head
-  resumeExec RunToCompletion Nothing
+doContinue mti = do
+  maybe todo popResume mti
+    >>= resumeExec RunToCompletion Nothing
     >>= handleExecResult
 
 -- | Resume execution but only take a single step.
-doSingleStep :: Debugger EvalResult
-doSingleStep = do
-  resumeExec SingleStep Nothing
+doSingleStep :: Maybe RemoteThreadId -> Debugger EvalResult
+doSingleStep mti = do
+  maybe todo popResume mti
+    >>= resumeExec SingleStep Nothing
     >>= handleExecResult
 
-doStepOut :: Debugger EvalResult
-doStepOut = do
+doStepOut :: Maybe RemoteThreadId -> Debugger EvalResult
+doStepOut mti = do
+  ti <- maybe todo popResume mti
   mb_span <- getCurrentBreakSpan
   case mb_span of
     Nothing ->
-      resumeExec (GHC.StepOut Nothing) Nothing
+      resumeExec (GHC.StepOut Nothing) Nothing ti
         >>= handleExecResult
     Just loc -> do
       md <- fromMaybe (error "doStepOut") <$> getCurrentBreakModule
       ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
       let current_toplevel_decl = enclosingTickSpan ticks loc
-      resumeExec (GHC.StepOut (Just (RealSrcSpan current_toplevel_decl Strict.Nothing))) Nothing
+      resumeExec (GHC.StepOut (Just (RealSrcSpan current_toplevel_decl Strict.Nothing))) Nothing ti
         >>= handleExecResult
 
 -- | Resume execution but stop at the next tick within the same function.
@@ -190,20 +196,21 @@ doStepOut = do
 -- get its 'enclosingTickSpan' to use as a filter for breakpoints in the call
 -- to 'resumeExec'. Execution will only stop at breakpoints whose span matches
 -- this enclosing span.
-doLocalStep :: Debugger EvalResult
-doLocalStep = do
+doLocalStep :: Maybe RemoteThreadId -> Debugger EvalResult
+doLocalStep mti = do
+  ti <- maybe todo popResume mti
   mb_span <- getCurrentBreakSpan
   case mb_span of
     Nothing -> error "not stopped at a breakpoint?!"
     Just (UnhelpfulSpan _) -> do
       liftIO $ putStrLn "Stopped at an exception. Forcing step into..."
-      resumeExec SingleStep Nothing >>= handleExecResult
+      resumeExec SingleStep Nothing ti >>= handleExecResult
     Just loc -> do
       md <- fromMaybe (error "doLocalStep") <$> getCurrentBreakModule
       -- TODO: Cache moduleLineMap?
       ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
       let current_toplevel_decl = enclosingTickSpan ticks loc
-      resumeExec (LocalStep (RealSrcSpan current_toplevel_decl mempty)) Nothing >>= handleExecResult
+      resumeExec (LocalStep (RealSrcSpan current_toplevel_decl mempty)) Nothing ti >>= handleExecResult
 
 -- | Generalized `doEval` that also handles `imports`
 doEvalCommand :: String -> Debugger EvalResult
@@ -231,7 +238,7 @@ doEval expr = withCurrentBreakEnv $ do
   excr <- (Right <$> exec expr GHC.execOptions) `catch` \(e::SomeException) -> pure (Left (displayException e))
   case excr of
     Left err -> pure $ EvalAbortedWith err
-    Right (k, ExecBreak{}) -> fmap (addSourceKind k) $ continueToCompletion >>= handleExecResult
+    Right (k, ExecBreak{breakResume}) -> fmap (addSourceKind k) $ continueToCompletion breakResume >>= handleExecResult
     Right (k, r@ExecComplete{}) -> fmap (addSourceKind k) $ handleExecResult r
   where
     exec input exec_opts@ExecOptions{..} = do
@@ -259,11 +266,11 @@ doEval expr = withCurrentBreakEnv $ do
 -- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
 --
 -- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
-continueToCompletion :: Debugger GHC.ExecResult
-continueToCompletion = do
-  execr <- resumeExec GHC.RunToCompletion Nothing
+continueToCompletion :: Resume -> Debugger GHC.ExecResult
+continueToCompletion r = do
+  execr <- resumeExec GHC.RunToCompletion Nothing r
   case execr of
-    GHC.ExecBreak{} -> continueToCompletion
+    GHC.ExecBreak{breakResume} -> continueToCompletion breakResume
     GHC.ExecComplete{} -> return execr
 
 -- | @withCurrentBreakEnv m@ executes @m@ with the imports, language, and language
@@ -304,28 +311,43 @@ handleExecResult = \case
       case execResult of
         Left e -> return (EvalException (show e) "SomeException")
         Right [] -> return (EvalCompleted "" "" Nothing NoVariables) -- Evaluation completed without binding any result.
+#if MIN_VERSION_ghc(10,1,0)
+        Right (n:_ns) -> inspectId n >>= \case
+#else
         Right (n:_ns) -> inspectName n >>= \case
+#endif
           Just VarInfo{varValue, varType, varRef} -> do
             return (EvalCompleted varValue varType Nothing varRef)
           Nothing     -> liftIO $ fail "doEval failed"
-    ExecBreak {breakNames = _, breakPointId = Nothing} -> do
+    ExecBreak {breakNames = _, breakPointId = Nothing, ..} -> do
       -- Stopped at an exception
       -- TODO: force the exception to display string with Backtrace?
+#if MIN_VERSION_ghc(10,1,0)
+      pushResume breakResume
+      rt_id <- getResumeThreadId breakResume
+#else
       rt_id <- getRemoteThreadIdFromContext
+#endif
       return EvalStopped{ breakId = Nothing
                         , breakThread = rt_id }
-    ExecBreak {breakNames = _, breakPointId = Just bid} -> do
+    ExecBreak {breakNames = _, breakPointId = Just bid, ..} -> do
+
+      pushResume breakResume
 
       let performAction BreakpointStop = do
 
+#if MIN_VERSION_ghc(10,1,0)
+                rt_id <- getResumeThreadId breakResume
+#else
                 rt_id <- getRemoteThreadIdFromContext
+#endif
                 return EvalStopped{ breakId = Just bid
                                   , breakThread = rt_id }
           performAction (BreakpointLogAndResume logExpr) = do
             let evalFailedMsg e = text $ unlines ["Evaluation of log message expression failed with " ++ e
                   , "Expr: " ++ logExpr
                   , "Ignoring..."]
-            doEval' logExpr evalFailedMsg $ \ _ _ -> resume
+            doEval' logExpr evalFailedMsg breakResume $ \ _ _ -> resume breakResume
 
       bm <- liftIO . readIORef =<< asks activeBreakpoints
       case BM.lookup bid bm of
@@ -338,31 +360,31 @@ handleExecResult = \case
             BreakpointWhenCond cond -> do
               let evalFailedMsg e = text $ "Evaluation of conditional breakpoint expression failed with " ++ e ++ "\nIgnoring..."
 
-              doEval' cond evalFailedMsg $ \ resultVal resultType -> do
+              doEval' cond evalFailedMsg breakResume $ \ resultVal resultType -> do
                 if resultType == "Bool" then do
                   if resultVal == "True" then do
                     performAction action
                   else
-                    resume
+                    resume breakResume
                 else do
                   logSDoc Logger.Warning (evalFailedMsg "\"expression resultType is != Bool\"")
-                  resume
-            BreakpointDisabled -> resume
+                  resume breakResume
+            BreakpointDisabled -> resume breakResume
             -- The counting is handled by @GHC.setupBreakpoint@
             BreakpointAfterCount _ -> performAction action
             BreakpointEnabled -> performAction action
   where
-    doEval' expr evalFailedMsg k = doEval expr >>= \case
+    doEval' expr evalFailedMsg br k = doEval expr >>= \case
             EvalStopped{} -> error "impossible for doEval"
             EvalCompleted { resultVal, resultType } ->
               k resultVal resultType
             EvalException { resultVal } -> do
               logSDoc Logger.Warning (evalFailedMsg resultVal)
-              resume
+              resume br
             EvalAbortedWith e -> do
               logSDoc Logger.Warning (evalFailedMsg e)
-              resume
-    resume = resumeExec GHC.RunToCompletion Nothing >>= handleExecResult
+              resume br
+    resume r = resumeExec GHC.RunToCompletion Nothing r >>= handleExecResult
 
 -- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
 inspectName :: Name -> Debugger (Maybe VarInfo)
@@ -375,9 +397,52 @@ inspectName n = do
       fam_envs <- getFamInstEnvs'
       tyThingToVarInfo fam_envs tt
 
+-- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
+inspectId :: Id -> Debugger (Maybe VarInfo)
+inspectId (GHC.AnId -> tt) = Just <$> do
+  fam_envs <- getFamInstEnvs'
+  tyThingToVarInfo fam_envs tt
+
+-- | Pop the resume for this thread off
+popResume :: RemoteThreadId -> Debugger Resume
+popResume (remoteThreadIntRef -> rti) = do
+  trm_ref <- asks threadResumeMap
+  trm     <- readIORef trm_ref & liftIO
+  case lookupThreadMap rti trm of
+    Nothing -> error "Trying to resume a thread which isn't running?"
+    Just tr -> do
+      modifyIORef' trm_ref (deleteThreadMap rti) & liftIO
+      pure tr
+
+-- | Push the resume for its thread to the mapping keeps track of which threads
+-- are paused
+pushResume :: Resume -> Debugger ()
+pushResume res = do
+  trm_ref <- asks threadResumeMap
+  rti     <- getResumeThreadId res
+  liftIO $
+    modifyIORef' trm_ref $
+      insertThreadMap (remoteThreadIntRef rti) res
+
+#if MIN_VERSION_ghc(10,1,0)
+getResumeThreadId :: Resume -> Debugger RemoteThreadId
+getResumeThreadId = getRemoteThreadId . GHC.resumeContext
+#else
+-- | This only works because GHC's 'handleRunStatus' always pushes to the
+-- resume context stack before returning the 'ExecBreak'. This works as long as
+-- we consult the resume context stack immediately after the evaluation... but
+-- it stops working in a multi-threaded capable debugger. When the
+-- multi-threaded capabilities are released, we will no longer need this
+-- function nor the `resumeContext` because `ExecBreak` now returns the
+-- `Resume` directly.
 getRemoteThreadIdFromContext :: Debugger RemoteThreadId
 getRemoteThreadIdFromContext = do
   GHC.getResumeContext >>= \case
     resume1:_ ->
       getRemoteThreadIdFromRemoteContext $ GHC.resumeContext resume1
     _ -> error "No resumes but stopped?!?"
+#endif
+
+todo :: HasCallStack => a
+todo = error "TODO"
+{-# DEPRECATED todo "TODO" #-}

@@ -41,7 +41,11 @@ defineNoPrint = do
 
     mr <- execStmtNoOccEnv stmt
     case mr of
+#if MIN_VERSION_ghc(10,1,0)
+      Just ExecComplete{execResult = Right [n]} -> return (getName n)
+#else
       Just ExecComplete{execResult = Right [n]} -> return n
+#endif
       _ -> error "impossible: defining noPrintConstant"
 
 -- | Executes a statement to completion without bringing any OccName in scope.
@@ -95,7 +99,11 @@ handleCompleted extendIC final_ids status = do
 #endif
       -- hsc_env' <- liftIO $ rttiEnvironment hsc_env{hsc_IC=final_ic}
       setSession $ hsc_env{hsc_IC=final_ic}
+#if MIN_VERSION_ghc(10,1,0)
+      return (Just $ ExecComplete (Right final_ids) allocs)
+#else
       return (Just $ ExecComplete (Right final_names) allocs)
+#endif
     _ -> return Nothing
 
 -- | Extend the @InteractiveContext@ with the @Id@s without bringing their @OccName@s in scope.

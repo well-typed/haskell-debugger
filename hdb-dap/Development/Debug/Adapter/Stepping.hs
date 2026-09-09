@@ -13,22 +13,30 @@ import Development.Debug.Adapter.Evaluation
 commandContinue :: DebugAdaptor ()
 commandContinue = do
   ContinueArguments {..} <- getArguments
-  let mremoteThread = if fromMaybe False continueArgumentsSingleThread
+  let mthread = if fromMaybe False continueArgumentsSingleThread
         then Just (RemoteThreadId continueArgumentsThreadId)
         else Nothing
   resetObjectReferences
-  DidContinue er <- sendInterleaved (DoContinue mremoteThread) $
+  DidContinue er <- sendInterleaved (DoContinue mthread) $
     sendContinueResponse (ContinueResponse True)
   handleEvalResult False er
 
 commandNext :: DebugAdaptor ()
 commandNext = do
+  NextArguments {..} <- getArguments
+  let mthread = if fromMaybe False nextArgumentsSingleThread
+        then Just (RemoteThreadId nextArgumentsThreadId)
+        else error ("Nothing, but nextArgsThreadId: " ++ show nextArgumentsThreadId)-- Nothing
   resetObjectReferences
-  DidStep er <- sendInterleaved DoStepLocal sendNextResponse
+  DidStep er <- sendInterleaved (DoStepLocal mthread) sendNextResponse
   handleEvalResult True er
 
 commandStepIn :: DebugAdaptor ()
 commandStepIn = do
+  StepInArguments {..} <- getArguments
+  let mthread = if fromMaybe False stepInArgumentsSingleThread
+        then Just (RemoteThreadId stepInArgumentsThreadId)
+        else Nothing
   resetObjectReferences
   DidStep er <- sendInterleaved DoSingleStep sendStepInResponse
   handleEvalResult True er

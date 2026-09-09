@@ -8,7 +8,8 @@
 -- TODO
 -- - [] Consider caching once and forall the expressions we dynamically compile and load in this module.
 module GHC.Debugger.Runtime.Thread
-  ( getRemoteThreadIdFromRemoteContext
+  (
+    getRemoteThreadIdFromRemoteContext
   , getRemoteThreadId
   , listAllLiveRemoteThreads
 
@@ -28,13 +29,11 @@ import GHC.Conc.Sync
 import GHC.Builtin.WiredIn.Types
 #else
 import GHC.Builtin.Types
-#endif
 import GHC.Runtime.Heap.Inspect
-import GHC.Utils.Outputable
-
-#if !MIN_VERSION_ghc(10,1,0)
 import GHCi.Message
 #endif
+import GHC.Utils.Outputable
+
 import GHCi.RemoteTypes
 
 import Colog.Core as Logger
@@ -53,20 +52,18 @@ import qualified GHC.Debugger.Runtime.Interpreter as Debuggee
 import qualified GHC.Debugger.Runtime.Interpreter.Legacy as Debuggee
 #endif
 
--- | Get a 'RemoteThreadId' from a remote 'ResumeContext' gotten from an 'ExecBreak'
 #if MIN_VERSION_ghc(10,1,0)
+-- Shim to keep rest of codebase as is despite resumeContext now being just ForeignRef ThreadId
 getRemoteThreadIdFromRemoteContext :: ForeignRef ThreadId -> Debugger RemoteThreadId
+getRemoteThreadIdFromRemoteContext = getRemoteThreadId
 #else
+-- | Get a 'RemoteThreadId' from a remote 'ResumeContext' gotten from an 'ExecBreak'
+-- (in 10.2 'ResumeContext' is gone, now it's just the 'ThreadId')
 getRemoteThreadIdFromRemoteContext :: ForeignRef (ResumeContext [HValueRef]) -> Debugger RemoteThreadId
-#endif
 getRemoteThreadIdFromRemoteContext fctxt = do
   -- Get the ResumeContext term and fetch the resumeContextThreadId field
   parsed_threadid <- obtainParsedTerm "RemoteContext's ThreadId" 2 True anyTy (castForeignRef fctxt)
-#if MIN_VERSION_ghc(10,1,0)
-                        anyTerm
-#else
                         (subtermWith 2{-RemoteContext's ThreadId-} anyTerm)
-#endif
   case parsed_threadid of
     Left errs -> do
       logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
@@ -74,6 +71,7 @@ getRemoteThreadIdFromRemoteContext fctxt = do
     Right Term{val=threadIdVal} -> do
       getRemoteThreadId (castForeignRef threadIdVal)
     _ -> liftIO $ fail "Expected threadIdTerm to be a Term!"
+#endif
 
 -- | Call 'listThreads' on the (possibly) remote debuggee process to get the
 -- list of threads running on the debuggee. Filter by running threads

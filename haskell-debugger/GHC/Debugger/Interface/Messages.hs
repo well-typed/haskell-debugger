@@ -90,23 +90,26 @@ data Command
   -- we're stopped at rather than all variables in scope.
   | GetVariables RemoteThreadId Int{-stack frame positional ix-} VariableReference
 
-  -- | Evaluate an expression at the current breakpoint.
-  | DoEval String
-
   -- | Get information about the current exception (if any) on a thread.
   | GetExceptionInfo RemoteThreadId
 
-  -- | Continue executing from the current breakpoint
-  | DoContinue (Maybe RemoteThreadId) {- resume all threads if Nothing, just the given otherwise -}
+  -- | Evaluate an expression at the current breakpoint.
+  | DoEval String
 
-  -- | Step local, which executes until next breakpoint in the same function.
-  | DoStepLocal
-
-  -- | Single step always to the next breakpoint. Used for "step-in".
-  | DoSingleStep
-
-  -- | Step out to the breakpoint immediately following a return.
-  | DoStepOut
+  -- | Resume the paused thread using the given 'ResumeStep' and 'ResumeTheWorld' options.
+  -- See the respective haddocks for details.
+  --
+  -- Examples:
+  --
+  -- - To "global continue": @DoResume <active tid> ResumeNoStep ResumeTheWorld@
+  -- (in this case, the active tid is of no consequence, but still passed)
+  --
+  -- - To "single-thread step in": @DoResume <a tid> ResumeSingleStep ResumeJustThisThread@
+  --
+  -- - To "global step-next": @DoResume <a tid> ResumeStepLocal ResumeTheWorld@;
+  --   All threads will be resumed and the specified thread will break at the
+  --   next local breakpoint.
+  | DoResume RemoteThreadId ResumeStep ResumeTheWorld
 
   -- | Execute a prog with debugging enabled. Breaks on the existing breakpoints.
   --
@@ -116,6 +119,36 @@ data Command
   -- invocation arguments (as in @argv@) rather than passed directly as a
   -- Haskell function arguments.
   | DebugExecution { entryPoint :: EntryPoint, entryFile :: AbsFilePath, runArgs :: [String] }
+
+-- | The type of stepping to do when resuming a thread.
+data ResumeStep
+  = ResumeNoStep     -- ^ No stepping, i.e. just resume/continue the thread.
+  | ResumeSingleStep -- ^ Single step, i.e. stop at the immediate next breakpoint
+  | ResumeStepLocal  -- ^ Step to the next breakpoint on the same function at the source level
+  | ResumeStepOut    -- ^ Step out to the case continuation to which the thread
+                     -- returns from the current function
+
+-- | Describes whether to resume all threads besides the specified one.
+-- In the default stop-the-world mode, pause/continue should resume all threads
+-- when we resume and pause all threads when we hit a breakpoint. When in
+-- non-stop-the-world mode, only the specified thread gets resumed.
+--
+-- Important:
+--
+--   - When 'ResumeJustThisThread' is used, the debugger mode is toggled to
+--     non-stop-the-world, so, when that thread hits a breakpoint, it is only
+--     reported for that thread.
+--
+--   - When 'ResumeTheWorld' is used, the debugger mode is toggled to
+--     stop-the-world (regardless of threads having just been resumed with
+--     'ResumeJustThisThread'). From that point 'ResumeJustThisThread' is used
+--     again, all breakpoints hit pause all threads in addition to the one that
+--     hit the breakpoint.
+data ResumeTheWorld
+  -- | Resume only the specified thread and toggle the non-stop-the-world mode
+  = ResumeJustThisThread
+  -- | Resume all threads in addition to the specified one and toggle stop-the-world mode
+  | ResumeTheWorld
 
 -- | An entry point for program execution.
 data EntryPoint = MainEntry { mainName :: Maybe String } | FunctionEntry { fnName :: String }

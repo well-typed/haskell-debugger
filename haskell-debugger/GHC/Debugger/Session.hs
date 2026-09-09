@@ -747,13 +747,17 @@ initUniqSupplyIO = GHC.initUniqSupply 0 1
 -- Wrappers around GHC's odd behavior
 -- ----------------------------------------------------------------------------
 
-resumeExec :: GhcMonad m => SingleStep -> Maybe Int -> m ExecResult
-resumeExec a b = do
+resumeExec :: GhcMonad m => SingleStep -> Maybe Int -> Resume -> m ExecResult
+resumeExec a b resume = do
   -- IC's ic_imports field is not kept in sync with ic_gre_cache, so we could do
   -- this call later, but why rely on that.
   imports <- GHC.getContext
 
-  v <- GHC.resumeExec a MultiThreadedBreaks b
+#if MIN_VERSION_ghc(10,1,0)
+  v <- GHC.resumeExec a MultiThreadedBreaks b resume
+#else
+  v <- GHC.resumeExec a b
+#endif
 
   -- To have interactive imports persist after a `continue` command we have to
   -- work around how GHC.resumeExec handles the InteractiveContext (IC).

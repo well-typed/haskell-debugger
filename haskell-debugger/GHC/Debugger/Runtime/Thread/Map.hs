@@ -6,6 +6,7 @@ module GHC.Debugger.Runtime.Thread.Map
   -- * Operations
   , insertThreadMap
   , lookupThreadMap
+  , deleteThreadMap
 
   , threadMapToList
 
@@ -13,30 +14,32 @@ module GHC.Debugger.Runtime.Thread.Map
   -- to a ThreadId which has been GC'd?
   ) where
 
-import Control.Concurrent
 import Data.Coerce
 
-import GHCi.RemoteTypes
 import qualified Data.IntMap as IM
 
 -- | A thread map maintains a mapping between the int thread identifier, which
 -- uniquely identifies a thread spawned by the debuggee, and the (possibly
 -- remote) reference to the thread (i.e. the corresponding ThreadId)
-type ThreadMap = IM.IntMap (ForeignRef ThreadId)
+type ThreadMap a = IM.IntMap a
 
 -- | Insert a remote 'ThreadId' at this unique Int thread identifier
-insertThreadMap :: Int -> ForeignRef ThreadId -> ThreadMap -> ThreadMap
+insertThreadMap :: Int -> a -> ThreadMap a -> ThreadMap a
 insertThreadMap = IM.insert
 
 -- | Lookup a remote 'ThreadId' by its unique Int identifier
-lookupThreadMap :: Int -> ThreadMap -> Maybe (ForeignRef ThreadId)
+lookupThreadMap :: Int -> ThreadMap a -> Maybe a
 lookupThreadMap = IM.lookup
 
+-- | Insert a remote 'ThreadId' at this unique Int thread identifier
+deleteThreadMap :: Int -> ThreadMap a -> ThreadMap a
+deleteThreadMap = IM.delete
+
 -- | > It's empty, what did you expect?
-emptyThreadMap :: ThreadMap
+emptyThreadMap :: ThreadMap a
 emptyThreadMap = IM.empty
 
 -- | Get all the remote thread references from the ThreadMap
-threadMapToList :: ThreadMap -> [(Int, ForeignRef ThreadId)]
+threadMapToList :: ThreadMap a -> [(Int, a)]
 threadMapToList = coerce . IM.toList
 
