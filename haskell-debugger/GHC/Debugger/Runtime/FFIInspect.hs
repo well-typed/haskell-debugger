@@ -3,6 +3,8 @@
 module GHC.Debugger.Runtime.FFIInspect where
 import GHC.Base (StackSnapshot#)
 import GHC.Stack.CloneStack
+import GHC.Exts.Heap qualified as GHC
+import GHC.Exts.Heap.Closures qualified as GHC
 
 foreign import ccall unsafe "stack.h" bco_args_offset :: StackSnapshot# -> Word -> Int
 foreign import ccall unsafe "stack.h" stack_bco_frame_selftest :: IO Bool
@@ -15,3 +17,6 @@ bcoArgsOffset (StackSnapshot ss) frame_offset =
   case bco_args_offset ss frame_offset of
     i | i < 0 -> Nothing
       | otherwise -> Just $ fromIntegral i
+
+getClosureData :: GHC.StgStackClosure -> IO GHC.Closure
+getClosureData = GHC.getClosureData

@@ -7,6 +7,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
@@ -439,7 +440,9 @@ loadFFIInspect l buildWays = do
   let ghcLog = liftLogIO l
 
   dflags <- getDynFlags
-  uid <- addInMemoryFFIInspectUnit [baseUnitId dflags] (setDynFlagWays buildWays dflags)
+  us <- hsc_units <$> getSession
+  Just ghc_heapId <- pure $ lookupPackageName us (PackageName "ghc-heap")
+  uid <- addInMemoryFFIInspectUnit [baseUnitId dflags, ghc_heapId] (setDynFlagWays buildWays dflags)
 
   successes <- loadInMemoryModules l uid modsToLoad
   forM_ (zip successes modsToLoad) $ \case
