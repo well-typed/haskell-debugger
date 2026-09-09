@@ -56,7 +56,6 @@ import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Types.Name.Occurrence (mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig)
 import qualified GHCi.Message as GHCi
-import qualified GHC.Data.Strict as Strict
 
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Monad
@@ -71,7 +70,8 @@ import Data.List (find)
 import GHC.Unit.Module.Graph as GHC
 import GHC.Types.Var
 import GHC.Runtime.Eval.Types
-import GHC.Stack
+import GHC.Runtime.Eval (readIModBreaks)
+import GHC.ByteCode.Breakpoints
 
 --------------------------------------------------------------------------------
 -- * Evaluation
@@ -161,56 +161,51 @@ debugExecution entryFile entry args = do
           error $ "findUnitIdOfEntryFile: no unit id found for: " ++ unAbs afp ++ "\nCandidates were:\n" ++ unlines (map show norms)
         Just (_,summary) -> pure summary
 
--- | Resume execution of the stopped debuggee program
-doContinue :: Maybe RemoteThreadId -> Debugger EvalResult
-doContinue mti = do
-  maybe todo popResume mti
-    >>= resumeExec RunToCompletion Nothing
+doResume :: RemoteThreadId -> ResumeStep -> ResumeTheWorld -> Debugger EvalResult
+doResume tid step stop_world = do
+  resume <- popResume tid
+  ss     <- resolveStep resume step
+  -- TODO: stop_world toggles global hit breakpoints mode (todo: look at mode
+  -- to determine how to stop) and here run all the threads accordingly.
+  -- TODO: for the first iteration, simply call pause on all threads (except
+  -- for those with specific debugger labels); but pause will only set step_in,
+  -- and won't be able to pause compiled threads, but that is follow up work.
+  resumeExec ss Nothing resume
     >>= handleExecResult
 
--- | Resume execution but only take a single step.
-doSingleStep :: Maybe RemoteThreadId -> Debugger EvalResult
-doSingleStep mti = do
-  maybe todo popResume mti
-    >>= resumeExec SingleStep Nothing
-    >>= handleExecResult
-
-doStepOut :: Maybe RemoteThreadId -> Debugger EvalResult
-doStepOut mti = do
-  ti <- maybe todo popResume mti
-  mb_span <- getCurrentBreakSpan
-  case mb_span of
-    Nothing ->
-      resumeExec (GHC.StepOut Nothing) Nothing ti
-        >>= handleExecResult
-    Just loc -> do
-      md <- fromMaybe (error "doStepOut") <$> getCurrentBreakModule
+-- | Construct the 'SingleStep' resume option for a paused thread from its
+-- 'Resume' info and the type of step to do.
+resolveStep :: Resume -> ResumeStep -> Debugger SingleStep
+resolveStep r = \case
+  ResumeNoStep     -> pure RunToCompletion
+  ResumeSingleStep -> pure SingleStep
+  ResumeStepLocal
+    | Nothing <- rbid -- exception
+    -> pure SingleStep
+    | Just ibi <- rbid
+    -> do
+       spn <- enclosing_decl ibi
+       pure LocalStep { breakAt = RealSrcSpan spn mempty }
+  ResumeStepOut
+    | Nothing <- rbid
+    -> pure StepOut { initiatedFrom = Nothing }
+    | Just ibi <- rbid
+    -> do
+       spn <- enclosing_decl ibi
+       pure StepOut { initiatedFrom = Just (RealSrcSpan spn mempty) }
+  where
+    rbid = resumeBreakpointId r
+    loc  = resumeSpan r
+    -- To do a local step, we get the SrcSpan of the current suspension state
+    -- and get its 'enclosingTickSpan' to use as a filter for breakpoints in
+    -- the call to 'resumeExec'. Execution will only stop at breakpoints whose
+    -- span matches this enclosing span.
+    enclosing_decl ibi = do
+      hug   <- hsc_HUG <$> getSession
+      brks  <- readIModBreaks hug ibi & liftIO
+      let md = getBreakSourceMod ibi brks
       ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
-      let current_toplevel_decl = enclosingTickSpan ticks loc
-      resumeExec (GHC.StepOut (Just (RealSrcSpan current_toplevel_decl Strict.Nothing))) Nothing ti
-        >>= handleExecResult
-
--- | Resume execution but stop at the next tick within the same function.
---
--- To do a local step, we get the SrcSpan of the current suspension state and
--- get its 'enclosingTickSpan' to use as a filter for breakpoints in the call
--- to 'resumeExec'. Execution will only stop at breakpoints whose span matches
--- this enclosing span.
-doLocalStep :: Maybe RemoteThreadId -> Debugger EvalResult
-doLocalStep mti = do
-  ti <- maybe todo popResume mti
-  mb_span <- getCurrentBreakSpan
-  case mb_span of
-    Nothing -> error "not stopped at a breakpoint?!"
-    Just (UnhelpfulSpan _) -> do
-      liftIO $ putStrLn "Stopped at an exception. Forcing step into..."
-      resumeExec SingleStep Nothing ti >>= handleExecResult
-    Just loc -> do
-      md <- fromMaybe (error "doLocalStep") <$> getCurrentBreakModule
-      -- TODO: Cache moduleLineMap?
-      ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
-      let current_toplevel_decl = enclosingTickSpan ticks loc
-      resumeExec (LocalStep (RealSrcSpan current_toplevel_decl mempty)) Nothing ti >>= handleExecResult
+      pure $ enclosingTickSpan ticks loc
 
 -- | Generalized `doEval` that also handles `imports`
 doEvalCommand :: String -> Debugger EvalResult
@@ -442,7 +437,3 @@ getRemoteThreadIdFromContext = do
       getRemoteThreadIdFromRemoteContext $ GHC.resumeContext resume1
     _ -> error "No resumes but stopped?!?"
 #endif
-
-todo :: HasCallStack => a
-todo = error "TODO"
-{-# DEPRECATED todo "TODO" #-}

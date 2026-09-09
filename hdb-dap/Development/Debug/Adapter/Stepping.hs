@@ -1,8 +1,13 @@
 {-# LANGUAGE RecordWildCards #-}
-module Development.Debug.Adapter.Stepping where
+{-# LANGUAGE LambdaCase #-}
+module Development.Debug.Adapter.Stepping
+  ( commandContinue
+  , commandNext
+  , commandStepIn
+  , commandStepOut
+  ) where
 
 import DAP
-import Data.Maybe
 
 import GHC.Debugger.Interface.Messages hiding (Command, Response)
 
@@ -13,38 +18,38 @@ import Development.Debug.Adapter.Evaluation
 commandContinue :: DebugAdaptor ()
 commandContinue = do
   ContinueArguments {..} <- getArguments
-  let mthread = if fromMaybe False continueArgumentsSingleThread
-        then Just (RemoteThreadId continueArgumentsThreadId)
-        else Nothing
+  let rtw = bool_single_thrd continueArgumentsSingleThread
+  let rsm = DoResume (RemoteThreadId continueArgumentsThreadId) ResumeNoStep rtw
   resetObjectReferences
-  DidContinue er <- sendInterleaved (DoContinue mthread) $
-    sendContinueResponse (ContinueResponse True)
+  DidResume er <- sendInterleaved rsm $
+    sendContinueResponse (ContinueResponse (maybe True not continueArgumentsSingleThread))
   handleEvalResult False er
 
 commandNext :: DebugAdaptor ()
 commandNext = do
   NextArguments {..} <- getArguments
-  let mthread = if fromMaybe False nextArgumentsSingleThread
-        then Just (RemoteThreadId nextArgumentsThreadId)
-        else error ("Nothing, but nextArgsThreadId: " ++ show nextArgumentsThreadId)-- Nothing
+  let rtw = bool_single_thrd nextArgumentsSingleThread
+  let rsm = DoResume (RemoteThreadId nextArgumentsThreadId) ResumeStepLocal rtw
   resetObjectReferences
-  DidStep er <- sendInterleaved (DoStepLocal mthread) sendNextResponse
+  DidResume er <- sendInterleaved rsm sendNextResponse
   handleEvalResult True er
 
 commandStepIn :: DebugAdaptor ()
 commandStepIn = do
   StepInArguments {..} <- getArguments
-  let mthread = if fromMaybe False stepInArgumentsSingleThread
-        then Just (RemoteThreadId stepInArgumentsThreadId)
-        else Nothing
+  let rtw = bool_single_thrd stepInArgumentsSingleThread
+  let rsm = DoResume (RemoteThreadId stepInArgumentsThreadId) ResumeSingleStep rtw
   resetObjectReferences
-  DidStep er <- sendInterleaved DoSingleStep sendStepInResponse
+  DidResume er <- sendInterleaved rsm sendStepInResponse
   handleEvalResult True er
 
 commandStepOut :: DebugAdaptor ()
 commandStepOut = do
+  StepOutArguments {..} <- getArguments
+  let rtw = bool_single_thrd stepOutArgumentsSingleThread
+  let rsm = DoResume (RemoteThreadId stepOutArgumentsThreadId) ResumeStepOut rtw
   resetObjectReferences
-  DidStep er <- sendInterleaved DoStepOut sendStepOutResponse
+  DidResume er <- sendInterleaved rsm sendStepOutResponse
   handleEvalResult True er
 
 --------------------------------------------------------------------------------
@@ -57,3 +62,12 @@ resetObjectReferences = do
       , breakpointMap = mempty
       , variablesMap  = mempty
       }
+
+bool_single_thrd :: Maybe Bool -> ResumeTheWorld
+bool_single_thrd = bool_mby ResumeJustThisThread ResumeTheWorld
+
+bool_mby :: a {- if Just True -} -> a {- if Nothing or Just False -} -> Maybe Bool -> a
+bool_mby l r = \case
+  Nothing    -> r
+  Just False -> r
+  Just True  -> l

@@ -296,8 +296,7 @@ data Response
   | DidRemoveBreakpoint BreakFound
   | DidGetBreakpoints (Maybe SourceSpan)
   | DidClearBreakpoints
-  | DidContinue EvalResult
-  | DidStep EvalResult
+  | DidResume EvalResult
   | DidExec EvalResult
   | GotThreads [DebuggeeThread]
   | GotStacktrace [DbgStackFrame]

@@ -21,6 +21,7 @@ import GHC.Debugger.Monad
 import GHC.Debugger
 import Control.Monad
 import Data.List (intercalate)
+import Data.Maybe (fromJust)
 import qualified Data.Maybe as Maybe
 import GHC.Debugger.Debuggee (DebuggerLog)
 
@@ -139,8 +140,7 @@ printResponse = \case
   DidRemoveBreakpoint bf    -> outputStrLn $ show bf
   DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
   DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
-  DidContinue er -> outputEvalResult er
-  DidStep er -> printEvalResult er
+  DidResume er -> outputEvalResult er
   DidExec er -> outputEvalResult er
   GotThreads threads -> outputStrLn $ show threads
   GotStacktrace stackframes -> outputStrLn $ show stackframes
@@ -317,19 +317,19 @@ cmdParser opts ctx = hsubparser
       ( progDesc "Run the debuggee" ) )
   <>
     Options.Applicative.command "next"
-    ( info (pure $ Do DoStepLocal)
+    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeStepLocal ResumeTheWorld)
       ( progDesc "Step over to the next line" ) )
   <>
     Options.Applicative.command "step"
-    ( info (pure $ Do DoSingleStep)
+    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeSingleStep ResumeTheWorld)
       ( progDesc "Step-in to the next immediate location" ) )
   <>
     Options.Applicative.command "finish"
-    ( info (pure $ Do DoStepOut)
+    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeStepOut ResumeTheWorld)
       ( progDesc "Step-out of the current function into the caller/its continuation" ) )
   <>
     Options.Applicative.command "continue"
-    ( info (pure $ Do (DoContinue Nothing))
+    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeNoStep ResumeTheWorld)
       ( progDesc "Continue executing from the current breakpoint" ) )
   <>
     Options.Applicative.command "print"
