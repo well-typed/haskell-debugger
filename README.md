@@ -31,6 +31,27 @@ PATH. Make sure the DAP client knows this. For instance, to launch VSCode with a
 PATH=/path/to/ghc-dir:$PATH code /path/to/proj
 ```
 
+## Prebuilt release binaries
+
+The `hdb-<version>-<arch>.tar.gz` bindists attached to [GitHub
+Releases](https://github.com/well-typed/haskell-debugger/releases) unpack into
+a self-contained folder:
+
+```
+hdb-<version>-<arch>/
+  hdb        # wrapper script -- put THIS on PATH, not bin/hdb
+  bin/hdb    # the real executable
+  lib/*      # bundled dynamic dependencies
+```
+
+The top-level `hdb` is a wrapper (modeled on
+[`haskell-language-server`'s](https://github.com/haskell/haskell-language-server/blob/master/bindist/wrapper.in))
+that locates a GHC installation on your machine matching the version and boot
+library ABIs `hdb` was built against, sets up the library search path, and
+then execs the real binary in `bin/`. If it can't find a matching GHC it will
+print an error explaining how to install one (e.g. via `ghcup install ghc
+<version> --set`); set `HDB_WRAPPER_DEBUG=1` for more detail.
+
 # Usage
 
 To use the debugger in VSCode, select the debugger tab, select Haskell Debugger,
