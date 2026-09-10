@@ -6,7 +6,6 @@ module GHC.Debugger.Stopped.Variables
   ( termVarFields
   , termToVarInfo
   , forceTerm
-  , ppr_term
   ) where
 
 import Control.Monad.Reader
@@ -235,14 +234,14 @@ forceTerm term = do
 -- Utils
 --------------------------------------------------------------------------------
 
-ppr_term :: Term -> SDoc
-ppr_term t = case t of
+_ppr_term :: Term -> SDoc
+_ppr_term t = case t of
   Term{dc,subTerms} -> annotate "T:" $
-    either text ppr dc <+> ppr (map ppr_term subTerms)
+    either text ppr dc <+> ppr (map _ppr_term subTerms)
   Prim{valRaw} -> annotate "P:" $ ppr valRaw
   Suspension{bound_to,ctype} -> annotate "S:" $ ppr bound_to <+> text (show ctype)
   NewtypeWrap{dc,wrapped_term} ->
-    annotate "N:" $ either text ppr dc <+> ppr_term wrapped_term
-  RefWrap{wrapped_term} -> annotate "R:" $ ppr_term wrapped_term
+    annotate "N:" $ either text ppr dc <+> _ppr_term wrapped_term
+  RefWrap{wrapped_term} -> annotate "R:" $ _ppr_term wrapped_term
   where
     annotate tag d = parens $ text tag <+> ppr (ty t) <+> text "∋" <+> d
