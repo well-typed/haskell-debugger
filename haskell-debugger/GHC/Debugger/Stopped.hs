@@ -31,13 +31,16 @@ import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Thread
 import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Runtime.Thread.Stack
-import GHC.Debugger.Runtime.Thread.Resume
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
 import GHC.Debugger.Utils
 import qualified Colog.Core as Logger
 import System.Directory (getCurrentDirectory)
+
+#if MIN_VERSION_ghc(10,1,0)
+import GHC.Debugger.Runtime.Thread.Resume
+#endif
 
 {-
 Note [Don't crash if not stopped]

@@ -1,7 +1,19 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
-module GHC.Debugger.Breakpoint where
+
+-- | Set/unset breakpoints in the debuggee program
+module GHC.Debugger.Breakpoint
+  (
+    -- * Set/unset and get breakpoints
+    clearBreakpoints
+  , setBreakpoint
+  , getBreakpointsAt
+
+    -- ** Conditional breakpoints and logpoints
+  , condBreakEnableStatus
+  , logMessageExpression
+  ) where
 
 import Prelude hiding ((<>))
 import Control.Exception

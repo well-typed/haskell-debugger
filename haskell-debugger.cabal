@@ -82,7 +82,7 @@ library
                       -- 1. Start debugging, evaluate statements, and resume
                       -- stopped threads.
                       GHC.Debugger.Run,
-                      -- 2. Set/unset breakpoints
+                      -- 2. Set/unset and get breakpoints
                       GHC.Debugger.Breakpoint,
                       -- 3. Query information about stopped threads
                       GHC.Debugger.Stopped,

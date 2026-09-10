@@ -14,8 +14,8 @@ module GHC.Debugger
 
   ) where
 
-import GHC.Debugger.Breakpoint
-import qualified GHC.Debugger.Run as Run
+import qualified GHC.Debugger.Breakpoint as Break
+import qualified GHC.Debugger.Run        as Run
 import GHC.Debugger.Stopped
 import GHC.Debugger.Stopped.Exception (getExceptionInfo)
 import GHC.Debugger.Monad
@@ -34,16 +34,17 @@ execute = \case
   ------------------------------------------------------------------------------
 
   ClearFunctionBreakpoints -> DidClearBreakpoints <$
-    clearBreakpoints Nothing
+    Break.clearBreakpoints Nothing
   ClearModBreakpoints fp -> DidClearBreakpoints <$
-    clearBreakpoints (Just fp)
+    Break.clearBreakpoints (Just fp)
   SetBreakpoint{brk, hitCount, condition, logMessage} -> DidSetBreakpoint <$>
-    setBreakpoint brk (condBreakEnableStatus hitCount condition)
-                  (maybe BreakpointStop (BreakpointLogAndResume . logMessageExpression) logMessage)
+    Break.setBreakpoint brk
+                  (Break.condBreakEnableStatus hitCount condition)
+                  (maybe BreakpointStop (BreakpointLogAndResume . Break.logMessageExpression) logMessage)
   DelBreakpoint bp -> DidRemoveBreakpoint <$>
-    setBreakpoint bp BreakpointDisabled BreakpointStop
+    Break.setBreakpoint bp BreakpointDisabled BreakpointStop
   GetBreakpointsAt bp -> DidGetBreakpoints <$>
-    getBreakpointsAt bp
+    Break.getBreakpointsAt bp
 
   ------------------------------------------------------------------------------
   -- GHC.Debugger.Stopped
