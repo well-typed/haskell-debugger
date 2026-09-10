@@ -84,35 +84,46 @@ Flag testing
 
 library
     import:           warnings
-    exposed-modules:  GHC.Debugger,
-                      GHC.Debugger.Breakpoint,
-                      GHC.Debugger.Breakpoint.Map,
+    exposed-modules:
+                      -- Entry point to `execute` debugger commands
+                      GHC.Debugger,
+                      GHC.Debugger.Interface.Messages,
+
+                      -- Top-level debugger commands
                       GHC.Debugger.Run,
+                      GHC.Debugger.Run.Eval,
+                      GHC.Debugger.Run.Handler,
+                      GHC.Debugger.Run.Resume,
                       GHC.Debugger.Stopped,
                       GHC.Debugger.Stopped.Exception,
                       GHC.Debugger.Stopped.Frames,
                       GHC.Debugger.Stopped.Variables,
+                      GHC.Debugger.Breakpoint,
 
-                      GHC.Debugger.Runtime,
-
+                      -- Evaluate exprs on the debuggee process
                       GHC.Debugger.Runtime.Eval,
                       GHC.Debugger.Runtime.Eval.RemoteExpr,
                       GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin,
 
+                      -- Finding debuggee instances at runtime
                       GHC.Debugger.Runtime.Instances,
                       GHC.Debugger.Runtime.Instances.Discover,
 
+                      -- Compile expressions at runtime
                       GHC.Debugger.Runtime.Compile,
                       GHC.Debugger.Runtime.Compile.Cache,
 
                       GHC.Debugger.Runtime.FFIInspect,
 
-                      GHC.Debugger.Runtime.Term.Parser,
+                      -- Inspecting runtime terms
+                      GHC.Debugger.Runtime.Term,
                       GHC.Debugger.Runtime.Term.Key,
+                      GHC.Debugger.Runtime.Term.Parser,
 
+                      -- Per-thread information and resumes
                       GHC.Debugger.Runtime.Thread,
                       GHC.Debugger.Runtime.Thread.Stack,
-                      GHC.Debugger.Runtime.Thread.Map,
+                      GHC.Debugger.Runtime.Thread.Resume,
 
                       GHC.Debugger.Runtime.Interpreter.Types,
 
@@ -124,10 +135,14 @@ library
                       GHC.Debugger.Session,
                       GHC.Debugger.Session.Builtin,
                       GHC.Debugger.Session.Interactive,
-                      GHC.Debugger.Interface.Messages
+
+                      -- Data structures
+                      GHC.Debugger.Data.BreakpointMap,
+                      GHC.Debugger.Data.ThreadMap,
 
     if impl(ghc >= 9.14.2)
       exposed-modules:
+                      -- Custom external interpreter
                       GHC.Debugger.Runtime.Interpreter,
                       GHC.Debugger.Runtime.Interpreter.Custom
 

@@ -40,7 +40,7 @@ import Colog.Core as Logger
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Runtime.Term.Parser
-import GHC.Debugger.Runtime.Thread.Map
+import GHC.Debugger.Data.ThreadMap
 
 import GHC.Debugger.Runtime.Interpreter.Types
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote

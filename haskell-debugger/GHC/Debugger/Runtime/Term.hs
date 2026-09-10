@@ -1,5 +1,7 @@
 {-# LANGUAGE OrPatterns, GADTs, LambdaCase, NamedFieldPuns, TemplateHaskellQuotes #-}
-module GHC.Debugger.Runtime where
+module GHC.Debugger.Runtime.Term
+  ( obtainTerm
+  ) where
 
 import Control.Monad.Reader
 
