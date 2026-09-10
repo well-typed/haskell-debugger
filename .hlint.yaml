@@ -1,3 +1,7 @@
+# Rules about keeping modules A.B.* only imported by A.B
+- modules:
+  - {name: ["GHC.Debugger.Stopped.**"], within: [GHC.Debugger.Stopped], message: "Prefer the interface exposed by GHC.Debugger.Stopped"}
+
 # Warnings currently triggered by your code
 - ignore: {name: "Eta reduce"} # 8 hints
 - ignore: {name: "Evaluate"} # 4 hints
