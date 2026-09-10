@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns, MultiWayIf, OverloadedRecordDot #-}
+
 module GHC.Debugger.Stopped where
 
 import Control.Monad

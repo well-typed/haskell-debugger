@@ -10,7 +10,19 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wredundant-record-wildcards #-} -- bc CPP
-module GHC.Debugger.Run where
+
+-- | Start debugging a program, evaluate statements, and resume stopped threads.
+module GHC.Debugger.Run
+  (
+  -- * Start debugging a program
+    debugExecution
+
+  -- * Resume stopped program
+  , doResume
+
+  -- * Interactive evaluation
+  , doEvalCommand
+  ) where
 
 import GHC.Utils.Outputable
 import Control.Monad.IO.Class

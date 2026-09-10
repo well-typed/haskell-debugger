@@ -1,7 +1,18 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
-module GHC.Debugger where
+
+
+-- | Entry point to execute debugging commands
+module GHC.Debugger
+  (
+    -- * Execute debugger commands
+    execute
+
+    -- * Re-export command types
+  , module GHC.Debugger.Interface.Messages
+
+  ) where
 
 import GHC.Debugger.Breakpoint
 import GHC.Debugger.Run

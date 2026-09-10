@@ -74,10 +74,16 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  GHC.Debugger,
+    exposed-modules:
+                      -- Entry point to `execute` debugger commands
+                      GHC.Debugger,
+                      GHC.Debugger.Interface.Messages,
+
+                      -- Start debugging, evaluate statements, and resume stopped threads.
+                      GHC.Debugger.Run,
+
                       GHC.Debugger.Breakpoint,
                       GHC.Debugger.Breakpoint.Map,
-                      GHC.Debugger.Run,
                       GHC.Debugger.Stopped,
                       GHC.Debugger.Stopped.Exception,
                       GHC.Debugger.Stopped.Variables,
@@ -112,7 +118,6 @@ library
                       GHC.Debugger.Session,
                       GHC.Debugger.Session.Builtin,
                       GHC.Debugger.Session.Interactive,
-                      GHC.Debugger.Interface.Messages
 
     if impl(ghc >= 9.14.2)
       exposed-modules:
