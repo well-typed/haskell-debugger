@@ -16,7 +16,7 @@ module GHC.Debugger
 
 import qualified GHC.Debugger.Breakpoint as Break
 import qualified GHC.Debugger.Run        as Run
-import GHC.Debugger.Stopped
+import qualified GHC.Debugger.Stopped    as Stopped
 import GHC.Debugger.Stopped.Exception (getExceptionInfo)
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
@@ -51,13 +51,13 @@ execute = \case
   ------------------------------------------------------------------------------
 
   GetThreads -> GotThreads <$>
-    getThreads
+    Stopped.getThreads -- should this really be in Stopped?
   GetStacktrace i -> GotStacktrace <$>
-    getStacktrace i
+    Stopped.getStacktrace i
   GetScopes threadId frameIx -> GotScopes <$>
-    getScopes threadId frameIx
+    Stopped.getScopes threadId frameIx
   GetVariables threadId frameIx varRef -> GotVariables <$>
-    getVariables threadId frameIx varRef
+    Stopped.getVariables threadId frameIx varRef
   GetExceptionInfo threadId -> GotExceptionInfo <$>
     getExceptionInfo threadId
 

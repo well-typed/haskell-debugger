@@ -2,7 +2,15 @@
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns, MultiWayIf, OverloadedRecordDot #-}
 
-module GHC.Debugger.Stopped where
+-- | Query information about the debuggee when a thread is stopped
+module GHC.Debugger.Stopped
+  (
+    -- * Query information about the stopped debuggee threads
+    getThreads
+  , getStacktrace
+  , getScopes
+  , getVariables
+  ) where
 
 import Control.Monad
 import Control.Monad.Reader
