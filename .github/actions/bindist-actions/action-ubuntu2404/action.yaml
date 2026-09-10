@@ -14,7 +14,7 @@ runs:
   env:
     STAGE: ${{ inputs.stage }}
     GHC_VERSION: ${{ inputs.version }}
-    INSTALL: apt-get update && apt-get install -y
-    TOOLS: libnuma-dev zlib1g-dev libgmp-dev libgmp10 libssl-dev liblzma-dev libbz2-dev
+    PKG_INSTALL_CMD: apt-get update && apt-get install -y
+    PKG_TOOLS: libnuma-dev zlib1g-dev libgmp-dev libgmp10 libssl-dev liblzma-dev libbz2-dev
       git wget lsb-release software-properties-common gnupg2 apt-transport-https gcc
       autoconf automake build-essential curl gzip libffi-dev libncurses-dev patchelf

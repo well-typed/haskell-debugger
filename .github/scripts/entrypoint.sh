@@ -4,7 +4,7 @@
 
 set -exo pipefail
 
-bash -c "$INSTALL $TOOLS"
+bash -c "$PKG_INSTALL_CMD $PKG_TOOLS"
 
 case "$STAGE" in
 	BUILD)
