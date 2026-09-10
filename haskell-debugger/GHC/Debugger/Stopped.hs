@@ -10,6 +10,7 @@ module GHC.Debugger.Stopped
   , getStacktrace
   , getScopes
   , getVariables
+  , getExceptionInfo
   ) where
 
 import Control.Monad

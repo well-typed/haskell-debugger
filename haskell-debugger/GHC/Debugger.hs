@@ -17,7 +17,6 @@ module GHC.Debugger
 import qualified GHC.Debugger.Breakpoint as Break
 import qualified GHC.Debugger.Run        as Run
 import qualified GHC.Debugger.Stopped    as Stopped
-import GHC.Debugger.Stopped.Exception (getExceptionInfo)
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 
@@ -59,7 +58,7 @@ execute = \case
   GetVariables threadId frameIx varRef -> GotVariables <$>
     Stopped.getVariables threadId frameIx varRef
   GetExceptionInfo threadId -> GotExceptionInfo <$>
-    getExceptionInfo threadId
+    Stopped.getExceptionInfo threadId
 
   ------------------------------------------------------------------------------
   -- GHC.Debugger.Run
