@@ -79,7 +79,7 @@ jobs:
       matrix:
         version: [9.14.1]
         include:
-          - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+          - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
             version: 9.14.1
     steps:
       - uses: actions/checkout@v4
@@ -134,7 +134,7 @@ jobs:
         runner: [ubuntu-latest, macOS-latest] # windows-latest is broken, see #246
         version: [9.14.1, 10.1.20260817]
         include:
-          - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+          - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
             version: 9.14.1
           - channel: https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml
             version: 10.1.20260817
@@ -142,11 +142,11 @@ jobs:
             asset_arch: aarch64-apple-darwin
           - runner: ubuntu-24.04-arm
             version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
             asset_arch: aarch64-linux-ubuntu2404
           - runner: macos-15-intel
             version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
             asset_arch: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
@@ -243,7 +243,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -275,7 +275,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -307,7 +307,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -339,7 +339,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -371,7 +371,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -403,7 +403,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -435,7 +435,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -467,7 +467,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -499,7 +499,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -531,7 +531,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -563,7 +563,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -595,7 +595,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
@@ -627,7 +627,7 @@ jobs:
         version: [9.14.1]
         include:
           - version: 9.14.1
-            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
     steps:
       - uses: actions/checkout@v4
         with:
