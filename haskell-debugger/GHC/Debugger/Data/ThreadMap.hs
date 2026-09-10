@@ -1,5 +1,5 @@
 -- | A map to track and manage the debuggee runtime threads
-module GHC.Debugger.Runtime.Thread.Map
+module GHC.Debugger.Data.ThreadMap
   ( ThreadMap
   , emptyThreadMap
 
@@ -42,4 +42,3 @@ emptyThreadMap = IM.empty
 -- | Get all the remote thread references from the ThreadMap
 threadMapToList :: ThreadMap a -> [(Int, a)]
 threadMapToList = coerce . IM.toList
-

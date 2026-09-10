@@ -80,16 +80,13 @@ library
                       GHC.Debugger.Interface.Messages,
 
                       -- 1. Start debugging, evaluate, and resume threads
-                      GHC.Debugger.Run,
                       -- 2. Set/unset and get breakpoints
-                      GHC.Debugger.Breakpoint,
                       -- 3. Query information about stopped threads
+                      GHC.Debugger.Run,
+                      GHC.Debugger.Breakpoint,
                       GHC.Debugger.Stopped,
-                      -- Should only be imported by (3)
                       GHC.Debugger.Stopped.Exception,
                       GHC.Debugger.Stopped.Variables,
-
-                      GHC.Debugger.Breakpoint.Map,
 
                       GHC.Debugger.Runtime,
 
@@ -107,7 +104,6 @@ library
                       GHC.Debugger.Runtime.Term.Key,
 
                       GHC.Debugger.Runtime.Thread,
-                      GHC.Debugger.Runtime.Thread.Map,
                       GHC.Debugger.Runtime.Thread.Stack,
                       GHC.Debugger.Runtime.Thread.Resume,
 
@@ -121,6 +117,10 @@ library
                       GHC.Debugger.Session,
                       GHC.Debugger.Session.Builtin,
                       GHC.Debugger.Session.Interactive,
+
+                      -- Data structures
+                      GHC.Debugger.Data.BreakpointMap,
+                      GHC.Debugger.Data.ThreadMap,
 
     if impl(ghc >= 9.14.2)
       exposed-modules:

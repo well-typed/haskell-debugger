@@ -1,6 +1,6 @@
 {-# LANGUAGE NamedFieldPuns, DeriveFunctor, DerivingStrategies, GeneralizedNewtypeDeriving #-}
 -- | Meant to be qualified with @import qualified GHC.Debugger.Breakpoint.Map as BM@
-module GHC.Debugger.Breakpoint.Map
+module GHC.Debugger.Data.BreakpointMap
   ( BreakpointMap
   , insert
   , lookup
