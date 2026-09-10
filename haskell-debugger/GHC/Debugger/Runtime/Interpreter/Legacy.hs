@@ -198,8 +198,8 @@ retBCOParser stack_fv frame_ix = do
         tag <- liftDebuggerOrFail $ obtainParsedTerm "tag" 3 True anyTy (castForeignRef tag_fv) (maybeParser $ wordParser <|> wordPrimParser)
 
         -- Decode the BCO closure using 'getClosureData' on the foreign heap
-        bco_closure_fv <- liftDebugger $
-          expectRight =<< Remote.evalIO
+        bco_closure_fv <- liftDebuggerOrFail $
+          Remote.evalIO
             (Remote.getClosureData (Remote.ref (castForeignRef val)))
 
         r <- liftDebuggerOrFail $
@@ -215,8 +215,8 @@ stackAnnoParser = do
   (matchConstructorTerm "AnnFrame" *> subtermWith 1 (subtermWith 0{-take from Box-} (Just <$> anyTerm)) <|> pure Nothing)
     >>= \case
       Just Term{val} -> do
-        stack_anno <- liftDebugger $
-          expectRight =<< Remote.evalString
+        stack_anno <- liftDebuggerOrFail $
+          Remote.evalString
 #if MIN_VERSION_ghc_experimental(9,1402,0)
             (Remote.displayStackAnnotationShort (Remote.ref (castForeignRef val)))
 #else
@@ -248,16 +248,12 @@ bcoInternalBreakpointId = do
 getOptionalStackAnnotationSrcLoc :: TermParser (Maybe Stack.SrcLoc)
 #if MIN_VERSION_ghc_experimental(9,1402,0)
 getOptionalStackAnnotationSrcLoc = do
-  src_loc_fv <- liftDebugger $
-    expectRight =<< Remote.eval
+  src_loc_fv <- liftDebuggerOrFail $
+    Remote.eval
       (Remote.stackAnnotationSourceLocation (Remote.ref (castForeignRef val)))
 
-  src_loc_either <- liftDebugger $
+  liftDebuggerOrFail $
     obtainParsedTerm "Annotation SrcLoc" maxBound True anyTy (castForeignRef src_loc_fv) (maybeParser srcLocParser)
-
-  case src_loc_either of
-    Left err -> fail (show err)
-    Right t  -> return t
  where
   -- | Parse a 'SrcLoc'.
   srcLocParser :: TermParser Stack.SrcLoc
@@ -280,14 +276,11 @@ getOptionalStackAnnotationSrcLoc = do
 bcoLiteralString :: Word -> TermParser String
 bcoLiteralString ix = do
   Term{val=literals_fv} <- subtermWith 2 (subtermTerm 0{-Box's field-})
-  liftDebugger $ do
-
-    r <- Remote.evalIOString $
+  liftDebuggerOrFail $ do
+    Remote.evalIOString $
         Remote.peekCString $
           Remote.withUnboxed (Remote.lit (fromIntegral ix))
             (Remote.indexAddrArray (Remote.untypedRef literals_fv))
-
-    expectRight r
 
 -- | The indexes found in the BRK_FUN instruction
 data BCOBreakPointInfo = BCOBreakPointInfo
@@ -308,8 +301,8 @@ bcoBreakPointInfoParser = do
   -- highly internals dependent...
   -- find the BCI at index 0. bci is word16. the first 8bits are for flags
   -- something something BCO_READ_LARGE_ARG with (index_at 0#) rather than always BCO_NEXT?
-  liftDebugger $ do
-    hsc_env <- getSession
+  do
+    hsc_env <- liftDebugger getSession
 
     -- The BRK_FUN is the first instruction, unless BCO_NAME is enabled, in
     -- which case it's the second.
@@ -322,15 +315,15 @@ bcoBreakPointInfoParser = do
                     in if (index_at 0# Data.Bits..&. 0xFF) == 66{-bci_BRK_FUN-} then
                         Data.Maybe.Just (index_at 1#, index_at 2#, index_at 3#, index_at 4#, index_at 5#)
                       else Data.Maybe.Nothing"""
-    rs_fv <- expectRight =<< Remote.eval
+    rs_fv <- liftDebuggerOrFail $ Remote.eval
       (find_ixs_fv `Remote.app` Remote.untypedRef instrs_array_fv)
 
-    mparsed_bco_brk <- obtainParsedTerm "Ixs" maxBound True anyTy rs_fv $
+    mparsed_bco_brk <- liftDebugger $ obtainParsedTerm "Ixs" maxBound True anyTy rs_fv $
       maybeParser $ BCOBreakPointInfo <$>
         subtermWith 0 wordParser <*> subtermWith 1 wordParser <*> subtermWith 2 wordParser
                                  <*> subtermWith 3 wordParser <*> subtermWith 4 wordParser
     case mparsed_bco_brk of
-      Left errs -> do
+      Left errs -> liftDebugger $ do
         logSDoc Logger.Error (vcat (map (text . getTermErrorMessage) errs))
         liftIO $ fail "Failed to parse BCOClosure's BRK_FUN"
       Right r -> return r
