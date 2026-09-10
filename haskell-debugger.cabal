@@ -79,12 +79,15 @@ library
                       GHC.Debugger,
                       GHC.Debugger.Interface.Messages,
 
-                      -- Start debugging, evaluate statements, and resume stopped threads.
+                      -- 1. Start debugging, evaluate statements, and resume
+                      -- stopped threads.
                       GHC.Debugger.Run,
-
+                      -- 2. Set/unset breakpoints
                       GHC.Debugger.Breakpoint,
-                      GHC.Debugger.Breakpoint.Map,
+                      -- 3. Query information about stopped threads
                       GHC.Debugger.Stopped,
+
+                      GHC.Debugger.Breakpoint.Map,
                       GHC.Debugger.Stopped.Exception,
                       GHC.Debugger.Stopped.Variables,
 

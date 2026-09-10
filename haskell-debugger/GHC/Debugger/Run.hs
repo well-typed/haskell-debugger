@@ -75,8 +75,6 @@ import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 import Colog.Core as Logger
 import qualified GHC.Debugger.Breakpoint.Map as BM
-import GHC.Debugger.Runtime.Thread
-import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Runtime.Thread.Resume
 import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
 import Data.List (find)
@@ -246,7 +244,7 @@ doEval expr = withCurrentBreakEnv $ do
   excr <- (Right <$> exec expr GHC.execOptions) `catch` \(e::SomeException) -> pure (Left (displayException e))
   case excr of
     Left err -> pure $ EvalAbortedWith err
-    Right (k, ExecBreak{breakResume}) -> fmap (addSourceKind k) $ continueToCompletion breakResume >>= handleExecResult
+    Right (k, br@ExecBreak{}) -> fmap (addSourceKind k) $ execBreakResume br >>= continueToCompletion >>= handleExecResult
     Right (k, r@ExecComplete{}) -> fmap (addSourceKind k) $ handleExecResult r
   where
     exec input exec_opts@ExecOptions{..} = do
@@ -278,7 +276,7 @@ continueToCompletion :: Resume -> Debugger GHC.ExecResult
 continueToCompletion r = do
   execr <- resumeExec GHC.RunToCompletion Nothing r
   case execr of
-    GHC.ExecBreak{breakResume} -> continueToCompletion breakResume
+    br@GHC.ExecBreak{} -> execBreakResume br >>= continueToCompletion
     GHC.ExecComplete{} -> return execr
 
 -- | @withCurrentBreakEnv m@ executes @m@ with the imports, language, and language
@@ -327,35 +325,28 @@ handleExecResult = \case
           Just VarInfo{varValue, varType, varRef} -> do
             return (EvalCompleted varValue varType Nothing varRef)
           Nothing     -> liftIO $ fail "doEval failed"
-    ExecBreak {breakNames = _, breakPointId = Nothing, ..} -> do
+    br@ExecBreak {breakPointId = Nothing} -> do
       -- Stopped at an exception
       -- TODO: force the exception to display string with Backtrace?
-#if MIN_VERSION_ghc(10,1,0)
-      pushResume breakResume
-      rt_id <- getResumeThreadId breakResume
-#else
-      rt_id <- getRemoteThreadIdFromContext
-#endif
+      res   <- execBreakResume br
+      pushResume res
+      rt_id <- getResumeThreadId res
       return EvalStopped{ breakId = Nothing
                         , breakThread = rt_id }
-    ExecBreak {breakNames = _, breakPointId = Just bid, ..} -> do
+    br@ExecBreak {breakPointId = Just bid} -> do
 
-      pushResume breakResume
+      res <- execBreakResume br
+      pushResume res
 
       let performAction BreakpointStop = do
-
-#if MIN_VERSION_ghc(10,1,0)
-                rt_id <- getResumeThreadId breakResume
-#else
-                rt_id <- getRemoteThreadIdFromContext
-#endif
+                rt_id <- getResumeThreadId res
                 return EvalStopped{ breakId = Just bid
                                   , breakThread = rt_id }
           performAction (BreakpointLogAndResume logExpr) = do
             let evalFailedMsg e = text $ unlines ["Evaluation of log message expression failed with " ++ e
                   , "Expr: " ++ logExpr
                   , "Ignoring..."]
-            doEval' logExpr evalFailedMsg breakResume $ \ _ _ -> resume breakResume
+            doEval' logExpr evalFailedMsg res $ \ _ _ -> resume res
 
       bm <- liftIO . readIORef =<< asks activeBreakpoints
       case BM.lookup bid bm of
@@ -368,16 +359,16 @@ handleExecResult = \case
             BreakpointWhenCond cond -> do
               let evalFailedMsg e = text $ "Evaluation of conditional breakpoint expression failed with " ++ e ++ "\nIgnoring..."
 
-              doEval' cond evalFailedMsg breakResume $ \ resultVal resultType -> do
+              doEval' cond evalFailedMsg res $ \ resultVal resultType -> do
                 if resultType == "Bool" then do
                   if resultVal == "True" then do
                     performAction action
                   else
-                    resume breakResume
+                    resume res
                 else do
                   logSDoc Logger.Warning (evalFailedMsg "\"expression resultType is != Bool\"")
-                  resume breakResume
-            BreakpointDisabled -> resume breakResume
+                  resume res
+            BreakpointDisabled -> resume res
             -- The counting is handled by @GHC.setupBreakpoint@
             BreakpointAfterCount _ -> performAction action
             BreakpointEnabled -> performAction action
@@ -410,19 +401,3 @@ inspectId :: Id -> Debugger (Maybe VarInfo)
 inspectId (GHC.AnId -> tt) = Just <$> do
   fam_envs <- getFamInstEnvs'
   tyThingToVarInfo fam_envs tt
-
-#if !MIN_VERSION_ghc(10,1,0)
--- | This only works because GHC's 'handleRunStatus' always pushes to the
--- resume context stack before returning the 'ExecBreak'. This works as long as
--- we consult the resume context stack immediately after the evaluation... but
--- it stops working in a multi-threaded capable debugger. When the
--- multi-threaded capabilities are released, we will no longer need this
--- function nor the `resumeContext` because `ExecBreak` now returns the
--- `Resume` directly.
-getRemoteThreadIdFromContext :: Debugger RemoteThreadId
-getRemoteThreadIdFromContext = do
-  GHC.getResumeContext >>= \case
-    resume1:_ ->
-      getRemoteThreadIdFromRemoteContext $ GHC.resumeContext resume1
-    _ -> error "No resumes but stopped?!?"
-#endif

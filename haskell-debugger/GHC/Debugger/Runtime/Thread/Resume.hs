@@ -49,3 +49,29 @@ getResumeThreadId = getRemoteThreadId . resumeContext
 #else
 getResumeThreadId = getRemoteThreadIdFromRemoteContext . resumeContext
 #endif
+
+-- | Get the 'Resume' associated to the given breakpoint result 'ExecBreak'.
+--
+-- On GHCs with better multi-threaded debugger support (>= 10.1), the 'Resume'
+-- associated to a breakpoint is returned directly in 'ExecBreak'.
+--
+-- On older GHCs, the breakpoint resume is pushed to `ic_resume` context as
+-- soon as it is hit.
+--
+-- WARNING: if we can hit and detect more breakpoints simultaneously, looking at
+-- the head of ic_resume will be wrong. And there's no information we can use
+-- to uniquely identify the right Resume in `ic_resume` for this breakpoint.
+-- FIXME: Therefore, we shouldn't look for breakpoints simultaneously in 9.14.2?
+-- Either that, or copy all the code over which returns the ExecBreak and
+-- modify it (ie copy `handleRunStatus`).
+execBreakResume :: ExecResult -> Debugger Resume
+#if MIN_VERSION_ghc(10,1,0)
+execBreakResume ExecBreak{breakResume} = pure breakResume
+#else
+execBreakResume ExecBreak{} =
+  getResumeContext >>= \case
+    r:_ -> pure r
+    []  -> error "execBreakResume: stopped at a break but the resume context is empty?!"
+#endif
+execBreakResume ExecComplete{} =
+  error "execBreakResume: expected ExecBreak but got ExecComplete"
