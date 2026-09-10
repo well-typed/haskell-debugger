@@ -69,7 +69,6 @@ import GHC.Types.Name.Occurrence (mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig)
 import qualified GHCi.Message as GHCi
 
-import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Monad
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages

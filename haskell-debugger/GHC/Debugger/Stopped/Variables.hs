@@ -2,7 +2,12 @@
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns, DerivingVia,
    TypeAbstractions, DataKinds #-}
-module GHC.Debugger.Stopped.Variables where
+module GHC.Debugger.Stopped.Variables
+  ( termVarFields
+  , termToVarInfo
+  , forceTerm
+  , ppr_term
+  ) where
 
 import Control.Monad.Reader
 import qualified Colog.Core as Logger
@@ -26,6 +31,26 @@ import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Instances
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Utils
+
+-- | Thin wrapper around @tcGetFamInstEnvs@, using @runTcInteractive@
+getFamInstEnvs' :: Debugger FamInstEnvs
+getFamInstEnvs' = do
+  hsc_env <- getSession
+  (err_msgs, res) <- liftIO $
+    runTcInteractive
+#if MIN_VERSION_ghc(10,1,0)
+      NoTcMPlugins
+#endif
+      hsc_env
+      tcGetFamInstEnvs
+  case res of
+    Just fam_envs -> pure fam_envs
+    Nothing -> do
+      logSDoc Logger.Debug
+        $ text "Couldn't lookup FamInstEnvs to normalise type for VarInfo,"
+        <+> text "using empty ones."
+        $$  ppr err_msgs
+      return emptyFamInstEnvs
 
 -- | 'TyThing' to 'VarInfo'. The 'Bool' argument indicates whether to force the
 -- value of the thing (as in @True = :force@, @False = :print@)
@@ -198,38 +223,6 @@ termToVarInfo fam_envs key term0 = do
     unwrapNewtype (NewtypeWrap {wrapped_term}) = unwrapNewtype wrapped_term
     unwrapNewtype x = x
 
--- | Thin wrapper around @tcGetFamInstEnvs@, using @runTcInteractive@
-getFamInstEnvs' :: Debugger FamInstEnvs
-getFamInstEnvs' = do
-  hsc_env <- getSession
-  (err_msgs, res) <- liftIO $
-    runTcInteractive
-#if MIN_VERSION_ghc(10,1,0)
-      NoTcMPlugins
-#endif
-      hsc_env
-      tcGetFamInstEnvs
-  case res of
-    Just fam_envs -> pure fam_envs
-    Nothing -> do
-      logSDoc Logger.Debug
-        $ text "Couldn't lookup FamInstEnvs to normalise type for VarInfo,"
-        <+> text "using empty ones."
-        $$  ppr err_msgs
-      return emptyFamInstEnvs
-
-pprTerm :: Term -> SDoc
-pprTerm t = case t of
-  Term{dc,subTerms} -> annotate "T:" $
-    either text ppr dc <+> ppr (map pprTerm subTerms)
-  Prim{valRaw} -> annotate "P:" $ ppr valRaw
-  Suspension{bound_to,ctype} -> annotate "S:" $ ppr bound_to <+> text (show ctype)
-  NewtypeWrap{dc,wrapped_term} ->
-    annotate "N:" $ either text ppr dc <+> pprTerm wrapped_term
-  RefWrap{wrapped_term} -> annotate "R:" $ pprTerm wrapped_term
-  where
-    annotate tag d = parens $ text tag <+> ppr (ty t) <+> text "∋" <+> d
-
 -- | Forces a term to WHNF
 --
 -- The term is updated in the cache at the given key.
@@ -237,3 +230,19 @@ forceTerm :: Term -> Debugger Term
 forceTerm term = do
   hsc_env <- getSession
   liftIO $ seqTerm hsc_env term
+
+--------------------------------------------------------------------------------
+-- Utils
+--------------------------------------------------------------------------------
+
+ppr_term :: Term -> SDoc
+ppr_term t = case t of
+  Term{dc,subTerms} -> annotate "T:" $
+    either text ppr dc <+> ppr (map ppr_term subTerms)
+  Prim{valRaw} -> annotate "P:" $ ppr valRaw
+  Suspension{bound_to,ctype} -> annotate "S:" $ ppr bound_to <+> text (show ctype)
+  NewtypeWrap{dc,wrapped_term} ->
+    annotate "N:" $ either text ppr dc <+> ppr_term wrapped_term
+  RefWrap{wrapped_term} -> annotate "R:" $ ppr_term wrapped_term
+  where
+    annotate tag d = parens $ text tag <+> ppr (ty t) <+> text "∋" <+> d
