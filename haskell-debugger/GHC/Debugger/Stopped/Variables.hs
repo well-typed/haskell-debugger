@@ -31,23 +31,6 @@ import GHC.Debugger.Runtime.Term
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Utils
 
--- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
-inspectName :: Name -> Debugger (Maybe VarInfo)
-inspectName n = do
-  GHC.lookupName n >>= \case
-    Nothing -> do
-      liftIO . putStrLn =<< display (text "Failed to lookup name: " <+> ppr n)
-      pure Nothing
-    Just tt -> Just <$> do
-      fam_envs <- getFamInstEnvs'
-      tyThingToVarInfo fam_envs tt
-
--- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
-inspectId :: Id -> Debugger (Maybe VarInfo)
-inspectId (GHC.AnId -> tt) = Just <$> do
-  fam_envs <- getFamInstEnvs'
-  tyThingToVarInfo fam_envs tt
-
 -- | Thin wrapper around @tcGetFamInstEnvs@, using @runTcInteractive@
 getFamInstEnvs' :: Debugger FamInstEnvs
 getFamInstEnvs' = do

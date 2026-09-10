@@ -81,11 +81,13 @@ library
 
                       -- Top-level debugger commands
                       GHC.Debugger.Run,
-                      GHC.Debugger.Breakpoint,
                       GHC.Debugger.Stopped,
                       GHC.Debugger.Stopped.Exception,
                       GHC.Debugger.Stopped.Variables,
+                      GHC.Debugger.Breakpoint.Ops,
 
+                      -- Handler for when a breakpoint is hit
+                      GHC.Debugger.Breakpoint.Handler
 
                       GHC.Debugger.Runtime.Eval,
                       GHC.Debugger.Runtime.Eval.RemoteExpr,

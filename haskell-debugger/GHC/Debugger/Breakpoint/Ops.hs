@@ -3,7 +3,7 @@
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
 
 -- | Set/unset breakpoints in the debuggee program
-module GHC.Debugger.Breakpoint
+module GHC.Debugger.Breakpoint.Ops
   (
     -- * Set/unset and get breakpoints
     clearBreakpoints
