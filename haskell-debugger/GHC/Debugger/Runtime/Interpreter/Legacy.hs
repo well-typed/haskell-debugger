@@ -194,7 +194,7 @@ retBCOParser stack_fv frame_ix = do
     >>= \case
       Just (Suspension{val, ctype=BCO},Term{val=bcoArgs}) -> do
         {-"the otherwise case: Unknown closure", hence Suspension-}
-        tag_fv <- liftDebuggerOrFail $ Remote.eval (Remote.bcoArgsOffset `Remote.appRef` stack_fv `Remote.app` (Remote.raw (show frame_ix ++ " :: Int")))
+        tag_fv <- liftDebuggerOrFail $ Remote.eval (Remote.bcoArgsOffset `Remote.appRef` stack_fv `Remote.app` (Remote.lit frame_ix))
         tag <- liftDebuggerOrFail $ obtainParsedTerm "tag" 3 True anyTy (castForeignRef tag_fv) (maybeParser $ wordParser <|> wordPrimParser)
 
         -- Decode the BCO closure using 'getClosureData' on the foreign heap
