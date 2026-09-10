@@ -67,8 +67,8 @@ import GHC.Debugger.Session
 import GHC.Debugger.Session.Builtin
 import GHC.Debugger.Session.Interactive
 import GHC.Debugger.Runtime.Compile.Cache
-import qualified GHC.Debugger.Breakpoint.Map as BM
-import qualified GHC.Debugger.Runtime.Thread.Map as TM
+import qualified GHC.Debugger.Data.BreakpointMap as BM
+import qualified GHC.Debugger.Data.ThreadMap     as TM
 
 import Colog.Core as Logger
 

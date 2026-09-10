@@ -1,7 +1,17 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns, MultiWayIf, OverloadedRecordDot #-}
-module GHC.Debugger.Stopped where
+
+-- | Query information about the debuggee when a thread is stopped
+module GHC.Debugger.Stopped
+  (
+    -- * Query information about the stopped debuggee threads
+    getThreads
+  , getStacktrace
+  , getScopes
+  , getVariables
+  , getExceptionInfo
+  ) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -24,19 +34,24 @@ import GHC.InfoProv
 import GHC.Utils.Outputable as Ppr
 import qualified GHC.Unit.Home.Graph as HUG
 
+import GHC.Debugger.Data.ThreadMap
+
 import GHC.Debugger.Stopped.Exception
 import GHC.Debugger.Stopped.Frames
 import GHC.Debugger.Stopped.Variables
-import GHC.Debugger.Runtime
+import GHC.Debugger.Runtime.Term
 import GHC.Debugger.Runtime.Thread
 import GHC.Debugger.Runtime.Thread.Stack
-import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
 import GHC.Debugger.Utils
 import qualified Colog.Core as Logger
 import System.Directory (getCurrentDirectory)
+
+#if MIN_VERSION_ghc(10,1,0)
+import GHC.Debugger.Runtime.Thread.Resume
+#endif
 
 {-
 Note [Don't crash if not stopped]
@@ -134,11 +149,21 @@ getStacktrace req_tid = do
               }
 
   -- Add the latest resume context at the head.
-  head_frame <- GHC.getResumeContext >>= \case
+  head_frame <-
+#if MIN_VERSION_ghc(10,1,0)
+                readResume req_tid >>= \case
+    Nothing ->
+#else
+                GHC.getResumeContext >>= \case
     [] ->
+#endif
       -- See Note [Don't crash if not stopped]
       return Nothing
+#if MIN_VERSION_ghc(10,1,0)
+    Just r -> do
+#else
     r:_ -> do
+#endif
       let resumeSpanR = GHC.resumeSpan r
           mRealSpan   = realSrcSpanToSourceSpan cwd <$> srcSpanToRealSrcSpan resumeSpanR
           firstSpan   = DbgStackFrame.sourceSpan <$> listToMaybe decoded_frames
@@ -262,7 +287,7 @@ getVariables threadId frameIx vk = do
           -- It is a "lazy" DAP variable: our reply can ONLY include
           -- this single variable.
 
-          term' <- forceTerm term
+          term' <- seqTerm hsc_env term & liftIO
 
           vi <- termToVarInfo fam_envs key term'
 

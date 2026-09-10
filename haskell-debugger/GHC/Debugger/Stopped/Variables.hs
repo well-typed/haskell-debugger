@@ -2,7 +2,22 @@
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns, DerivingVia,
    TypeAbstractions, DataKinds #-}
-module GHC.Debugger.Stopped.Variables where
+
+-- | Construct information about variables and other things from Ids/TyThings/Terms.
+module GHC.Debugger.Stopped.Variables
+  (
+
+    -- * Info from Id/TyThing
+    idToVarInfo
+  , tyThingToVarInfo
+
+    -- * Info from Terms
+  , termToVarInfo
+  , termVarFields
+
+    -- * Context
+  , getFamInstEnvs'
+  ) where
 
 import Control.Monad.Reader
 import qualified Colog.Core as Logger
@@ -22,10 +37,33 @@ import qualified GHC.Runtime.Heap.Inspect as GHCI
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
-import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Instances
+import GHC.Debugger.Runtime.Term
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Utils
+
+--------------------------------------------------------------------------------
+-- Id/TyThing
+--------------------------------------------------------------------------------
+
+-- | Get the value and type of a given 'Id' as rendered strings in 'VarInfo'.
+#if MIN_VERSION_ghc(10,1,0)
+idToVarInfo :: Id -> Debugger (Maybe VarInfo)
+idToVarInfo (GHC.AnId -> tt) = Just <$> do
+  fam_envs <- getFamInstEnvs'
+  tyThingToVarInfo fam_envs tt
+#else
+-- this is no longer needed in HEAD since ExecBreaks now return Ids.
+idToVarInfo :: Name -> Debugger (Maybe VarInfo)
+idToVarInfo n = do
+  GHC.lookupName n >>= \case
+    Nothing -> do
+      liftIO . putStrLn =<< display (text "Failed to lookup name: " <+> ppr n)
+      pure Nothing
+    Just tt -> Just <$> do
+      fam_envs <- getFamInstEnvs'
+      tyThingToVarInfo fam_envs tt
+#endif
 
 -- | 'TyThing' to 'VarInfo'. The 'Bool' argument indicates whether to force the
 -- value of the thing (as in @True = :force@, @False = :print@)
@@ -45,6 +83,10 @@ tyThingToVarInfo fam_envs t = case t of
     let key = FromId i
     term <- obtainTerm key
     termToVarInfo fam_envs key term
+
+--------------------------------------------------------------------------------
+-- Terms
+--------------------------------------------------------------------------------
 
 -- | Construct the VarInfos of the fields ('VarFields') of the given 'TermKey'/'Term'
 --
@@ -97,8 +139,10 @@ termVarFields fam_envs top_key top_term = do
       _ -> return (VarFields [])
 
 
--- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
---   The @FamInstEnvs@ is used to look through newtypes and type families when checking if suspensions are of function type.
+-- | Construct a 'VarInfo' from the given 'TermKey' of the variable and the 'Term' it binds
+--
+-- The @FamInstEnvs@ is used to look through newtypes and type families when
+-- checking if suspensions are of function type.
 termToVarInfo :: FamInstEnvs -> TermKey -> Term -> Debugger VarInfo
 termToVarInfo fam_envs key term0 = do
   -- Make a VarInfo for a term
@@ -198,6 +242,10 @@ termToVarInfo fam_envs key term0 = do
     unwrapNewtype (NewtypeWrap {wrapped_term}) = unwrapNewtype wrapped_term
     unwrapNewtype x = x
 
+--------------------------------------------------------------------------------
+-- Context
+--------------------------------------------------------------------------------
+
 -- | Thin wrapper around @tcGetFamInstEnvs@, using @runTcInteractive@
 getFamInstEnvs' :: Debugger FamInstEnvs
 getFamInstEnvs' = do
@@ -218,22 +266,18 @@ getFamInstEnvs' = do
         $$  ppr err_msgs
       return emptyFamInstEnvs
 
-pprTerm :: Term -> SDoc
-pprTerm t = case t of
+--------------------------------------------------------------------------------
+-- Utils
+--------------------------------------------------------------------------------
+
+_ppr_term :: Term -> SDoc
+_ppr_term t = case t of
   Term{dc,subTerms} -> annotate "T:" $
-    either text ppr dc <+> ppr (map pprTerm subTerms)
+    either text ppr dc <+> ppr (map _ppr_term subTerms)
   Prim{valRaw} -> annotate "P:" $ ppr valRaw
   Suspension{bound_to,ctype} -> annotate "S:" $ ppr bound_to <+> text (show ctype)
   NewtypeWrap{dc,wrapped_term} ->
-    annotate "N:" $ either text ppr dc <+> pprTerm wrapped_term
-  RefWrap{wrapped_term} -> annotate "R:" $ pprTerm wrapped_term
+    annotate "N:" $ either text ppr dc <+> _ppr_term wrapped_term
+  RefWrap{wrapped_term} -> annotate "R:" $ _ppr_term wrapped_term
   where
     annotate tag d = parens $ text tag <+> ppr (ty t) <+> text "∋" <+> d
-
--- | Forces a term to WHNF
---
--- The term is updated in the cache at the given key.
-forceTerm :: Term -> Debugger Term
-forceTerm term = do
-  hsc_env <- getSession
-  liftIO $ seqTerm hsc_env term
