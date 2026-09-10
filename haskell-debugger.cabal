@@ -79,9 +79,7 @@ library
                       GHC.Debugger,
                       GHC.Debugger.Interface.Messages,
 
-                      -- 1. Start debugging, evaluate, and resume threads
-                      -- 2. Set/unset and get breakpoints
-                      -- 3. Query information about stopped threads
+                      -- Top-level debugger commands
                       GHC.Debugger.Run,
                       GHC.Debugger.Breakpoint,
                       GHC.Debugger.Stopped,
