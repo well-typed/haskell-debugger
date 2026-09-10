@@ -12,9 +12,9 @@ foreign import ccall unsafe "stack.h" stack_bco_frame_selftest :: IO Bool
 
 -- | Takes a frame location for a continuation RET_BCO frame.
 --   Returns the offset of `bcoArgs` in the AP_STACK object that you'd get if stopping at the beginning of the continuation BCO.
-bcoArgsOffset :: StackSnapshot -> Word -> Maybe Word
+bcoArgsOffset :: StackSnapshot -> Int -> Maybe Word
 bcoArgsOffset (StackSnapshot ss) frame_offset =
-  case bco_args_offset ss frame_offset of
+  case bco_args_offset ss (fromIntegral frame_offset) of
     i | i < 0 -> Nothing
       | otherwise -> Just $ fromIntegral i
 
