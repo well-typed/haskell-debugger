@@ -118,7 +118,7 @@ threadInfo threadId = do
 -- 1. Try stack annotations first
 -- 2. Try IPE next
 -- 3. Try decoding a continuation BCO with a breakpoint next
-stackFrameInfo :: Stack.StackSnapshot -> (Word,(StackFrame, Maybe InfoProv)) -> IO (Maybe (StackFrameInfo RemoteRef))
+stackFrameInfo :: Stack.StackSnapshot -> (Int,(StackFrame, Maybe InfoProv)) -> IO (Maybe (StackFrameInfo RemoteRef))
 stackFrameInfo _ss (_,(AnnFrame{annotation}, _))
   | let Box annVal = annotation
   , let stack_frame = stackAnnoToStackFrameInfo (unsafeCoerce @_ @SomeStackAnnotation annVal)

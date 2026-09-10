@@ -39,7 +39,7 @@ fst = Remote.raw "Prelude.fst"
 snd :: Remote.RemoteExpr ((a,b) -> b)
 snd = Remote.raw "Prelude.snd"
 
-bcoArgsOffset :: Remote.RemoteExpr (StackSnapshot -> Word -> Maybe Word)
+bcoArgsOffset :: Remote.RemoteExpr (StackSnapshot -> Int -> Maybe Word)
 bcoArgsOffset = Remote.var
   debuggerRuntimeFFIInspectModName
   "bcoArgsOffset" []
