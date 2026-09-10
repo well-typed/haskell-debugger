@@ -28,8 +28,9 @@ import GHC.Debugger.Stopped.Exception
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Thread
-import GHC.Debugger.Runtime.Thread.Stack
 import GHC.Debugger.Runtime.Thread.Map
+import GHC.Debugger.Runtime.Thread.Stack
+import GHC.Debugger.Runtime.Thread.Resume
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
@@ -130,11 +131,21 @@ getStacktrace req_tid = do
               }
 
   -- Add the latest resume context at the head.
-  head_frame <- GHC.getResumeContext >>= \case
+  head_frame <-
+#if MIN_VERSION_ghc(10,1,0)
+                readResume req_tid >>= \case
+    Nothing ->
+#else
+                GHC.getResumeContext >>= \case
     [] ->
+#endif
       -- See Note [Don't crash if not stopped]
       return Nothing
+#if MIN_VERSION_ghc(10,1,0)
+    Just r -> do
+#else
     r:_ -> do
+#endif
       let resumeSpanR = GHC.resumeSpan r
           mRealSpan   = realSrcSpanToSourceSpan cwd <$> srcSpanToRealSrcSpan resumeSpanR
           firstSpan   = DbgStackFrame.sourceSpan <$> listToMaybe decoded_frames

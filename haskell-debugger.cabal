@@ -98,8 +98,9 @@ library
                       GHC.Debugger.Runtime.Term.Key,
 
                       GHC.Debugger.Runtime.Thread,
-                      GHC.Debugger.Runtime.Thread.Stack,
                       GHC.Debugger.Runtime.Thread.Map,
+                      GHC.Debugger.Runtime.Thread.Stack,
+                      GHC.Debugger.Runtime.Thread.Resume,
 
                       GHC.Debugger.Runtime.Interpreter.Types,
 

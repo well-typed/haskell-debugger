@@ -65,6 +65,7 @@ import Colog.Core as Logger
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import GHC.Debugger.Runtime.Thread
 import GHC.Debugger.Runtime.Thread.Map
+import GHC.Debugger.Runtime.Thread.Resume
 import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
 import Data.List (find)
 import GHC.Unit.Module.Graph as GHC
@@ -398,31 +399,7 @@ inspectId (GHC.AnId -> tt) = Just <$> do
   fam_envs <- getFamInstEnvs'
   tyThingToVarInfo fam_envs tt
 
--- | Pop the resume for this thread off
-popResume :: RemoteThreadId -> Debugger Resume
-popResume (remoteThreadIntRef -> rti) = do
-  trm_ref <- asks threadResumeMap
-  trm     <- readIORef trm_ref & liftIO
-  case lookupThreadMap rti trm of
-    Nothing -> error "Trying to resume a thread which isn't running?"
-    Just tr -> do
-      modifyIORef' trm_ref (deleteThreadMap rti) & liftIO
-      pure tr
-
--- | Push the resume for its thread to the mapping keeps track of which threads
--- are paused
-pushResume :: Resume -> Debugger ()
-pushResume res = do
-  trm_ref <- asks threadResumeMap
-  rti     <- getResumeThreadId res
-  liftIO $
-    modifyIORef' trm_ref $
-      insertThreadMap (remoteThreadIntRef rti) res
-
-#if MIN_VERSION_ghc(10,1,0)
-getResumeThreadId :: Resume -> Debugger RemoteThreadId
-getResumeThreadId = getRemoteThreadId . GHC.resumeContext
-#else
+#if !MIN_VERSION_ghc(10,1,0)
 -- | This only works because GHC's 'handleRunStatus' always pushes to the
 -- resume context stack before returning the 'ExecBreak'. This works as long as
 -- we consult the resume context stack immediately after the evaluation... but
