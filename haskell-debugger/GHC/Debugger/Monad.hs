@@ -928,11 +928,17 @@ instance Show UnsupportedHsDbgViewVersion where
     "Cannot use unsupported haskell-debugger-view version found in the transitive closure: " ++ showVersion actual ++
     " (supported: " ++ L.intercalate ", " (map (\(l,h) -> showVersion l ++ " <= && < " ++ showVersion h) supported) ++ ")"
 
+data NonFatalException = NonFatalException { userMessage :: String, debugMessage :: String }
+  deriving Show
+
+instance Exception NonFatalException
+
+
 expectRight :: Exception e => Either e a -> Debugger a
 expectRight s = case s of
   Left e -> do
     logSDoc Logger.Error (text $ displayException e)
-    liftIO $ throwIO e
+    liftIO $ throwIO $ NonFatalException { userMessage = displayException e, debugMessage = displayExceptionWithInfo $ toException e }
   Right a -> do
     pure a
 
