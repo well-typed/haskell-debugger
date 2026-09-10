@@ -131,7 +131,7 @@ library
                       GHC.Debugger.Runtime.Interpreter,
                       GHC.Debugger.Runtime.Interpreter.Custom
 
-    if impl(ghc <= 9.14.1)
+    if impl(ghc < 9.14.2)
       exposed-modules:
                       GHC.Debugger.Runtime.Interpreter.Legacy
 
