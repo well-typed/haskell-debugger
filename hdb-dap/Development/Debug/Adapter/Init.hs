@@ -27,7 +27,6 @@ import Control.Monad (when)
 import Control.Monad.Except
 import Control.Monad.Trans
 import Data.Function
-import Data.Functor
 import Data.Maybe
 import Data.UUID.V4 qualified as UUID
 import System.IO
@@ -45,7 +44,7 @@ import qualified Development.Debug.Adapter.Output as Output
 
 import GHC (Ghc)
 import GHC.Utils.Logger (defaultLogActionWithHandles)
-import GHC.Debugger.Utils (forwardHandleToLogger)
+import GHC.Debugger.Utils (forwardHandleToLogger, IsLine (text))
 import qualified GHC.Debugger as Debugger
 import qualified GHC.Debugger.Monad as Debugger
 import qualified GHC.Debugger.Interface.Messages as D (Command, Response)
@@ -54,7 +53,6 @@ import GHC.Debugger.Interface.Messages hiding (Command, Response)
 import DAP
 import Development.Debug.Adapter.Handles
 import Development.Debug.Session.Setup
-import GHC.Debugger.Monad (RunDebuggerSettings(..))
 import GHC.Debugger.Debuggee as Debugger
 import Development.Debug.Adapter.DAPDebuggee
 
@@ -243,16 +241,19 @@ debuggerThread l debugRunner runConf requests replies = do
       labelThread tid "Main Debugger Thread"
     let loop = do
           req <- takeMVar requests & liftIO
-          resp <- (Debugger.execute req <&> Right)
-                    `catch` \(e :: SomeException) -> do
-                        pure (Left (displayExceptionWithInfo e))
+          resp <- try (Debugger.execute req)
           case resp of
             Right x -> do
               liftIO (putMVar replies x)
               loop
-            Left m ->
+            Left e | Just (Debugger.NonFatalException {Debugger.userMessage = userm,
+                            Debugger.debugMessage = dbgm}) <- fromException e  -> do
+              Debugger.logSDoc Logger.Error (text userm)
+              Debugger.logSDoc Logger.Debug (text dbgm)
+              liftIO $ putMVar replies (NonFatalError userm)
+            Left e ->
               -- don't loop in this case! just exit.
-              liftIO $ putMVar replies (Aborted ("Aborted debugger thread: " ++ m))
+              liftIO $ putMVar replies (Aborted ("Aborted debugger thread: " ++ displayExceptionWithInfo e))
     loop
 
 --------------------------------------------------------------------------------
