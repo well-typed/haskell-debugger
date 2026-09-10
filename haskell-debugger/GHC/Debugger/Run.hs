@@ -26,8 +26,6 @@ module GHC.Debugger.Run
 import GHC.Utils.Outputable
 import Control.Monad.IO.Class
 import Control.Monad.Catch
-import Control.Monad.Reader
-import Data.IORef
 import Data.Maybe
 import Data.Function
 
@@ -41,7 +39,6 @@ import GHC (
   InteractiveImport (..),
   mkHsString,
   ModSummary (..),
-  Name,
   nlHsLit,
   nlList,
   parseImportDecl,
@@ -69,15 +66,12 @@ import GHC.Types.Name.Reader as RdrName (mkOrig)
 import qualified GHCi.Message as GHCi
 
 import GHC.Debugger.Monad
-import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 import Colog.Core as Logger
-import qualified GHC.Debugger.Breakpoint.Map as BM
 import GHC.Debugger.Runtime.Thread.Resume
 import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
 import Data.List (find)
 import GHC.Unit.Module.Graph as GHC
-import GHC.Types.Var
 import GHC.Runtime.Eval.Types
 import GHC.Runtime.Eval (readIModBreaks)
 import GHC.ByteCode.Breakpoints

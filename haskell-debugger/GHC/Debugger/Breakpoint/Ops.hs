@@ -42,7 +42,7 @@ import GHC.Debugger.Monad
 import GHC.Debugger.Session
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
-import qualified GHC.Debugger.Breakpoint.Map as BM
+import qualified GHC.Debugger.Data.BreakpointMap as BM
 import Data.Function
 import System.Directory (getCurrentDirectory)
 

@@ -34,11 +34,12 @@ import GHC.InfoProv
 import GHC.Utils.Outputable as Ppr
 import qualified GHC.Unit.Home.Graph as HUG
 
+import GHC.Debugger.Data.ThreadMap
+
 import GHC.Debugger.Stopped.Exception
 import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Runtime.Term
 import GHC.Debugger.Runtime.Thread
-import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Runtime.Thread.Stack
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages

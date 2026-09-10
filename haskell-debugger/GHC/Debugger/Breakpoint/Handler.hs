@@ -17,62 +17,28 @@ module GHC.Debugger.Breakpoint.Handler
 
 import GHC.Utils.Outputable
 import Control.Monad.IO.Class
-import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.IORef
-import Data.Maybe
-import Data.Function
 
 import GHC qualified
 import GHC (
   ExecResult (..),
-  execStmt',
-  ForeignHValue,
-  GhciLStmt,
-  GhcPs,
-  InteractiveImport (..),
-  mkHsString,
-  ModSummary (..),
   Name,
-  nlHsLit,
-  nlList,
-  parseImportDecl,
   SingleStep (..),
-  SrcSpan (..),
-  StmtLR (..),
-  unLoc,
   )
-import GHC.Plugins (SourceError)
 #if MIN_VERSION_ghc(10,1,0)
 import GHC.Builtin.Modules (gHC_INTERNAL_GHCI_HELPERS)
 #else
-import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 #endif
-import GHC.Unit.Types
-import GHC.Data.FastString
-import GHC.Driver.DynFlags as GHC
-import GHC.Driver.Main (hscParseStmtWithLocation)
-import GHC.Driver.Monad as GHC
-import GHC.Driver.Env as GHC
-import qualified GHC.Driver.Config.Parser as GHC
-import GHC.Runtime.Debugger.Breakpoints as GHC
-import GHC.Types.Name.Occurrence (mkVarOccFS)
-import GHC.Types.Name.Reader as RdrName (mkOrig)
-import qualified GHCi.Message as GHCi
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 import Colog.Core as Logger
-import qualified GHC.Debugger.Breakpoint.Map as BM
+import qualified GHC.Debugger.Data.BreakpointMap as BM
 import GHC.Debugger.Runtime.Thread.Resume
-import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
-import Data.List (find)
-import GHC.Unit.Module.Graph as GHC
-import GHC.Types.Var
+import GHC.Debugger.Session (resumeExec)
 import GHC.Runtime.Eval.Types
-import GHC.Runtime.Eval (readIModBreaks)
-import GHC.ByteCode.Breakpoints
 
 --------------------------------------------------------------------------------
 

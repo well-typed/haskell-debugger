@@ -7,8 +7,8 @@ import GHC.Debugger.Monad
 import Data.IORef
 import Control.Monad.Reader
 import Data.Function
-import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Runtime.Thread
+import GHC.Debugger.Data.ThreadMap
 
 -- | Pop the resume for this thread off
 popResume :: RemoteThreadId -> Debugger Resume
