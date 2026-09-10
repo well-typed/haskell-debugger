@@ -15,8 +15,18 @@ curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh
 
 export PATH="$HOME/.ghcup/bin:$PATH"
 
+dump_ghcup_logs() {
+	for f in "$HOME"/.ghcup/logs/*.log; do
+		echo "----- $f -----" >&2
+		cat "$f" >&2
+	done
+}
+trap dump_ghcup_logs ERR
+
 ghcup install cabal --set
 ghcup --url-source "${GHCUP_CHANNEL}" install ghc "${GHC_VERSION}" --set
+
+trap - ERR
 
 cabal update
 cabal build hdb --enable-executable-dynamic
