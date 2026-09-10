@@ -5,21 +5,21 @@ on:
   pull_request: {}
   workflow_call:
     inputs:
-      use-haskell-debugger-view-from-hackage:
-        required: true
-        type: boolean
       is-release:
         required: true
         type: boolean
+      # Always expected to use the default.
+      release-extra-runners:
+        required: false
+        type: string
+        default: >-
+          [{"runner":"ubuntu-24.04-arm", "version":"9.14.1"}
+          ,{"runner":"macos-15-intel"  , "version":"9.14.1"}
+          ]
 
 env:
   haskellDebuggerViewVersion: 0.2.1.0
   haskellDebuggerVersion: 0.13.1.0
-  USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE: ${{
-      github.event_name == 'workflow_call'
-        && inputs.use-haskell-debugger-view-from-hackage
-        || false
-    }}
 
 name: Debugger CI
 jobs:
@@ -60,6 +60,34 @@ jobs:
 
       - name: Package haskell-debugger-view
         run: cabal sdist haskell-debugger-view
+
+      ## At release time, we want to enforce one of these are true:
+      ## - haskell-debugger-view-$ver does not exist on Hackage.
+      ## - it does exist, and the tarball from Hackage matches ours.
+      - name: Compare haskell-debugger-view against Hackage
+        id: view
+        if: inputs.is-release
+        run: |
+          set -u
+
+          NAME=haskell-debugger-view
+          LOCAL=$(ls dist-newstyle/sdist/$NAME-*.tar.gz)
+          PKG=$(basename "$LOCAL" .tar.gz)
+          VER=${PKG#"$NAME-"}
+          echo "local sdist: $PKG"
+
+          cabal list --simple-output "$NAME" > index-versions.txt
+          if ! grep -qx "$NAME $VER" index-versions.txt; then
+            echo "::notice::$PKG is not on Hackage, nothing to check."
+            exit 0
+          fi
+
+          cabal get -d hackage "$PKG"
+          mkdir ours && tar xzf "$LOCAL" -C ours
+
+          set -e
+          echo "$PKG — Hackage (-) vs this repo (+)"
+          diff -ru "hackage/$PKG" "ours/$PKG"
 
       - name: Upload haskell-debugger source distribution
         uses: actions/upload-artifact@v4
@@ -110,20 +138,21 @@ jobs:
         run: |
           (cd ${{ runner.temp }}/dist && tar xzf "haskell-debugger-${{env.haskellDebuggerVersion}}.tar.gz")
 
-      - name: Setup local version of haskell-debugger-view
-        if: env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE
+      - name: Setup local version of haskell-debugger-view from sdist.
         run: |
           (cd ${{ runner.temp }}/dist && tar xzf "haskell-debugger-view-${{env.haskellDebuggerViewVersion}}.tar.gz" && mv "haskell-debugger-view-${{env.haskellDebuggerViewVersion}}" "haskell-debugger-${{env.haskellDebuggerVersion}}/haskell-debugger-view")
           (cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}} && echo 'packages: . ./haskell-debugger-view' > cabal.project)
 
       - name: Build and Run tests
         run: |
-          echo "Using haskell-debugger-view from hackage: ${{env.USE_HASKELL_DEBUGGER_VIEW_FROM_HACKAGE}}"
           cd ${{ runner.temp }}/dist/haskell-debugger-${{env.haskellDebuggerVersion}}
           cabal run haskell-debugger-test --enable-executable-dynamic --allow-newer=ghc-bignum,containers,time,ghc,base,template-haskell --ghc-options=-Werror
 
   # Tests run on the git checkout
   build-n-more-test-haskell-debugger:
+    env:
+      asset_arch: ${{ fromJSON('{"ubuntu-latest":"linux-x86_64","macOS-latest":"macos-arm64","ubuntu-24.04-arm":"linux-aarch64","macos-15-intel":"macos-x86_64"}')[matrix.runner] }}
+      ghcup_channel: ${{ fromJSON('{"9.14.1":"https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml","10.1.20260817":"https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml"}')[matrix.version] }}
     timeout-minutes: 30
     name: Build and Run Tests on checkout (${{ matrix.runner }}, GHC ${{ matrix.version }})
     runs-on: ${{ matrix.runner }}
@@ -131,14 +160,14 @@ jobs:
     continue-on-error: ${{ inputs.is-release == false }}
     strategy:
       matrix:
+        version: ["9.14.1", "10.1.20260817"]
         runner: [ubuntu-latest, macOS-latest] # windows-latest is broken, see #246
-        version: [9.14.1, 10.1.20260817]
-        include:
-          - channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
-            version: 9.14.1
-          - channel: https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml
-            version: 10.1.20260817
+        # the || '[{"runner":"ubuntu-latest"}]' part is there to avoid an empty include, should be noop.
+        include: ${{ fromJSON(inputs.is-release && inputs.release-extra-runners || '[{"runner":"ubuntu-latest"}]') }}
     steps:
+      - run: test -n "${{ env.ghcup_channel }}" || { echo "No ghcup channel for GHC ${{ matrix.version }}"; exit 1; }
+      - run: test -n "${{ env.asset_arch }}" || { echo "No asset arch defined for runner ${{ matrix.runner }}"; exit 1; }
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -157,7 +186,7 @@ jobs:
         with:
           ghc-version: ${{ matrix.version }}
           cabal-version: 3.16
-          ghcup-release-channel: ${{ matrix.channel }}
+          ghcup-release-channel: ${{ env.ghcup_channel }}
 
       - name: Configure the build
         run: |
@@ -198,3 +227,19 @@ jobs:
           else
             cabal run haskell-debugger-test --enable-executable-dynamic
           fi
+
+      - name: Package hdb binary for release
+        if: inputs.is-release == true && matrix.version == '9.14.1'
+        shell: bash
+        run: |
+          BIN=$(cabal list-bin hdb)
+          mkdir -p dist-bin
+          cp "$BIN" dist-bin/hdb
+          tar -C dist-bin -czf hdb-${{ env.haskellDebuggerVersion }}-${{ env.asset_arch }}.tar.gz hdb
+
+      - name: Upload hdb binary artifact
+        if: inputs.is-release == true && matrix.version == '9.14.1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-${{ env.asset_arch }}
+          path: hdb-*.tar.gz
