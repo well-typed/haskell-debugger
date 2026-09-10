@@ -87,18 +87,22 @@ library
                       GHC.Debugger.Breakpoint.Ops,
 
                       -- Handler for when a breakpoint is hit
-                      GHC.Debugger.Breakpoint.Handler
+                      GHC.Debugger.Breakpoint.Handler,
 
+                      -- Evaluate exprs on the debuggee process
                       GHC.Debugger.Runtime.Eval,
                       GHC.Debugger.Runtime.Eval.RemoteExpr,
                       GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin,
 
+                      -- Finding debuggee instances at runtime
                       GHC.Debugger.Runtime.Instances,
                       GHC.Debugger.Runtime.Instances.Discover,
 
+                      -- Compile expressions at runtime
                       GHC.Debugger.Runtime.Compile,
                       GHC.Debugger.Runtime.Compile.Cache,
 
+                      -- Inspecting runtime terms
                       GHC.Debugger.Runtime.Term,
                       GHC.Debugger.Runtime.Term.Key,
                       GHC.Debugger.Runtime.Term.Parser,
@@ -124,6 +128,7 @@ library
 
     if impl(ghc >= 9.14.2)
       exposed-modules:
+                      -- Custom external interpreter
                       GHC.Debugger.Runtime.Interpreter,
                       GHC.Debugger.Runtime.Interpreter.Custom
 
