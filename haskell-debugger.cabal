@@ -86,7 +86,6 @@ library
                       GHC.Debugger.Stopped.Exception,
                       GHC.Debugger.Stopped.Variables,
 
-                      GHC.Debugger.Runtime,
 
                       GHC.Debugger.Runtime.Eval,
                       GHC.Debugger.Runtime.Eval.RemoteExpr,
@@ -98,8 +97,9 @@ library
                       GHC.Debugger.Runtime.Compile,
                       GHC.Debugger.Runtime.Compile.Cache,
 
-                      GHC.Debugger.Runtime.Term.Parser,
+                      GHC.Debugger.Runtime.Term,
                       GHC.Debugger.Runtime.Term.Key,
+                      GHC.Debugger.Runtime.Term.Parser,
 
                       GHC.Debugger.Runtime.Thread,
                       GHC.Debugger.Runtime.Thread.Stack,

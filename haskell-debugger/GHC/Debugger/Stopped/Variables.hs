@@ -26,8 +26,8 @@ import qualified GHC.Runtime.Heap.Inspect as GHCI
 
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
-import GHC.Debugger.Runtime
 import GHC.Debugger.Runtime.Instances
+import GHC.Debugger.Runtime.Term
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Utils
 
