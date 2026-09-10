@@ -4,6 +4,7 @@
 
 set -exo pipefail
 
+export DEBIAN_FRONTEND=noninteractive
 bash -c "$PKG_INSTALL_CMD $PKG_TOOLS"
 
 case "$STAGE" in
