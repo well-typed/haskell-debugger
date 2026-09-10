@@ -138,18 +138,16 @@ jobs:
             version: 9.14.1
           - channel: https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml
             version: 10.1.20260817
-          - runner: ubuntu-latest
-            asset_arch: linux-x86_64
           - runner: macOS-latest
-            asset_arch: macos-arm64
+            asset_arch: aarch64-apple-darwin
           - runner: ubuntu-24.04-arm
             version: 9.14.1
             channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
-            asset_arch: linux-aarch64
+            asset_arch: aarch64-linux-ubuntu2404
           - runner: macos-15-intel
             version: 9.14.1
             channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
-            asset_arch: macos-x86_64
+            asset_arch: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
         with:
@@ -211,18 +209,845 @@ jobs:
             cabal run haskell-debugger-test --enable-executable-dynamic
           fi
 
+      # Linux x86_64 release binaries are built separately, per-distro, by the
+      # build-hdb-linux-bindist job below (for glibc/libtinfo/libgmp
+      # compatibility across distros) -- this leg only covers macOS and
+      # Linux aarch64, which each ship a single bindist.
+      - name: Install patchelf
+        if: inputs.is-release == true && matrix.version == '9.14.1' && matrix.asset_arch != '' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y patchelf
+
       - name: Package hdb binary for release
-        if: inputs.is-release == true && matrix.version == '9.14.1'
+        if: inputs.is-release == true && matrix.version == '9.14.1' && matrix.asset_arch != ''
         shell: bash
-        run: |
-          BIN=$(cabal list-bin hdb)
-          mkdir -p dist-bin
-          cp "$BIN" dist-bin/hdb
-          tar -C dist-bin -czf hdb-${{ env.haskellDebuggerVersion }}-${{ matrix.asset_arch }}.tar.gz hdb
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARCH: ${{ matrix.asset_arch }}
+          OUT_DIR: dist-bin
+        run: ./scripts/mk-bindist.sh
 
       - name: Upload hdb binary artifact
-        if: inputs.is-release == true && matrix.version == '9.14.1'
+        if: inputs.is-release == true && matrix.version == '9.14.1' && matrix.asset_arch != ''
         uses: actions/upload-artifact@v4
         with:
           name: hdb-${{ matrix.asset_arch }}
+          path: hdb-*.tar.gz
+
+  build-hdb-linux-deb10:
+    name: Build hdb Linux (deb10, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (deb10)
+        uses: ./.github/actions/bindist-actions/action-deb10
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-deb10
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-deb10-${{ matrix.version }}
+          path: out-x86_64-linux-deb10-${{ matrix.version }}.tar
+
+  build-hdb-linux-deb11:
+    name: Build hdb Linux (deb11, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (deb11)
+        uses: ./.github/actions/bindist-actions/action-deb11
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-deb11
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-deb11-${{ matrix.version }}
+          path: out-x86_64-linux-deb11-${{ matrix.version }}.tar
+
+  build-hdb-linux-deb12:
+    name: Build hdb Linux (deb12, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (deb12)
+        uses: ./.github/actions/bindist-actions/action-deb12
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-deb12
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-deb12-${{ matrix.version }}
+          path: out-x86_64-linux-deb12-${{ matrix.version }}.tar
+
+  build-hdb-linux-deb13:
+    name: Build hdb Linux (deb13, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (deb13)
+        uses: ./.github/actions/bindist-actions/action-deb13
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-deb13
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-deb13-${{ matrix.version }}
+          path: out-x86_64-linux-deb13-${{ matrix.version }}.tar
+
+  build-hdb-linux-fedora33:
+    name: Build hdb Linux (fedora33, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (fedora33)
+        uses: ./.github/actions/bindist-actions/action-fedora33
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-fedora33
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-fedora33-${{ matrix.version }}
+          path: out-x86_64-linux-fedora33-${{ matrix.version }}.tar
+
+  build-hdb-linux-fedora40:
+    name: Build hdb Linux (fedora40, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (fedora40)
+        uses: ./.github/actions/bindist-actions/action-fedora40
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-fedora40
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-fedora40-${{ matrix.version }}
+          path: out-x86_64-linux-fedora40-${{ matrix.version }}.tar
+
+  build-hdb-linux-mint202:
+    name: Build hdb Linux (mint202, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (mint202)
+        uses: ./.github/actions/bindist-actions/action-mint202
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-mint202
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-mint202-${{ matrix.version }}
+          path: out-x86_64-linux-mint202-${{ matrix.version }}.tar
+
+  build-hdb-linux-mint213:
+    name: Build hdb Linux (mint213, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (mint213)
+        uses: ./.github/actions/bindist-actions/action-mint213
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-mint213
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-mint213-${{ matrix.version }}
+          path: out-x86_64-linux-mint213-${{ matrix.version }}.tar
+
+  build-hdb-linux-mint222:
+    name: Build hdb Linux (mint222, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (mint222)
+        uses: ./.github/actions/bindist-actions/action-mint222
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-mint222
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-mint222-${{ matrix.version }}
+          path: out-x86_64-linux-mint222-${{ matrix.version }}.tar
+
+  build-hdb-linux-ubuntu2004:
+    name: Build hdb Linux (ubuntu2004, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (ubuntu2004)
+        uses: ./.github/actions/bindist-actions/action-ubuntu2004
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-ubuntu2004
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-ubuntu2004-${{ matrix.version }}
+          path: out-x86_64-linux-ubuntu2004-${{ matrix.version }}.tar
+
+  build-hdb-linux-ubuntu2204:
+    name: Build hdb Linux (ubuntu2204, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (ubuntu2204)
+        uses: ./.github/actions/bindist-actions/action-ubuntu2204
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-ubuntu2204
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-ubuntu2204-${{ matrix.version }}
+          path: out-x86_64-linux-ubuntu2204-${{ matrix.version }}.tar
+
+  build-hdb-linux-ubuntu2404:
+    name: Build hdb Linux (ubuntu2404, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (ubuntu2404)
+        uses: ./.github/actions/bindist-actions/action-ubuntu2404
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-ubuntu2404
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-ubuntu2404-${{ matrix.version }}
+          path: out-x86_64-linux-ubuntu2404-${{ matrix.version }}.tar
+
+  build-hdb-linux-unknown:
+    name: Build hdb Linux (unknown, GHC ${{ matrix.version }})
+    if: inputs.is-release == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [9.14.1]
+        include:
+          - version: 9.14.1
+            channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package hdb (unknown)
+        uses: ./.github/actions/bindist-actions/action-unknown
+        with:
+          stage: BUILD
+          version: ${{ matrix.version }}
+        env:
+          GHCUP_CHANNEL: ${{ matrix.channel }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-unknown
+
+      - name: Upload hdb build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-x86_64-linux-unknown-${{ matrix.version }}
+          path: out-x86_64-linux-unknown-${{ matrix.version }}.tar
+
+  bindist-hdb-linux-deb10:
+    name: Bindist hdb Linux (deb10)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-deb10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (deb10)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-deb10-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (deb10)
+        uses: ./.github/actions/bindist-actions/action-deb10
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-deb10
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-deb10
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-deb11:
+    name: Bindist hdb Linux (deb11)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-deb11
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (deb11)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-deb11-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (deb11)
+        uses: ./.github/actions/bindist-actions/action-deb11
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-deb11
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-deb11
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-deb12:
+    name: Bindist hdb Linux (deb12)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-deb12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (deb12)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-deb12-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (deb12)
+        uses: ./.github/actions/bindist-actions/action-deb12
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-deb12
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-deb12
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-deb13:
+    name: Bindist hdb Linux (deb13)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-deb13
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (deb13)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-deb13-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (deb13)
+        uses: ./.github/actions/bindist-actions/action-deb13
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-deb13
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-deb13
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-fedora33:
+    name: Bindist hdb Linux (fedora33)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-fedora33
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (fedora33)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-fedora33-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (fedora33)
+        uses: ./.github/actions/bindist-actions/action-fedora33
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-fedora33
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-fedora33
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-fedora40:
+    name: Bindist hdb Linux (fedora40)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-fedora40
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (fedora40)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-fedora40-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (fedora40)
+        uses: ./.github/actions/bindist-actions/action-fedora40
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-fedora40
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-fedora40
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-mint202:
+    name: Bindist hdb Linux (mint202)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-mint202
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (mint202)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-mint202-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (mint202)
+        uses: ./.github/actions/bindist-actions/action-mint202
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-mint202
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-mint202
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-mint213:
+    name: Bindist hdb Linux (mint213)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-mint213
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (mint213)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-mint213-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (mint213)
+        uses: ./.github/actions/bindist-actions/action-mint213
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-mint213
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-mint213
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-mint222:
+    name: Bindist hdb Linux (mint222)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-mint222
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (mint222)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-mint222-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (mint222)
+        uses: ./.github/actions/bindist-actions/action-mint222
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-mint222
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-mint222
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-ubuntu2004:
+    name: Bindist hdb Linux (ubuntu2004)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-ubuntu2004
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (ubuntu2004)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-ubuntu2004-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (ubuntu2004)
+        uses: ./.github/actions/bindist-actions/action-ubuntu2004
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-ubuntu2004
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-ubuntu2004
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-ubuntu2204:
+    name: Bindist hdb Linux (ubuntu2204)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-ubuntu2204
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (ubuntu2204)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-ubuntu2204-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (ubuntu2204)
+        uses: ./.github/actions/bindist-actions/action-ubuntu2204
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-ubuntu2204
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-ubuntu2204
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-ubuntu2404:
+    name: Bindist hdb Linux (ubuntu2404)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-ubuntu2404
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (ubuntu2404)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-ubuntu2404-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (ubuntu2404)
+        uses: ./.github/actions/bindist-actions/action-ubuntu2404
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-ubuntu2404
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-ubuntu2404
+          path: hdb-*.tar.gz
+
+  bindist-hdb-linux-unknown:
+    name: Bindist hdb Linux (unknown)
+    if: inputs.is-release == true
+    needs: build-hdb-linux-unknown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download hdb build artifacts (unknown)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-x86_64-linux-unknown-*
+          merge-multiple: true
+          path: ./
+
+      - name: Merge hdb bindist (unknown)
+        uses: ./.github/actions/bindist-actions/action-unknown
+        with:
+          stage: BINDIST
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          ARTIFACT: x86_64-linux-unknown
+
+      - name: Upload hdb binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdb-x86_64-linux-unknown
           path: hdb-*.tar.gz
