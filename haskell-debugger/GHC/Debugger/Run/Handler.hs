@@ -62,16 +62,16 @@ handleExecResult = \case
 
       res <- execBreakResume br
       pushResume res
+      rt_id <- getResumeThreadId res
 
       let performAction BreakpointStop = do
-                rt_id <- getResumeThreadId res
                 return EvalStopped{ breakId = Just bid
                                   , breakThread = rt_id }
           performAction (BreakpointLogAndResume logExpr) = do
             let evalFailedMsg e = text $ unlines ["Evaluation of log message expression failed with " ++ e
                   , "Expr: " ++ logExpr
                   , "Ignoring..."]
-            doEval' logExpr evalFailedMsg res $ \ _ _ -> resume res
+            doEval' logExpr evalFailedMsg rt_id $ \ _ _ -> resume rt_id
 
       bm <- liftIO . readIORef =<< asks activeBreakpoints
       case BM.lookup bid bm of
@@ -86,30 +86,29 @@ handleExecResult = \case
             BreakpointWhenCond cond -> do
               let evalFailedMsg e = text $ "Evaluation of conditional breakpoint expression failed with " ++ e ++ "\nIgnoring..."
 
-              doEval' cond evalFailedMsg res $ \ resultVal resultType -> do
+              doEval' cond evalFailedMsg rt_id $ \ resultVal resultType -> do
                 if resultType == "Bool" then do
                   if resultVal == "True" then do
                     performAction action
                   else
-                    resume res
+                    resume rt_id
                 else do
                   logSDoc Logger.Warning (evalFailedMsg "\"expression resultType is != Bool\"")
-                  resume res
-            BreakpointDisabled -> resume res
+                  resume rt_id
+            BreakpointDisabled -> resume rt_id
             -- The counting is handled by @GHC.setupBreakpoint@
             BreakpointAfterCount _ -> performAction action
             BreakpointEnabled -> performAction action
   where
-    doEval' expr evalFailedMsg br k = do
-      rt_id <- getResumeThreadId br
-      doEval handleExecResult rt_id expr >>= \case
+    doEval' expr evalFailedMsg rt_id k = do
+      doEval handleExecResult (Just (rt_id, 0)) expr >>= \case
         EvalStopped{} -> error "impossible for doEval"
         EvalCompleted { resultVal, resultType } ->
           k resultVal resultType
         EvalException { resultVal } -> do
           logSDoc Logger.Warning (evalFailedMsg resultVal)
-          resume br
+          resume rt_id
         EvalAbortedWith e -> do
           logSDoc Logger.Warning (evalFailedMsg e)
-          resume br
-    resume r = resumeExec GHC.RunToCompletion Nothing r >>= handleExecResult
+          resume rt_id
+    resume rt_id = popResume rt_id >>= resumeExec GHC.RunToCompletion Nothing >>= handleExecResult

@@ -13,6 +13,7 @@ module GHC.Debugger.Stopped
   , getExceptionInfo
   ) where
 
+import Data.Function
 import Control.Monad
 import Control.Monad.Reader
 import Data.IORef

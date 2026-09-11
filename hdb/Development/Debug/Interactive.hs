@@ -334,7 +334,7 @@ cmdParser opts ctx = hsubparser
       ( progDesc "Continue executing from the current breakpoint" ) )
   <>
     Options.Applicative.command "print"
-    ( info (Do . DoEval . unwords <$> many (argument str ( metavar "EXPRESSION"
+    ( info (Do . DoEval ((,0) <$> ctx.runCurrentThread) . unwords <$> many (argument str ( metavar "EXPRESSION"
      <> help "Expression to evaluate in the current context" )))
       ( progDesc "Evaluate an expression in the current context" ) )
   <>
