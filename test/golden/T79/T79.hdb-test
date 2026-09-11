@@ -1,4 +1,6 @@
-cabal init -m -n -d base -p T79-tmp && $HDB app/Main.hs <<'EOF'
+#We don't care to test the output of cabal init, but it might be helpful for debugging.
+LOGFILE=cabal-init.log
+echo "cabal init ... > $LOGFILE 2>1\n" && cabal init -m -n -d base -p T79-tmp > $LOGFILE 2>1 && $HDB app/Main.hs <<'EOF'
 run
 exit
 EOF
