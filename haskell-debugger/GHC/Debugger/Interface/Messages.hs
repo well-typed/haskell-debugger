@@ -94,7 +94,9 @@ data Command
   | GetExceptionInfo RemoteThreadId
 
   -- | Evaluate an expression at the current breakpoint.
-  | DoEval String
+  --
+  -- When the frame id is given, the expression is run in the context of that frame.
+  | DoEval (Maybe (RemoteThreadId, Int{-stack frame positional ix-})) String
 
   -- | Resume the paused thread using the given 'ResumeStep' and 'ResumeTheWorld' options.
   -- See the respective haddocks for details.

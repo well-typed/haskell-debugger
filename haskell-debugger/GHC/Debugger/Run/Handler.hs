@@ -105,7 +105,7 @@ handleExecResult = \case
   where
     doEval' expr evalFailedMsg br k = do
       rt_id <- getResumeThreadId br
-      doEval handleExecResult rt_id expr >>= \case
+      doEval handleExecResult (Just (rt_id, 0)) expr >>= \case
         EvalStopped{} -> error "impossible for doEval"
         EvalCompleted { resultVal, resultType } ->
           k resultVal resultType

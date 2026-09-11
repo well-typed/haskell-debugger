@@ -64,8 +64,8 @@ execute = \case
   -- GHC.Debugger.Run
   ------------------------------------------------------------------------------
 
-  DoEval exp_s -> DidEval <$>
-    Run.doEvalCommand exp_s
+  DoEval mfid exp_s -> DidEval <$>
+    Run.doEvalCommand mfid exp_s
 
   -- TODO: We shouldn't block waiting for the result of these operations, because that means we can never resume/step two threads simultaneously. Recall
   -- Recall we take things to evaluate from the message queue, but we execute them serially. Here we should do something like `forkIO $ reply`

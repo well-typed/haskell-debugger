@@ -37,7 +37,15 @@ startExecution = do
 -- | Command for evaluation (includes evaluation-on-hover)
 commandEvaluate :: DebugAdaptor ()
 commandEvaluate = do
-  EvaluateArguments {evaluateArgumentsFrameId=_todo{-evaluate expression in specific frame-}, ..} <- getArguments
+  EvaluateArguments {evaluateArgumentsFrameId=mdapFrameId, ..} <- getArguments
+  sfMap <- stackFrameMap <$> getDebugSession
+
+  DidEval er <-
+    case mdapFrameId >>= (`IM.lookup` sfMap) of
+      Just (StackFrameIx tid frameId) -> do
+        sendSync (DoEval (Just (tid, frameId)) (T.unpack evaluateArgumentsExpression))
+      Nothing -> do
+        sendSync (DoEval Nothing (T.unpack evaluateArgumentsExpression))
 
   let simpleEvalResp res ty = EvaluateResponse
         { evaluateResponseResult             = res
@@ -49,7 +57,6 @@ commandEvaluate = do
         , evaluateResponseMemoryReference    = Nothing
         }
 
-  DidEval er <- sendSync (DoEval (T.unpack evaluateArgumentsExpression))
   case er of
     EvalStopped{} -> error "impossible, execution is resumed automatically for 'DoEval'"
     EvalAbortedWith e ->

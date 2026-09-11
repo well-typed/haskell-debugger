@@ -166,8 +166,8 @@ doResume tid step stop_world = do
     >>= handleExecResult
 
 -- | Generalized `doEval` that also handles `imports`
-doEvalCommand :: String -> Debugger EvalResult
-doEvalCommand expr = do
+doEvalCommand :: Maybe (RemoteThreadId, Int) -> String -> Debugger EvalResult
+doEvalCommand mtid expr = do
   dflags <- getInteractiveDebuggerDynFlags
   let pflags = GHC.initParserOpts dflags
   if GHC.isStmt pflags expr
