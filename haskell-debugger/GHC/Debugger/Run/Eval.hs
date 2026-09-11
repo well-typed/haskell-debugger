@@ -36,10 +36,12 @@ import Data.Function
 doEval :: (ExecResult -> Debugger EvalResult)
        -- ^ How to handle a result from evaluation.
        -- Typically this is 'GHC.Debugger.Run.Handler.handleExecResult'.
-       -> RemoteThreadId
+       -> Maybe (RemoteThreadId, Int)
+       -- ^ If Just, evaluate the expression in a context where the variables
+       -- from the given thread at frame index are available.
        -> String
        -> Debugger EvalResult
-doEval handleExecResult tid expr = withThreadBreakEnv tid $ do
+doEval handleExecResult mtid expr = withThreadBreakEnv mtid $ do
   excr <- (Right <$> exec expr execOptions) `MC.catch` \(e::SomeException) -> pure (Left (displayException e))
   case excr of
     Left err -> pure $ EvalAbortedWith err
@@ -79,14 +81,15 @@ continueToCompletion r = do
     br@ExecBreak{} -> execBreakResume br >>= continueToCompletion
     ExecComplete{} -> return execr
 
--- | @withThreadBreakEnv tid m@ executes @m@ with the imports, language, and language
+-- | @withThreadBreakEnv mtid m@ executes @m@ with the imports, language, and language
 --  extensions of the <tid>'s breakpoint source module.
 --
---  If <tid> is not stopped at a breakpoint @m@ is executed with no change.
-withThreadBreakEnv :: RemoteThreadId -> Debugger a -> Debugger a
-withThreadBreakEnv t m = do
+--  If <tid> is Nothing or not stopped at a breakpoint @m@ is executed with no change.
+withThreadBreakEnv :: Maybe (RemoteThreadId, Int) -> Debugger a -> Debugger a
+withThreadBreakEnv Nothing                         m = m
+withThreadBreakEnv (Just (tid, _TODO_frame_index)) m = do
   hug  <- hsc_HUG <$> getSession
-  mibi <- join . fmap resumeBreakpointId <$> readResume t
+  mibi <- join . fmap resumeBreakpointId <$> readResume tid
   case mibi of
     Nothing -> m
     Just ibi -> do

@@ -336,7 +336,7 @@ continueThread tid = do
   _ <- sync $ continueRequest @_ @Value
     ContinueArguments
       { DAP.continueArgumentsThreadId = tid
-      , DAP.continueArgumentsSingleThread = False
+      , DAP.continueArgumentsSingleThread = Just False
       }
   pure ()
 
@@ -356,7 +356,7 @@ stepOut tid = do
   _ <- sync $ stepOutRequest @_ @Value
     StepOutArguments
       { DAP.stepOutArgumentsThreadId = tid
-      , DAP.stepOutArgumentsSingleThread = False
+      , DAP.stepOutArgumentsSingleThread = Just False
       , DAP.stepOutArgumentsGranularity = Nothing
       }
   pure ()
