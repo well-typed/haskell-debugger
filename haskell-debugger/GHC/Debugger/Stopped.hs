@@ -280,7 +280,7 @@ getVariables threadId frameIx vk = do
           -- It is a "lazy" DAP variable: our reply can ONLY include
           -- this single variable.
 
-          term' <- forceTerm term
+          term' <- seqTerm hsc_env term & liftIO
 
           vi <- termToVarInfo fam_envs key term'
 

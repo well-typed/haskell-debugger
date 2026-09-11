@@ -2,10 +2,21 @@
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns, DerivingVia,
    TypeAbstractions, DataKinds #-}
+
+-- | Construct information about variables and other things from Ids/TyThings/Terms.
 module GHC.Debugger.Stopped.Variables
-  ( termVarFields
+  (
+
+    -- * Info from Id/TyThing
+    idToVarInfo
+  , tyThingToVarInfo
+
+    -- * Info from Terms
   , termToVarInfo
-  , forceTerm
+  , termVarFields
+
+    -- * Context
+  , getFamInstEnvs'
   ) where
 
 import Control.Monad.Reader
@@ -31,25 +42,28 @@ import GHC.Debugger.Runtime.Term
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Utils
 
--- | Thin wrapper around @tcGetFamInstEnvs@, using @runTcInteractive@
-getFamInstEnvs' :: Debugger FamInstEnvs
-getFamInstEnvs' = do
-  hsc_env <- getSession
-  (err_msgs, res) <- liftIO $
-    runTcInteractive
+--------------------------------------------------------------------------------
+-- Id/TyThing
+--------------------------------------------------------------------------------
+
+-- | Get the value and type of a given 'Id' as rendered strings in 'VarInfo'.
 #if MIN_VERSION_ghc(10,1,0)
-      NoTcMPlugins
-#endif
-      hsc_env
-      tcGetFamInstEnvs
-  case res of
-    Just fam_envs -> pure fam_envs
+idToVarInfo :: Id -> Debugger (Maybe VarInfo)
+idToVarInfo (GHC.AnId -> tt) = Just <$> do
+  fam_envs <- getFamInstEnvs'
+  tyThingToVarInfo fam_envs tt
+#else
+-- prefer idToVarInfo; this is no longer needed since ExecBreaks use Ids.
+idToVarInfo :: Name -> Debugger (Maybe VarInfo)
+idToVarInfo n = do
+  GHC.lookupName n >>= \case
     Nothing -> do
-      logSDoc Logger.Debug
-        $ text "Couldn't lookup FamInstEnvs to normalise type for VarInfo,"
-        <+> text "using empty ones."
-        $$  ppr err_msgs
-      return emptyFamInstEnvs
+      liftIO . putStrLn =<< display (text "Failed to lookup name: " <+> ppr n)
+      pure Nothing
+    Just tt -> Just <$> do
+      fam_envs <- getFamInstEnvs'
+      tyThingToVarInfo fam_envs tt
+#endif
 
 -- | 'TyThing' to 'VarInfo'. The 'Bool' argument indicates whether to force the
 -- value of the thing (as in @True = :force@, @False = :print@)
@@ -69,6 +83,10 @@ tyThingToVarInfo fam_envs t = case t of
     let key = FromId i
     term <- obtainTerm key
     termToVarInfo fam_envs key term
+
+--------------------------------------------------------------------------------
+-- Terms
+--------------------------------------------------------------------------------
 
 -- | Construct the VarInfos of the fields ('VarFields') of the given 'TermKey'/'Term'
 --
@@ -121,8 +139,10 @@ termVarFields fam_envs top_key top_term = do
       _ -> return (VarFields [])
 
 
--- | Construct a 'VarInfo' from the given 'Name' of the variable and the 'Term' it binds
---   The @FamInstEnvs@ is used to look through newtypes and type families when checking if suspensions are of function type.
+-- | Construct a 'VarInfo' from the given 'TermKey' of the variable and the 'Term' it binds
+--
+-- The @FamInstEnvs@ is used to look through newtypes and type families when
+-- checking if suspensions are of function type.
 termToVarInfo :: FamInstEnvs -> TermKey -> Term -> Debugger VarInfo
 termToVarInfo fam_envs key term0 = do
   -- Make a VarInfo for a term
@@ -222,13 +242,29 @@ termToVarInfo fam_envs key term0 = do
     unwrapNewtype (NewtypeWrap {wrapped_term}) = unwrapNewtype wrapped_term
     unwrapNewtype x = x
 
--- | Forces a term to WHNF
---
--- The term is updated in the cache at the given key.
-forceTerm :: Term -> Debugger Term
-forceTerm term = do
+--------------------------------------------------------------------------------
+-- Context
+--------------------------------------------------------------------------------
+
+-- | Thin wrapper around @tcGetFamInstEnvs@, using @runTcInteractive@
+getFamInstEnvs' :: Debugger FamInstEnvs
+getFamInstEnvs' = do
   hsc_env <- getSession
-  liftIO $ seqTerm hsc_env term
+  (err_msgs, res) <- liftIO $
+    runTcInteractive
+#if MIN_VERSION_ghc(10,1,0)
+      NoTcMPlugins
+#endif
+      hsc_env
+      tcGetFamInstEnvs
+  case res of
+    Just fam_envs -> pure fam_envs
+    Nothing -> do
+      logSDoc Logger.Debug
+        $ text "Couldn't lookup FamInstEnvs to normalise type for VarInfo,"
+        <+> text "using empty ones."
+        $$  ppr err_msgs
+      return emptyFamInstEnvs
 
 --------------------------------------------------------------------------------
 -- Utils

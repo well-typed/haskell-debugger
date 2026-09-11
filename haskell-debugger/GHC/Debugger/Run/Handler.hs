@@ -10,8 +10,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
--- | Exposes functions that determine how the debugger handles a breakpoint being hit
-module GHC.Debugger.Breakpoint.Handler
+-- | Determine how the debugger handles a breakpoint being hit
+module GHC.Debugger.Run.Handler
   ( handleExecResult
   ) where
 
@@ -20,25 +20,25 @@ import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.IORef
 
-import GHC qualified
 import GHC (
   ExecResult (..),
-  Name,
   SingleStep (..),
   )
 #if MIN_VERSION_ghc(10,1,0)
 import GHC.Builtin.Modules (gHC_INTERNAL_GHCI_HELPERS)
-#else
 #endif
 
-import GHC.Debugger.Monad
-import GHC.Debugger.Utils
-import GHC.Debugger.Interface.Messages
 import Colog.Core as Logger
-import qualified GHC.Debugger.Data.BreakpointMap as BM
-import GHC.Debugger.Runtime.Thread.Resume
-import GHC.Debugger.Session (resumeExec)
 import GHC.Runtime.Eval.Types
+
+import GHC.Debugger.Interface.Messages
+import GHC.Debugger.Monad
+import GHC.Debugger.Run.Resume
+import GHC.Debugger.Runtime.Thread.Resume
+
+import qualified GHC.Debugger.Data.BreakpointMap as BM
+import GHC.Debugger.Run.Eval
+import GHC.Debugger.Stopped.Variables
 
 --------------------------------------------------------------------------------
 
@@ -49,11 +49,7 @@ handleExecResult = \case
       case execResult of
         Left e -> return (EvalException (show e) "SomeException")
         Right [] -> return (EvalCompleted "" "" Nothing NoVariables) -- Evaluation completed without binding any result.
-#if MIN_VERSION_ghc(10,1,0)
-        Right (n:_ns) -> inspectId n >>= \case
-#else
-        Right (n:_ns) -> inspectName n >>= \case
-#endif
+        Right (n:_ns) -> idToVarInfo n >>= \case
           Just VarInfo{varValue, varType, varRef} -> do
             return (EvalCompleted varValue varType Nothing varRef)
           Nothing     -> liftIO $ fail "doEval failed"
@@ -82,7 +78,9 @@ handleExecResult = \case
 
       bm <- liftIO . readIORef =<< asks activeBreakpoints
       case BM.lookup bid bm of
-        -- When stepping (`GHC.resumeExec SingleStep` or similar), we will typically stop at locations not explicitly enabled by the user (i.e. not registered in `activeBreakpoints`).
+        -- When stepping (`GHC.resumeExec SingleStep` or similar), we will
+        -- typically stop at locations not explicitly enabled by the user (i.e.
+        -- not registered in `activeBreakpoints`).
         Nothing -> performAction BreakpointStop
         Just BreakpointInfo{bpInfoStatus = status, bpInfoAction = action} -> do
           case status of
@@ -105,35 +103,16 @@ handleExecResult = \case
             BreakpointAfterCount _ -> performAction action
             BreakpointEnabled -> performAction action
   where
-    doEval' expr evalFailedMsg br k = doEval expr >>= \case
-            EvalStopped{} -> error "impossible for doEval"
-            EvalCompleted { resultVal, resultType } ->
-              k resultVal resultType
-            EvalException { resultVal } -> do
-              logSDoc Logger.Warning (evalFailedMsg resultVal)
-              resume br
-            EvalAbortedWith e -> do
-              logSDoc Logger.Warning (evalFailedMsg e)
-              resume br
+    doEval' expr evalFailedMsg br k = do
+      rt_id <- getResumeThreadId br
+      doEval handleExecResult rt_id expr >>= \case
+        EvalStopped{} -> error "impossible for doEval"
+        EvalCompleted { resultVal, resultType } ->
+          k resultVal resultType
+        EvalException { resultVal } -> do
+          logSDoc Logger.Warning (evalFailedMsg resultVal)
+          resume br
+        EvalAbortedWith e -> do
+          logSDoc Logger.Warning (evalFailedMsg e)
+          resume br
     resume r = resumeExec GHC.RunToCompletion Nothing r >>= handleExecResult
-
-#if MIN_VERSION_ghc(10,1,0)
-
--- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
-inspectId :: Id -> Debugger (Maybe VarInfo)
-inspectId (GHC.AnId -> tt) = Just <$> do
-  fam_envs <- getFamInstEnvs'
-  tyThingToVarInfo fam_envs tt
-#else
-
--- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
-inspectName :: Name -> Debugger (Maybe VarInfo)
-inspectName n = do
-  GHC.lookupName n >>= \case
-    Nothing -> do
-      liftIO . putStrLn =<< display (text "Failed to lookup name: " <+> ppr n)
-      pure Nothing
-    Just tt -> Just <$> do
-      fam_envs <- getFamInstEnvs'
-      tyThingToVarInfo fam_envs tt
-#endif

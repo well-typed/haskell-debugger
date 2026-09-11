@@ -24,28 +24,17 @@ module GHC.Debugger.Run
   ) where
 
 import GHC.Utils.Outputable
-import Control.Monad.IO.Class
 import Control.Monad.Catch
 import Data.Maybe
-import Data.Function
 
 import GHC qualified
 import GHC (
-  ExecResult (..),
-  execStmt',
   ForeignHValue,
-  GhciLStmt,
-  GhcPs,
   InteractiveImport (..),
   mkHsString,
-  ModSummary (..),
   nlHsLit,
   nlList,
   parseImportDecl,
-  SingleStep (..),
-  SrcSpan (..),
-  StmtLR (..),
-  unLoc,
   )
 import GHC.Plugins (SourceError)
 #if MIN_VERSION_ghc(10,1,0)
@@ -56,11 +45,9 @@ import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
 import GHC.Unit.Types
 import GHC.Data.FastString
 import GHC.Driver.DynFlags as GHC
-import GHC.Driver.Main (hscParseStmtWithLocation)
 import GHC.Driver.Monad as GHC
 import GHC.Driver.Env as GHC
 import qualified GHC.Driver.Config.Parser as GHC
-import GHC.Runtime.Debugger.Breakpoints as GHC
 import GHC.Types.Name.Occurrence (mkVarOccFS)
 import GHC.Types.Name.Reader as RdrName (mkOrig)
 import qualified GHCi.Message as GHCi
@@ -69,12 +56,14 @@ import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import Colog.Core as Logger
 import GHC.Debugger.Runtime.Thread.Resume
-import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
+import GHC.Debugger.Session (getInteractiveDebuggerDynFlags)
 import Data.List (find)
 import GHC.Unit.Module.Graph as GHC
 import GHC.Runtime.Eval.Types
-import GHC.Runtime.Eval (readIModBreaks)
-import GHC.ByteCode.Breakpoints
+
+import GHC.Debugger.Run.Resume
+import GHC.Debugger.Run.Handler
+import GHC.Debugger.Run.Eval
 
 --------------------------------------------------------------------------------
 -- * Evaluation
@@ -167,7 +156,7 @@ debugExecution entryFile entry args = do
 doResume :: RemoteThreadId -> ResumeStep -> ResumeTheWorld -> Debugger EvalResult
 doResume tid step stop_world = do
   resume <- popResume tid
-  ss     <- resolveStep resume step
+  ss     <- resolveResumeStep resume step
   -- TODO: stop_world toggles global hit breakpoints mode (todo: look at mode
   -- to determine how to stop) and here run all the threads accordingly.
   -- TODO: for the first iteration, simply call pause on all threads (except
@@ -176,47 +165,13 @@ doResume tid step stop_world = do
   resumeExec ss Nothing resume
     >>= handleExecResult
 
--- | Construct the 'SingleStep' resume option for a paused thread from its
--- 'Resume' info and the type of step to do.
-resolveStep :: Resume -> ResumeStep -> Debugger SingleStep
-resolveStep r = \case
-  ResumeNoStep     -> pure RunToCompletion
-  ResumeSingleStep -> pure SingleStep
-  ResumeStepLocal
-    | Nothing <- rbid -- exception
-    -> pure SingleStep
-    | Just ibi <- rbid
-    -> do
-       spn <- enclosing_decl ibi
-       pure LocalStep { breakAt = RealSrcSpan spn mempty }
-  ResumeStepOut
-    | Nothing <- rbid
-    -> pure StepOut { initiatedFrom = Nothing }
-    | Just ibi <- rbid
-    -> do
-       spn <- enclosing_decl ibi
-       pure StepOut { initiatedFrom = Just (RealSrcSpan spn mempty) }
-  where
-    rbid = resumeBreakpointId r
-    loc  = resumeSpan r
-    -- To do a local step, we get the SrcSpan of the current suspension state
-    -- and get its 'enclosingTickSpan' to use as a filter for breakpoints in
-    -- the call to 'resumeExec'. Execution will only stop at breakpoints whose
-    -- span matches this enclosing span.
-    enclosing_decl ibi = do
-      hug   <- hsc_HUG <$> getSession
-      brks  <- readIModBreaks hug ibi & liftIO
-      let md = getBreakSourceMod ibi brks
-      ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
-      pure $ enclosingTickSpan ticks loc
-
 -- | Generalized `doEval` that also handles `imports`
 doEvalCommand :: String -> Debugger EvalResult
 doEvalCommand expr = do
   dflags <- getInteractiveDebuggerDynFlags
   let pflags = GHC.initParserOpts dflags
   if GHC.isStmt pflags expr
-    then doEval expr
+    then doEval handleExecResult _ expr
     else addImport expr
 
 -- | Parses input as an import declaration and applies it to the interactive context.
@@ -229,75 +184,3 @@ addImport s = handleError $ do
   where
     handleError m = m `catch` \ (e::SourceError) -> do
       pure $ EvalAbortedWith $ displayException e
-
--- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
-doEval :: String -> Debugger EvalResult
-doEval expr = withCurrentBreakEnv $ do
-  excr <- (Right <$> exec expr GHC.execOptions) `catch` \(e::SomeException) -> pure (Left (displayException e))
-  case excr of
-    Left err -> pure $ EvalAbortedWith err
-    Right (k, br@ExecBreak{}) -> fmap (addSourceKind k) $ execBreakResume br >>= continueToCompletion >>= handleExecResult
-    Right (k, r@ExecComplete{}) -> fmap (addSourceKind k) $ handleExecResult r
-  where
-    exec input exec_opts@ExecOptions{..} = do
-      hsc_env <- getSession
-
-      mb_stmt <-
-        liftIO $
-        runInteractiveHsc hsc_env $
-        hscParseStmtWithLocation execSourceFile execLineNumber input
-
-      case mb_stmt of
-        -- empty statement / comment
-        Nothing -> return (IsStmt, ExecComplete (Right []) 0)
-        Just stmt -> (,) <$> stmtKind stmt <*> execStmt' stmt input exec_opts
-
-    stmtKind (stmt :: GhciLStmt GhcPs) = do
-      pure $ case unLoc stmt of
-        BodyStmt{} -> IsExpr
-        _ -> IsStmt
-
-    addSourceKind :: SourceKind -> EvalResult -> EvalResult
-    addSourceKind k EvalCompleted{..} = EvalCompleted{resultSourceKind = Just k, ..}
-    addSourceKind _ r = r
-
--- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
---
--- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
-continueToCompletion :: Resume -> Debugger GHC.ExecResult
-continueToCompletion r = do
-  execr <- resumeExec GHC.RunToCompletion Nothing r
-  case execr of
-    br@GHC.ExecBreak{} -> execBreakResume br >>= continueToCompletion
-    GHC.ExecComplete{} -> return execr
-
--- | @withCurrentBreakEnv m@ executes @m@ with the imports, language, and language
---  extensions of the current breakpoint source module.
---
---  If we are not stopped at a breakpoint @m@ is executed with no change.
-withCurrentBreakEnv :: Debugger a -> Debugger a
-withCurrentBreakEnv m = do
-  mmodl <- getCurrentBreakModule
-  case mmodl of
-    Nothing          -> m
-    Just breakModule -> do
-      ic_dyn_flags <- getInteractiveDebuggerDynFlags
-      break_dyn_flags <- ms_hspp_opts <$> GHC.getModSummary breakModule
-      old_context <- GHC.getContext
-      setInteractiveDebuggerDynFlags $ adjustFlags ic_dyn_flags break_dyn_flags
-      GHC.setContext (IIModule breakModule : old_context)
-      x <- m
-      GHC.setContext old_context
-      setInteractiveDebuggerDynFlags ic_dyn_flags
-      return x
-  where
-    -- Possibly we might want to include more from the module's DynFlags.
-    -- However some are likely to mess with the REPL, e.g. Opt_WarnTypeDefaults,
-    -- Opt_HideAllPackages, Opt_NoIt. See discussion at
-    -- https://github.com/well-typed/haskell-debugger/pull/230#discussion_r2986758826
-    adjustFlags :: DynFlags -> DynFlags -> DynFlags
-    adjustFlags ic modl = ic
-      { extensions = extensions modl
-      , extensionFlags = extensionFlags modl
-      , language = language modl
-      }
