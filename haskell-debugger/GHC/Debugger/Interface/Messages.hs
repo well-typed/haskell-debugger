@@ -275,6 +275,7 @@ data Response
   | GotVariables VariableResult
   | GotExceptionInfo ExceptionInfo
   | Aborted String
+  | NonFatalError String
   | Initialised
 
 data BreakFound

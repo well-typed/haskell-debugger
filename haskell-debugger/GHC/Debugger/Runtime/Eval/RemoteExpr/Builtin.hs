@@ -39,7 +39,7 @@ fst = Remote.raw "Prelude.fst"
 snd :: Remote.RemoteExpr ((a,b) -> b)
 snd = Remote.raw "Prelude.snd"
 
-bcoArgsOffset :: Remote.RemoteExpr (StackSnapshot -> Word -> Maybe Word)
+bcoArgsOffset :: Remote.RemoteExpr (StackSnapshot -> Int -> Maybe Word)
 bcoArgsOffset = Remote.var
   debuggerRuntimeFFIInspectModName
   "bcoArgsOffset" []
@@ -66,7 +66,7 @@ decodeStackWithIpe = Remote.app $ Remote.var (mkModuleName "GHC.Internal.Stack.D
 
 -- | Remote 'GHC.Exts.Heap.getClosureData'
 getClosureData :: RemoteExpr StgStackClosure -> RemoteExpr (IO Closure)
-getClosureData = Remote.app $ Remote.var (mkModuleName "GHC.Exts.Heap") "getClosureData" ["GHC.Exts.LiftedRep", "_"]
+getClosureData = Remote.app $ Remote.var debuggerRuntimeFFIInspectModName "getClosureData" []
 
 -- | Remote 'GHC.Conc.Sync.fromThreadId'
 fromThreadId :: RemoteExpr ThreadId -> RemoteExpr Word64

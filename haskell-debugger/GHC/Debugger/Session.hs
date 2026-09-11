@@ -109,6 +109,7 @@ import qualified GHC.Unit.Home.ModInfo as GHC
 import GHC.Utils.TmpFs
 import Data.Foldable (for_)
 import GHC.Plugins (SourceError, try, RawPkgQual (..), HasCallStack, FastString, mkFastString, lookupUnitId)
+import GHC.Plugins qualified as GHC
 #if MIN_VERSION_ghc(10,1,0)
 import GHC.Types.SourceText (SourceText (..))
 #else

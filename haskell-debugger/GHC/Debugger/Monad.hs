@@ -7,6 +7,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
@@ -439,7 +440,9 @@ loadFFIInspect l buildWays = do
   let ghcLog = liftLogIO l
 
   dflags <- getDynFlags
-  uid <- addInMemoryFFIInspectUnit [baseUnitId dflags] (setDynFlagWays buildWays dflags)
+  us <- hsc_units <$> getSession
+  Just ghc_heapId <- pure $ lookupPackageName us (PackageName "ghc-heap")
+  uid <- addInMemoryFFIInspectUnit [baseUnitId dflags, ghc_heapId] (setDynFlagWays buildWays dflags)
 
   successes <- loadInMemoryModules l uid modsToLoad
   forM_ (zip successes modsToLoad) $ \case
@@ -925,11 +928,17 @@ instance Show UnsupportedHsDbgViewVersion where
     "Cannot use unsupported haskell-debugger-view version found in the transitive closure: " ++ showVersion actual ++
     " (supported: " ++ L.intercalate ", " (map (\(l,h) -> showVersion l ++ " <= && < " ++ showVersion h) supported) ++ ")"
 
+data NonFatalException = NonFatalException { userMessage :: String, debugMessage :: String }
+  deriving Show
+
+instance Exception NonFatalException
+
+
 expectRight :: Exception e => Either e a -> Debugger a
 expectRight s = case s of
   Left e -> do
     logSDoc Logger.Error (text $ displayException e)
-    liftIO $ throwIO e
+    liftIO $ throwIO $ NonFatalException { userMessage = displayException e, debugMessage = displayExceptionWithInfo $ toException e }
   Right a -> do
     pure a
 
