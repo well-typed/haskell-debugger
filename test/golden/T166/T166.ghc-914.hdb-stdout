@@ -4,12 +4,12 @@
 (hdb) Prelude.undefined
 
 HasCallStack backtrace:
-  undefined, called at <interactive>:1:1 in interactive:Ghci4
+  undefined, called at <interactive>:1:1 in interactive:Ghci3
 
 (hdb) Prelude.undefined
 
 HasCallStack backtrace:
-  undefined, called at <interactive>:1:1 in interactive:Ghci4
+  undefined, called at <interactive>:1:1 in interactive:Ghci3
 
 (hdb) _
 (hdb) [...]

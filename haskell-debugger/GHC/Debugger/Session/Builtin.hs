@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- | Built-in units and modules
 module GHC.Debugger.Session.Builtin
@@ -7,17 +8,24 @@ module GHC.Debugger.Session.Builtin
     debuggerViewBuiltinMods
   , debuggerViewInstancesMods
   , debuggerViewClassModName, debuggerViewClassContents
-  , debuggerRuntimeFFIInspectModName, debuggerRuntimeFFIInspectContents
-
     -- * In memory unit
   , hsDebuggerViewInMemoryUnitId
   , addInMemoryHsDebuggerViewUnit
   , makeInMemoryTarget
+  , runInternal
+
+  , debuggerInternalUnitId
+  , addInMemoryDebuggerInternalUnit
+  , debuggerRuntimeInternalContents
+  , debuggerRuntimeInternalModName
+  , debuggerRuntimeInternalUnit
+  , debuggerRuntimeInternalModule
+
 #if !MIN_VERSION_ghc(9,14,2)
   , addInMemoryFFIInspectUnit
   , hsDebuggerFFIInspectUnitId
+  , debuggerRuntimeFFIInspectModName, debuggerRuntimeFFIInspectContents
 #endif
-
   -- Note:
   -- Don't export instances mods individually to make sure we get warnings if
   -- we add new modules but forget to put any part of them there.
@@ -42,9 +50,11 @@ import qualified GHC.Unit.Home.Graph as HUG
 import qualified GHC.Unit.Home.PackageTable as HPT
 import qualified GHC.Unit.State as State
 import GHC.Data.FastString (unpackFS)
-#if !MIN_VERSION_ghc(9,14,2)
 import Data.Coerce
-#endif
+import qualified GHC.Data.EnumSet as EnumSet
+import qualified GHC.LanguageExtensions as LangExt
+import GHC.Runtime.Context (InteractiveContext(..), emptyInteractiveContext)
+import Control.Monad.Catch (finally)
 
 --------------------------------------------------------------------------------
 -- * Built-in Modules
@@ -124,6 +134,69 @@ addInMemoryFFIInspectUnit deps dflags = do
   return hsDebuggerFFIInspectUnitId
 #endif
 
+-- run internal here serves to overwrite certain flags while executing the
+-- internal "evalWrapper" computation which is not relevant to the user.
+runInternal :: GhcMonad m => m a -> m a
+runInternal m = withSavedSession $ do
+  modifySession $
+    -- The new imports are checked against the old ones: GHC attempts to scan
+    -- them for orphan instances, and crashes if those modules are not
+    -- accessible from the new active unit.
+    --
+    -- We empty anything to do with things defined interactively too.
+    emptyIC .
+    hscSetActiveUnitId debuggerInternalUnitId
+  setContext [IIDecl $ GHC.simpleImportDecl $ GHC.mkModuleName "Prelude"]
+  m
+  where
+    withSavedSession act = do
+      s <- getSession
+      act `finally` setSession s
+    emptyIC env = case hsc_IC env of
+      InteractiveContext{..} ->
+        env {hsc_IC = (emptyInteractiveContext ic_dflags)
+              { ic_mod_index = ic_mod_index
+              , ic_int_print = ic_int_print
+              , ic_monad = ic_monad
+              }}
+
+debuggerInternalUnitId :: UnitId
+debuggerInternalUnitId = stringToUnitId "haskell-debugger-internal"
+
+addInMemoryDebuggerInternalUnit :: (MonadFail m, GhcMonad m) => DynFlags -> m ()
+addInMemoryDebuggerInternalUnit dflags = do
+  us <- hsc_units <$> getSession
+  Just deps' <- pure $ mapM (lookupPackageName us . PackageName) ["ghc-heap","ghci"]
+
+  let deps = baseUnitId dflags
+#if !MIN_VERSION_ghc(9,14,2)
+        : hsDebuggerFFIInspectUnitId
+#endif
+        : deps'
+  addInMemoryUnit
+    debuggerInternalUnitId
+    (coerce debuggerInternalUnitId)
+    deps $
+    dflags
+         { -- Running GHCi's internal expression is incompatible with -XSafe.
+            -- We temporarily disable any Safe Haskell settings while running
+            -- GHCi internal expressions. (see #12509)
+          safeHaskell = GHC.Sf_None,
+            -- Disable dumping of any data during evaluation of GHCi's internal
+            -- expressions. (#17500)
+          dumpFlags = EnumSet.empty
+        }
+          -- RebindableSyntax can wreak havoc with GHCi in several ways
+            -- (see #13385 and #14342 for examples), so we temporarily
+            -- disable it too.
+            `xopt_unset` LangExt.RebindableSyntax
+            -- We heavily depend on -fimplicit-import-qualified to compile expr
+            -- with fully qualified names without imports.
+            `gopt_set` Opt_ImplicitImportQualified
+
+
+  return ()
+
 
 addInMemoryUnit :: GhcMonad m
   => UnitId      -- ^ The unit-id for the unit to add
@@ -146,7 +219,8 @@ addInMemoryUnit uid (PackageName pkgName) base_uids initialDynFlags = do
           ]
         , thisPackageName = Just $ unpackFS pkgName
         }
-        & setGeneralFlag' Opt_HideAllPackages
+        & flip gopt_unset Opt_HideAllPackages
+        & flip gopt_unset Opt_InsertBreakpoints
 #if MIN_VERSION_ghc(9,14,2)
         -- In memory modules should not write .hi nor .gbc files.
         & flip gopt_unset Opt_WriteByteCode
@@ -190,6 +264,53 @@ makeInMemoryTarget uid modName sb = do
           }
     return $ mkTarget modName sb
 
+
+{- Note [debuggerInternal unit]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In a few cases we want to compile and run debugger code on the interpreter, e.g.
+
+- define constant for `setInteractivePrintName`
+- format and print messages for logging breakpoints
+- Specialize `evalWrapper` to provided arguments
+
+and more uses if you include .Legacy.
+
+There is however a challenge: the normally active unit is
+`interactiveGhcDebugger`, which depends on the debuggee units, so we can't be
+sure how module names are resolved: if the intended module is shadowed by
+another package you might just get a "Not in scope" error. Extensions like
+`RebindableSyntax` or `Overloaded*` also cause problems, as listed in the
+comments to `runInternal` in ghci's codebase.
+
+As a defensive measure we add an in-memory unit, debuggerInternalUnit, dedicated to
+running "internal" code, which only depends on boot packages we need.
+
+The unit is depended upon by interactiveGhcDebugger, and exposes the module
+`GHC.Debugger.Runtime.Internal` where various aliases or helpers that are needed
+at runtime are defined. The module is also compiled as part of the
+haskell-debugger package, so it can be used from custom commands if needed.
+
+The aliases are helpful when we have to evaluate expressions that mix
+debuggee/user code and internal code, like `logMessageExpression`, because there's
+less of a chance that e.g. `GHC.Debugger.Runtime.Internal.concat` would clash
+compared to `Prelude.concat`, since there are custom preludes out there.
+
+Moreover we define our own version of `runInteral` which temporarily sets
+`debuggerInternalUnit` as the active unit, reducing the possible interactions.
+
+Reccommendations for runtime code:
+  - See if it can be made a custom command first.
+  - Refer only to functions via `GHC.Debugger.Runtime.Internal` not any other modules.
+  - Prefer plain function application rather than syntactic sugar (even list or tuple syntax counts as sugar).
+  - Define an helper in GHC.Debugger.Runtime.Internal rather than evaluate a larger expression.
+  - If compiling exclusively internal code, use `runInternal`.
+
+For .Legacy the reccommendation is relaxed to the use of runInternal, as it
+should be sufficient and avoids polishing a module we want to get rid of.
+-}
+
+
 --------------------------------------------------------------------------------
 -- * In memory module contents
 --------------------------------------------------------------------------------
@@ -210,9 +331,25 @@ debuggerViewTextContents = stringToStringBuffer $(embedStringFile =<< makeRelati
 debuggerViewByteStringContents :: StringBuffer
 debuggerViewByteStringContents = stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger-view/src/GHC/Debugger/View/ByteString.hs")
 
+#if !MIN_VERSION_ghc(9,14,2)
 debuggerRuntimeFFIInspectModName :: ModuleName
 debuggerRuntimeFFIInspectModName = mkModuleName "GHC.Debugger.Runtime.FFIInspect"
 
 -- | The contents of GHC.Debugger.Runtime.FFIInspect in memory
 debuggerRuntimeFFIInspectContents :: StringBuffer
 debuggerRuntimeFFIInspectContents = stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger/GHC/Debugger/Runtime/FFIInspect.hs")
+#endif
+
+debuggerRuntimeInternalModName :: ModuleName
+debuggerRuntimeInternalModName = mkModuleName "GHC.Debugger.Runtime.Internal"
+
+-- | The contents of GHC.Debugger.Runtime.FFIInspect in memory
+debuggerRuntimeInternalContents :: StringBuffer
+debuggerRuntimeInternalContents = stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger/GHC/Debugger/Runtime/Internal.hs")
+
+debuggerRuntimeInternalModule :: Module
+debuggerRuntimeInternalModule = mkModule debuggerRuntimeInternalUnit debuggerRuntimeInternalModName
+
+debuggerRuntimeInternalUnit :: Unit
+debuggerRuntimeInternalUnit = RealUnit (Definite debuggerInternalUnitId)
+

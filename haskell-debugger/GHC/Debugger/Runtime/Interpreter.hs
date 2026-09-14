@@ -42,6 +42,7 @@ module GHC.Debugger.Runtime.Interpreter
   ( listThreads
   , decodeThreadStack
   , collectExceptionInfo
+  , unpackStackFields
 
   -- * Re-exports
   , ThreadInfo(..)
@@ -61,6 +62,7 @@ import Data.Binary
 import GHC.Driver.Env (hscInterp)
 import GHC.Driver.Monad (getSession)
 import GHC.Runtime.Interpreter
+import GHC.Exts.Heap.Closures (StackField)
 import Control.Concurrent
 import Control.Exception
 
@@ -98,6 +100,12 @@ collectExceptionInfo excRef = do
   interp <- hscInterp <$> getSession
   liftIO $ withForeignRef excRef $
     interpDbgCmd interp . CollectExceptionInfo
+
+unpackStackFields :: ForeignRef [StackField] -> Maybe [Int] -> Debugger [ForeignHValue]
+unpackStackFields fldsRef mixs = do
+  interp <- hscInterp <$> getSession
+  liftIO $ withForeignRef fldsRef $ \ flds ->
+    mapM (mkFinalizedHValue interp) =<< interpDbgCmd interp (UnpackStackFields flds mixs)
 
 --------------------------------------------------------------------------------
 -- * IO+interpreter abstraction
