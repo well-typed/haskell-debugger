@@ -9,7 +9,6 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.Bits (xor)
-import Data.List (intercalate)
 import Data.IORef
 import qualified Colog.Core as Logger
 
@@ -33,6 +32,7 @@ import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Breakpoint.Map as BM
 import Data.Function
 import System.Directory (getCurrentDirectory)
+import GHC.Debugger.Session.Builtin (debuggerRuntimeInternalModName)
 
 --------------------------------------------------------------------------------
 -- * Breakpoints
@@ -251,13 +251,15 @@ condBreakEnableStatus hitCount condition = do
 --   Braces are preserved if escaped with a backslash. Some unescaped braces are
 --   fine: opening braces in antiquotations and closing braces outside of them.
 logMessageExpression :: String -> String
-logMessageExpression tmpl = apply "Prelude.putStrLn" $ apply "Prelude.concat" $ parts
+-- TODO: user Internal.
+logMessageExpression tmpl = apply (internal "putStrLn") [ apply (internal "concat") [ parts ]]
   where
-    apply f x = f ++ " ( " ++ x ++ " ) "
-    parts = listOf $ map renderPart (parseQC [] tmpl)
-    listOf xs = intercalate ": " . (++ ["[]"]) $ xs
+    parts = mkList $ map renderPart (parseQC [] tmpl)
     renderPart (Literal s) = show s
-    renderPart (AntiQuote e) = apply "" e
+    renderPart (AntiQuote e) = e
+    mkList ys = foldr (\ x xs -> apply (internal "cons") [x,xs]) (internal "nil") ys
+    internal x = GHC.moduleNameString debuggerRuntimeInternalModName ++ "." ++ x
+    apply f xs = unwords $ f : map (\x -> "(" ++ x ++ ")") xs
 
 -- Taken from interpolatedstring-perl6 package
 data StringPart = Literal String | AntiQuote String deriving Show

@@ -124,7 +124,8 @@ library
                       GHC.Debugger.Session,
                       GHC.Debugger.Session.Builtin,
                       GHC.Debugger.Session.Interactive,
-                      GHC.Debugger.Interface.Messages
+                      GHC.Debugger.Interface.Messages,
+                      GHC.Debugger.Runtime.Internal
 
     if impl(ghc >= 9.14.2)
       exposed-modules:

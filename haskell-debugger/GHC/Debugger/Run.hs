@@ -27,33 +27,26 @@ import GHC (
   GhciLStmt,
   GhcPs,
   InteractiveImport (..),
-  mkHsString,
   ModSummary (..),
   Name,
-  nlHsLit,
-  nlList,
   parseImportDecl,
   SingleStep (..),
   SrcSpan (..),
   StmtLR (..),
   unLoc,
+  mkHsString,
+  nlList,
+  nlHsLit,
   )
 import GHC.Plugins (SourceError)
-#if MIN_VERSION_ghc(10,1,0)
-import GHC.Builtin.Modules (gHC_INTERNAL_GHCI_HELPERS)
-#else
-import GHC.Builtin.Names (gHC_INTERNAL_GHCI_HELPERS)
-#endif
+import qualified GHC.Plugins as GHC
 import GHC.Unit.Types
-import GHC.Data.FastString
 import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Main (hscParseStmtWithLocation)
 import GHC.Driver.Monad as GHC
 import GHC.Driver.Env as GHC
 import qualified GHC.Driver.Config.Parser as GHC
 import GHC.Runtime.Debugger.Breakpoints as GHC
-import GHC.Types.Name.Occurrence (mkVarOccFS)
-import GHC.Types.Name.Reader as RdrName (mkOrig)
 import qualified GHCi.Message as GHCi
 import qualified GHC.Data.Strict as Strict
 
@@ -67,6 +60,8 @@ import GHC.Debugger.Runtime.Thread
 import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
 import Data.List (find)
 import GHC.Unit.Module.Graph as GHC
+import GHC.Debugger.Session.Builtin (runInternal, debuggerRuntimeInternalModName)
+
 
 --------------------------------------------------------------------------------
 -- * Evaluation
@@ -104,7 +99,7 @@ debugExecution entryFile entry args = do
       -- TODO: if "args" is unescaped (e.g. "some", "thing"), then "some" and
       -- "thing" will be interpreted as variables. To pass strings it needs to
       -- be "\"some\"" "\"things\"".
-      return (fn ++ " " ++ unwords args, GHC.execOptions)
+      return (apply fn args, GHC.execOptions)
 
   logSDoc Logger.Debug "Compiled wrapper."
 
@@ -118,7 +113,10 @@ debugExecution entryFile entry args = do
   logSDoc Logger.Debug $ "Computed EvalResult."
   pure res
   where
-    -- It's not ideal to duplicate these two functions from ghci, but its unclear where they would better live. Perhaps next to compileParsedExprRemote? The issue is run
+    apply x xs = unwords $ x : map (\ a -> "(" ++ a ++ ")") xs
+
+    -- mkEvalWrapper is mostly duplicating ghci's implementation, except we
+    -- reference `evalWrapper` from GHC.Debugger.Runtime.Internal (See Note [debuggerInternal unit]).
     mkEvalWrapper :: GhcMonad m => String -> [String] -> m ForeignHValue
     mkEvalWrapper progname' args' =
       runInternal $ GHC.compileParsedExprRemote
@@ -126,23 +124,9 @@ debugExecution entryFile entry args = do
                      `GHC.mkHsApp` nlList (map nlHsString args')
       where
         nlHsString = nlHsLit . mkHsString
+        evalWrapper' :: GHC.LHsExpr GhcPs
         evalWrapper' =
-          GHC.nlHsVar $ RdrName.mkOrig gHC_INTERNAL_GHCI_HELPERS (mkVarOccFS (fsLit "evalWrapper"))
-
-    -- run internal here serves to overwrite certain flags while executing the
-    -- internal "evalWrapper" computation which is not relevant to the user.
-    runInternal :: GhcMonad m => m a -> m a
-    runInternal =
-        withTempSession mkTempSession
-      where
-        mkTempSession = hscUpdateFlags (\dflags -> dflags
-          { -- Disable dumping of any data during evaluation of GHCi's internal expressions. (#17500)
-            dumpFlags = mempty
-          }
-              -- We depend on -fimplicit-import-qualified to compile expr
-              -- with fully qualified names without imports (gHC_INTERNAL_GHCI_HELPERS above).
-              `gopt_set` Opt_ImplicitImportQualified
-          )
+          GHC.nlHsVar $ GHC.mkRdrQual debuggerRuntimeInternalModName (GHC.mkVarOcc "evalWrapper")
 
     findUnitIdOfEntryFile :: GhcMonad m => AbsFilePath -> m GHC.ModuleNodeInfo
     findUnitIdOfEntryFile afp = do

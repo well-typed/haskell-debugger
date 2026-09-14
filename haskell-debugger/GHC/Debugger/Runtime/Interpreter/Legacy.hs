@@ -9,6 +9,7 @@ module GHC.Debugger.Runtime.Interpreter.Legacy
   ( listThreads
   , decodeThreadStack
   , collectExceptionInfo
+  , unpackStackFields
   ) where
 
 import Control.Exception (SomeException)
@@ -42,6 +43,9 @@ import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr.Builtin as Remote
 import qualified GHC.Stack.Types as Stack
 import qualified GHC.Stack.CloneStack as Stack
+import qualified GHC.Exts.Heap.Closures as Stack
+import GHC.Debugger.Session.Builtin (debuggerRuntimeFFIInspectModName, runInternal)
+import GHC.Stack.CloneStack (StackSnapshot)
 
 -- GHC 9.14: use @evalX@ and @TermParser@ to do this all without custom commands
 
@@ -50,7 +54,7 @@ import qualified GHC.Stack.CloneStack as Stack
 --------------------------------------------------------------------------------
 
 listThreads :: Debugger [ThreadInfo ForeignRef]
-listThreads = do
+listThreads = runInternal $ do
   threads_fvs <- expectRight =<< Remote.evalIOList Remote.listThreads
   labels      <- getRemoteThreadsLabels threads_fvs
   forM (zip threads_fvs labels) $ \(castForeignRef -> thread_fv, label) -> do
@@ -116,7 +120,7 @@ blockedReasonParser = do
 --------------------------------------------------------------------------------
 
 decodeThreadStack :: ForeignRef ThreadId -> Debugger [StackFrameInfo ForeignRef]
-decodeThreadStack threadIdRef = do
+decodeThreadStack threadIdRef = runInternal $ do
   l <- Remote.evalIO $ Remote.do
     clonedStack <- Remote.cloneThreadStack (Remote.ref threadIdRef)
     frames      <- Remote.decodeStackWithIpe clonedStack
@@ -194,7 +198,11 @@ retBCOParser stack_fv frame_ix = do
     >>= \case
       Just (Suspension{val, ctype=BCO},Term{val=bcoArgs}) -> do
         {-"the otherwise case: Unknown closure", hence Suspension-}
-        tag_fv <- liftDebuggerOrFail $ Remote.eval (Remote.bcoArgsOffset `Remote.appRef` stack_fv `Remote.app` (Remote.lit frame_ix))
+
+        let bcoArgsOffset :: Remote.RemoteExpr (StackSnapshot -> Int -> Maybe Word)
+            bcoArgsOffset = Remote.var debuggerRuntimeFFIInspectModName "bcoArgsOffset" []
+
+        tag_fv <- liftDebuggerOrFail $ Remote.eval (bcoArgsOffset `Remote.appRef` stack_fv `Remote.app` (Remote.lit frame_ix))
         tag <- liftDebuggerOrFail $ obtainParsedTerm "tag" 3 True anyTy (castForeignRef tag_fv) (maybeParser $ wordParser <|> wordPrimParser)
 
         -- Decode the BCO closure using 'getClosureData' on the foreign heap
@@ -328,6 +336,11 @@ bcoBreakPointInfoParser = do
         liftIO $ fail "Failed to parse BCOClosure's BRK_FUN"
       Right r -> return r
 
+unpackStackFields :: ForeignRef [Stack.StackField] -> Maybe [Int] -> Debugger [ForeignHValue]
+unpackStackFields fldsRef mixs = runInternal $ do
+  (expectRight =<<) $ Remote.evalIOList $
+    Remote.unpackStackFields `Remote.appRef` fldsRef `Remote.app` Remote.raw (show mixs)
+
 --------------------------------------------------------------------------------
 -- * Exception Info
 --------------------------------------------------------------------------------
@@ -335,7 +348,7 @@ bcoBreakPointInfoParser = do
 -- | Evaluate helper code inside the debuggee that turns the exception context
 -- into our 'ExceptionInfo' structure.
 collectExceptionInfo :: ForeignRef SomeException -> Debugger (Maybe ExceptionInfo)
-collectExceptionInfo excRef = do
+collectExceptionInfo excRef = runInternal $ do
   -- 1. Add a "data" declaration for the datatype the expression will return
   _ <- runDecls exceptionInfoData
   -- 2. Gather information about the exception.

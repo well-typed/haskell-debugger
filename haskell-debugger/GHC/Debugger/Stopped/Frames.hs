@@ -27,7 +27,6 @@ import qualified GHC.Plugins as GHC
 import qualified GHC.Tc.Utils.Monad as GHC
 import qualified GHC.IfaceToCore as GHC
 import qualified GHC.Linker.Loader as Loader
-import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import qualified GHC.Exts.Heap.Closures as GHC
 import qualified GHC.Types.Id as Id
 import GHC.Iface.Env (newInteractiveBinder)
@@ -42,6 +41,9 @@ import qualified GHC.Runtime.Heap.Inspect as GHC
 import GHCi.RemoteTypes (ForeignRef)
 #if MIN_VERSION_ghc(9,14,2)
 import GHC.Linker.Types
+import qualified GHC.Debugger.Runtime.Interpreter as Debuggee
+#else
+import qualified GHC.Debugger.Runtime.Interpreter.Legacy as Debuggee
 #endif
 
 -- We need a fresh Unique for each Id we bind, because the linker
@@ -72,12 +74,9 @@ getStackFrameBindings DbgStackFrame{breakId = ibi0, args = Just (DbgStackFrameBC
       bindFrameVarsWithBreakpointInfo ibi bcoArgsRef offset
     _ -> bindFrameVarsWithNoInfo bcoArgsRef
 
-bindFrameVarsWithNoInfo :: ForeignRef a -> Debugger [Id]
+bindFrameVarsWithNoInfo :: ForeignRef [GHC.StackField] -> Debugger [Id]
 bindFrameVarsWithNoInfo bcoArgsRef = do
-    bcoArgs <- (expectRight =<<) $ Remote.evalIOList $
-      Remote.raw "\\ f xs -> Prelude.mapM f xs :: IO [GHCi.RemoteTypes.HValue]"
-      `Remote.app` unpackStackField
-      `Remote.appRef` bcoArgsRef
+    bcoArgs <- Debuggee.unpackStackFields bcoArgsRef Nothing
     hsc_env <- getSession
     let artificial = zipWith fa bcoArgs [0 :: Int ..]
           where
@@ -109,16 +108,11 @@ bindFrameVarsWithBreakpointInfo ibi bcoArgs delta0 = do
     logSDoc Logger.Warning $ text "Variables discarded due to (offset - delta) underflow: delta =" <+> ppr delta <+> text "," <+> ppr discarded
   let varsIxs = Map.fromList [ (pos :: Int,v) | (pos,Just v) <- zip [0..] mbVarsIx]
 
-  let lookupBCOArgs :: Remote.RemoteExpr ([GHC.StackField] -> [Int] -> IO [HValue])
-      lookupBCOArgs = Remote.raw
-        "\\unpack fs (ixs :: [Prelude.Int]) -> Prelude.mapM (\\ i -> unpack (Data.Maybe.fromMaybe (Prelude.error (\"Looking up StackField: \" Prelude.++ Prelude.show i)) (fs Data.List.!? i))) ixs :: IO [GHCi.RemoteTypes.HValue]"
-        `Remote.app` unpackStackField
   let joinOccs m = Map.elems $ Map.intersectionWith (\(x,y) z -> (x,y,z)) m (Map.fromList $ zip [0..] occs)
 
   fhvs <- joinOccs <$> do
-    withMapElems varsIxs $ \ xs -> withListElems xs $ \ ixs -> do
-      res <- Remote.evalIOList $ lookupBCOArgs `Remote.appRef` bcoArgs `Remote.app` (Remote.raw $ show ixs)
-      expectRight res
+    withMapElems varsIxs $ \ xs -> withListElems xs $
+      Debuggee.unpackStackFields bcoArgs . Just . map fromIntegral
 
   liftIO $ bindForeignHValues hsc_env fhvs
     where
@@ -130,12 +124,6 @@ bindFrameVarsWithBreakpointInfo ibi bcoArgs delta0 = do
 
       withMapElems :: (Monad m, Ord a) => Map.Map a b -> ([b] -> m [c]) -> m (Map.Map a c)
       withMapElems m f = Map.fromList <$> withListElems (Map.toList m) f
-
--- Need to be careful not to create extra thunks in the returned `HValue`s, but also avoid forcing the inside of a `Box`.
--- See Note [Forcing debuggee's thunks].
--- TODO: less horrible way to do case expressions in RemoteExpr?
-unpackStackField :: Remote.RemoteExpr (GHC.StackField -> IO HValue)
-unpackStackField = Remote.raw "\\ x -> case x of (GHC.Internal.Heap.Closures.StackBox (GHC.Internal.Heap.Closures.Box a)) -> GHC.Base.returnIO (GHCi.RemoteTypes.HValue a); (GHC.Internal.Heap.Closures.StackWord w) -> GHC.Base.returnIO (GHCi.RemoteTypes.HValue (Unsafe.Coerce.unsafeCoerce w))"
 
 -- | Modeled after bindLocalsAtBreakpoint
 --   Returns new Ids generated from the given ones and OccNames, with refreshed free type variables.

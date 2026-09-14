@@ -28,7 +28,9 @@ import GHC.Debugger.Runtime.Eval.RemoteExpr (RemoteExpr)
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import GHC.Stack.Annotation.Experimental
 import GHC.Types.SrcLoc
-import GHC.Debugger.Session.Builtin (debuggerRuntimeFFIInspectModName)
+import GHC.Debugger.Session.Builtin (debuggerRuntimeInternalModName)
+import qualified GHC.Exts.Heap.Closures as GHC
+import GHCi.RemoteTypes (HValue)
 
 pair :: Remote.RemoteExpr (a -> b -> (a,b))
 pair = Remote.raw "(,)"
@@ -38,11 +40,6 @@ fst = Remote.raw "Prelude.fst"
 
 snd :: Remote.RemoteExpr ((a,b) -> b)
 snd = Remote.raw "Prelude.snd"
-
-bcoArgsOffset :: Remote.RemoteExpr (StackSnapshot -> Int -> Maybe Word)
-bcoArgsOffset = Remote.var
-  debuggerRuntimeFFIInspectModName
-  "bcoArgsOffset" []
 
 -- | Remote 'GHC.Stack.CloneStack.cloneThreadStack'
 cloneThreadStack :: RemoteExpr ThreadId -> RemoteExpr (IO StackSnapshot)
@@ -66,7 +63,7 @@ decodeStackWithIpe = Remote.app $ Remote.var (mkModuleName "GHC.Internal.Stack.D
 
 -- | Remote 'GHC.Exts.Heap.getClosureData'
 getClosureData :: RemoteExpr StgStackClosure -> RemoteExpr (IO Closure)
-getClosureData = Remote.app $ Remote.var (mkModuleName "GHC.Exts.Heap") "getClosureData" ["GHC.Exts.LiftedRep", "_"]
+getClosureData = Remote.app $ Remote.var (mkModuleName "GHC.Exts.Heap") "getClosureData" []
 
 -- | Remote 'GHC.Conc.Sync.fromThreadId'
 fromThreadId :: RemoteExpr ThreadId -> RemoteExpr Word64
@@ -111,3 +108,8 @@ displayStackAnnotationShort = Remote.app $ Remote.var (mkModuleName "GHC.Interna
 
 stackAnnotationSourceLocation :: RemoteExpr SomeStackAnnotation -> RemoteExpr (Maybe SrcLoc)
 stackAnnotationSourceLocation = Remote.app $ Remote.var (mkModuleName "GHC.Internal.Stack.Annotation") "stackAnnotationSourceLocation" ["SGHC.Stack.Annotation.Experimental.omeStackAnnotation"]
+
+unpackStackFields :: Remote.RemoteExpr ([GHC.StackField] -> Maybe [Int] -> IO [HValue])
+unpackStackFields = Remote.var debuggerRuntimeInternalModName "unpackStackFields" []
+
+

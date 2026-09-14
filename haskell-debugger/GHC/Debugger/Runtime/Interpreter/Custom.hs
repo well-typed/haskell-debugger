@@ -17,9 +17,9 @@ import Data.Bits
 import Foreign.C.String
 import GHC.ByteCode.Types
 import GHC.Conc.Sync
-import GHC.Exts.Heap.Closures (StackFrame, GenStackFrame (..), Box (..))
+import GHC.Exts.Heap.Closures (StackFrame, GenStackFrame (..), Box (..), StackField)
 import GHC.InfoProv
-import GHC.Runtime.Interpreter (evalBreakpointToId)
+import GHC.Runtime.Interpreter (evalBreakpointToId, InterpInstance(..), Interp(..), interpCmd)
 import GHC.Stack.Annotation.Experimental
 import GHC.Utils.Encoding.UTF8 (utf8EncodeShortByteString)
 import GHC.Word
@@ -44,6 +44,7 @@ import qualified GHC.Stack.CloneStack as Stack
 import qualified GHC.Stack.Decode.Experimental as Stack
 import qualified GHC.Exception.Backtrace.Experimental as Backtrace
 #endif
+import qualified GHC.Debugger.Runtime.Internal as Internal
 import qualified GHC.Debugger.Runtime.FFIInspect as FFIInspect
 
 --------------------------------------------------------------------------------
@@ -54,6 +55,8 @@ data DbgInterpCmd a where
   ListThreads :: DbgInterpCmd [ThreadInfo RemoteRef]
   DecodeThreadStack :: RemoteRef ThreadId -> DbgInterpCmd [StackFrameInfo RemoteRef]
   CollectExceptionInfo :: RemoteRef SomeException -> DbgInterpCmd ExceptionInfo
+  SetLineBuffering :: DbgInterpCmd ()
+  UnpackStackFields :: RemoteRef [StackField] -> Maybe [Int] -> DbgInterpCmd [RemoteRef HValue]
 
 dbgInterpCmdTag :: Word8
 dbgInterpCmdTag = 0x25
@@ -82,7 +85,11 @@ runDbgInterpCmd = \case
     cwd  <- mkAbsolute <$> getCurrentDirectory
     let info = exceptionInfo cwd exc
     return info
-
+  SetLineBuffering -> do
+    Internal.setLineBuffering
+  UnpackStackFields fldsRef mixs -> do
+    flds <- localRef fldsRef
+    mapM mkRemoteRef =<< Internal.unpackStackFields flds mixs
 
 -- | Run a serialized custom 'DbgInterpCmd'. This is used in conjunction with
 -- 'servWithCustom' to handle custom messages sent to the external interpreter.
@@ -192,6 +199,7 @@ lookupBCOBreakpoint Heap.BCOClosure{..}
     brk_info_ix_lo   = index_at 5#
 lookupBCOBreakpoint _ = pure Nothing
 
+
 exceptionInfo :: AbsFilePath -> SomeException -> ExceptionInfo
 exceptionInfo prefix se'@(SomeException exc) =
     ExceptionInfo
@@ -236,6 +244,40 @@ exceptionInfo prefix se'@(SomeException exc) =
     exceptionContextLocation = Nothing {- btrHasCallstack not available -}
 #endif
 
+-- | Defined here so it can be used in GHC.Debugger.Monad
+setLineBuffering :: Interp -> IO ()
+setLineBuffering interp = do
+  interpDbgCmd interp SetLineBuffering
+
+--------------------------------------------------------------------------------
+-- * IO+interpreter abstraction
+--
+-- | Functions on IO which abstract calling the external interpreter or
+-- internal interpreter using custom commands. Note that 'CustomMessage' is not
+-- available in GHC 9.14 so we don't make these functions available in GHC 9.14
+--------------------------------------------------------------------------------
+
+-- | Run a 'DbgInterpCmd' in the interpreter's context. By default, the command is
+-- serialized and sent to an external iserv process, and the response is
+-- deserialized (hence the @Binary@ constraint). With @--internal-interpreter@
+-- we execute the command directly here.
+--
+-- To run a builtin 'Message' command, use 'interpCmd' instead.
+interpDbgCmd :: Bin.Binary a => Interp -> DbgInterpCmd a -> IO a
+interpDbgCmd interp command = case interpInstance interp of
+  InternalInterp ->
+    -- Run it directly on this process!
+    runDbgInterpCmd command
+  ExternalInterp{}
+    -- Use interpCmd to send the command as a custom message to external process.
+    -- The custom message will be processed according to the custom command
+    -- handlers registered with `iservWithCustom`
+    | let payload = encodePayload (Some @Bin.Binary command) -> do
+      respBytes <- interpCmd interp (CustomMessage dbgInterpCmdTag payload)
+      case decodePayload respBytes of
+        Left err -> fail err
+        Right r  -> pure r
+
 --------------------------------------------------------------------------------
 -- * Binary for custom commands
 --------------------------------------------------------------------------------
@@ -261,6 +303,12 @@ instance Bin.Binary (Some Bin.Binary DbgInterpCmd) where
     CollectExceptionInfo excRef -> do
       Bin.put (2 :: Word8)
       Bin.put excRef
+    SetLineBuffering -> do
+      Bin.put (3 :: Word8)
+    UnpackStackFields ref mixs -> do
+      Bin.put (4 :: Word8)
+      Bin.put ref
+      Bin.put mixs
 
   get = do
     (tag :: Word8) <- Bin.get
@@ -268,6 +316,8 @@ instance Bin.Binary (Some Bin.Binary DbgInterpCmd) where
       0 -> pure (Some ListThreads)
       1 -> Some . DecodeThreadStack <$> Bin.get
       2 -> Some . CollectExceptionInfo <$> Bin.get
+      3 -> pure (Some SetLineBuffering)
+      4 -> Some <$> (UnpackStackFields <$> Bin.get <*> Bin.get)
       _ -> fail ("Unknown debugger thread command tag: " ++ show tag)
 
 instance Bin.Binary (ThreadInfo RemoteRef)
