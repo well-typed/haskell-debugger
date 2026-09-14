@@ -41,6 +41,7 @@ variableTests =
       , testCase "stack_bco_frame_self_test"
           stackBCOFrameSelfTest
       ]
+    , testCase "variables of stack frames work with shadowed module dep (issue #365)" stackFramesShadowingTest
     ]
 
 intsAndStringsTest :: Assertion
@@ -352,8 +353,14 @@ thunkIntMapTest =
       disconnect
 
 stackFramesTest :: Assertion
-stackFramesTest =
-  withTestDAPServer "test/integration/T160" [] $ \test_dir server ->
+stackFramesTest = stackFramesTestGen "test/integration/T160"
+
+stackFramesShadowingTest :: Assertion
+stackFramesShadowingTest = stackFramesTestGen "test/integration/T365"
+
+stackFramesTestGen :: FilePath -> Assertion
+stackFramesTestGen path =
+  withTestDAPServer path [] $ \test_dir server ->
     withTestDAPServerClient server $ do
       let cfg = mkLaunchConfig test_dir "Main.hs"
       hitBreakpointIn cfg "X.hs" 22

@@ -351,6 +351,11 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
 #if !MIN_VERSION_ghc(9,14,2)
       loadFFIInspect l buildWays
 #endif
+
+      -- Loaded later so it can depend on FFIInspect if needed.
+      loadInternal l buildWays
+
+
       -- See Note [Must explicitly expose module graph units]
       exposeModGraphUnitsInInteractiveGhcDebuggerUnit
 
@@ -394,14 +399,9 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
       GHC.setContext imports
 
       -- See Note [External interpreter buffering]
-      setBufferings <- compileExprRemote """
-        do { System.IO.hSetBuffering System.IO.stdout System.IO.LineBuffering
-            ; System.IO.hSetBuffering System.IO.stderr System.IO.LineBuffering }
-        """
-
-      -- FIXME: does this implicitly wait for the interpreter to be ready, or should we do so explicitly?
-      hscInterp <$> GHC.getSession >>= \interp ->
-        liftIO $ evalIO interp setBufferings
+      hscInterp <$> GHC.getSession >>= \interp -> runInternal $ do
+        code <- compileExprRemote $ moduleNameString debuggerRuntimeInternalModName ++ ".setLineBuffering"
+        liftIO $ evalIO interp code
 
       noPrint <- defineNoPrint
       modifySession (\hsc_env -> hsc_env {hsc_IC = GHCi.setInteractivePrintName (hsc_IC hsc_env) noPrint})
@@ -423,6 +423,29 @@ preservingThreadLabel m = do
         x <- m
         liftIO $ C.labelThread thId lbl
         pure x
+
+-- | Throws exception when module fails to load.
+loadInternal
+  :: LogAction IO DebuggerLog
+  -> Ways
+  -> Ghc ()
+loadInternal l buildWays = do
+  let ghcLog = liftLogIO l
+
+  dflags <- getDynFlags
+  addInMemoryDebuggerInternalUnit (setDynFlagWays buildWays dflags)
+  let uid = debuggerInternalUnitId
+  successes <- loadInMemoryModules l uid modsToLoad
+  forM_ (zip successes modsToLoad) $ \case
+    (Failed,(modName,_)) -> do
+      ghcLog <& DebuggerLog Logger.Debug
+        (LogFailedToCompileBuiltinModule modName)
+      liftIO $ fail "Failed to load DebuggerInternal Module"
+    (Succeeded,_) ->
+      return ()
+  where
+    modsToLoad =
+      [(debuggerRuntimeInternalModName,debuggerRuntimeInternalContents)]
 
 #if !MIN_VERSION_ghc(9,14,2)
 data FailedToLoadFFIInspectModule = FailedToLoadFFIInspectModule
@@ -451,7 +474,7 @@ loadFFIInspect l buildWays = do
       return ()
   where
     modsToLoad =
-      [(debuggerViewClassModName,debuggerRuntimeFFIInspectContents)]
+      [(debuggerRuntimeFFIInspectModName,debuggerRuntimeFFIInspectContents)]
 #endif
 
 findOrLoadHaskellDebuggerView :: LogAction IO DebuggerLog

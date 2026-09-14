@@ -5,6 +5,9 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# OPTIONS_GHC -Wno-orphans #-} -- necessary Binary instances
+
+-- | This module implements the custom commands supported by HDB as a GHC interpreter.
+--   Only functions that will execute on the interpreter side should be defined here.
 module GHC.Debugger.Runtime.Interpreter.Custom where
 
 import GHCi.Message
@@ -17,7 +20,7 @@ import Data.Bits
 import Foreign.C.String
 import GHC.ByteCode.Types
 import GHC.Conc.Sync
-import GHC.Exts.Heap.Closures (StackFrame, GenStackFrame (..), Box (..))
+import GHC.Exts.Heap.Closures (StackFrame, GenStackFrame (..), Box (..), StackField)
 import GHC.InfoProv
 import GHC.Runtime.Interpreter (evalBreakpointToId)
 import GHC.Stack.Annotation.Experimental
@@ -44,6 +47,7 @@ import qualified GHC.Stack.CloneStack as Stack
 import qualified GHC.Stack.Decode.Experimental as Stack
 import qualified GHC.Exception.Backtrace.Experimental as Backtrace
 #endif
+import qualified GHC.Debugger.Runtime.Internal as Internal
 import qualified GHC.Debugger.Runtime.FFIInspect as FFIInspect
 
 --------------------------------------------------------------------------------
@@ -54,6 +58,7 @@ data DbgInterpCmd a where
   ListThreads :: DbgInterpCmd [ThreadInfo RemoteRef]
   DecodeThreadStack :: RemoteRef ThreadId -> DbgInterpCmd [StackFrameInfo RemoteRef]
   CollectExceptionInfo :: RemoteRef SomeException -> DbgInterpCmd ExceptionInfo
+  UnpackStackFields :: RemoteRef [StackField] -> Maybe [Int] -> DbgInterpCmd [RemoteRef HValue]
 
 dbgInterpCmdTag :: Word8
 dbgInterpCmdTag = 0x25
@@ -82,6 +87,9 @@ runDbgInterpCmd = \case
     cwd  <- mkAbsolute <$> getCurrentDirectory
     let info = exceptionInfo cwd exc
     return info
+  UnpackStackFields fldsRef mixs -> do
+    flds <- localRef fldsRef
+    mapM mkRemoteRef =<< Internal.unpackStackFields flds mixs
 
 
 -- | Run a serialized custom 'DbgInterpCmd'. This is used in conjunction with
@@ -261,6 +269,10 @@ instance Bin.Binary (Some Bin.Binary DbgInterpCmd) where
     CollectExceptionInfo excRef -> do
       Bin.put (2 :: Word8)
       Bin.put excRef
+    UnpackStackFields ref mixs -> do
+      Bin.put (3 :: Word8)
+      Bin.put ref
+      Bin.put mixs
 
   get = do
     (tag :: Word8) <- Bin.get
@@ -268,6 +280,7 @@ instance Bin.Binary (Some Bin.Binary DbgInterpCmd) where
       0 -> pure (Some ListThreads)
       1 -> Some . DecodeThreadStack <$> Bin.get
       2 -> Some . CollectExceptionInfo <$> Bin.get
+      3 -> Some <$> (UnpackStackFields <$> Bin.get <*> Bin.get)
       _ -> fail ("Unknown debugger thread command tag: " ++ show tag)
 
 instance Bin.Binary (ThreadInfo RemoteRef)
