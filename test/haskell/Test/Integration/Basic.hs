@@ -109,7 +109,7 @@ multiModuleStandaloneBreakpoints =
       _ <- sync $ setLineBreakpoints test_dir "Helper.hs" [5]
       _ <- sync configurationDone
       assertStoppedLocation DAP.StoppedEventReasonBreakpoint 7
-      continueThread 0
+      continueThread =<< getCurrentActiveThread
       assertStoppedLocation DAP.StoppedEventReasonBreakpoint 5
       disconnect
 
@@ -125,6 +125,6 @@ multiModuleStandaloneBreakpoints2 =
       _ <- sync $ setLineBreakpoints test_dir "Main.hs"   [7]
       _ <- sync configurationDone
       assertStoppedLocation DAP.StoppedEventReasonBreakpoint 7
-      continueThread 0
+      continueThread =<< getCurrentActiveThread
       assertStoppedLocation DAP.StoppedEventReasonBreakpoint 5
       disconnect

@@ -40,23 +40,23 @@ withCommon entry line flags act =
 
 simpleStepOutCase :: Assertion
 simpleStepOutCase = withCommon "MainC.hs" 9 [] $ do
-  stepOut 0
+  stepOut =<< getCurrentActiveThread
   assertStoppedLocation StoppedEventReasonStep 5
   disconnect
 
 withoutTailCalls :: Assertion
 withoutTailCalls = withCommon "MainA.hs" 10 optFlags $ do
   -- foo to bar
-  stepOut 0
+  stepOut =<< getCurrentActiveThread
   assertStoppedLocation StoppedEventReasonStep 20
-  stepOut 0
+  stepOut =<< getCurrentActiveThread
   -- bar back to foo
   assertStoppedLocation StoppedEventReasonStep 14
-  stepOut 0
+  stepOut =<< getCurrentActiveThread
   -- back to main
   assertStoppedLocation StoppedEventReasonStep 5
   -- exit
-  stepOut 0
+  stepOut =<< getCurrentActiveThread
   disconnect
 
 -- Mimics GHC's T26042c
@@ -65,8 +65,8 @@ withTailCalls = withCommon "MainB.hs" 10 optFlags $ do
   -- step out of foo True and observe that we have skipped its call in bar,
   -- and the call of bar in foo False.
   -- we go straight to `main`.
-  stepOut 0
+  stepOut =<< getCurrentActiveThread
   assertStoppedLocation StoppedEventReasonStep 5
   -- stepping out again exits
-  stepOut 0
+  stepOut =<< getCurrentActiveThread
   disconnect

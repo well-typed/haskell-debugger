@@ -34,7 +34,7 @@ evaluateStructured =
       let cfg = mkLaunchConfig test_dir "T116.hs"
       hitBreakpointWith cfg 13
 
-      resp <- evaluate "IM.delete 0 (IM.insert 0 'a' (IM.insert 1 'b' IM.empty))"
+      resp <- evaluateAtBreak "IM.delete 0 (IM.insert 0 'a' (IM.insert 1 'b' IM.empty))"
       liftIO $ assertEqual "result is IntMap" "IntMap" (DAP.evaluateResponseResult resp)
       respChildren <- fetchChildren (DAP.evaluateResponseVariablesReference resp)
       -- fixme: it'd be good to re-use the VarViews structure here, but that's specialized to Variables for now
@@ -54,11 +54,11 @@ evaluateImportedBindings =
       hitBreakpointWith cfg 15
 
       -- sort is imported from Data.List
-      sortResp <- evaluate "show (sort xs)"
+      sortResp <- evaluateAtBreak "show (sort xs)"
       liftIO $ assertEqual "sort xs result" "\"[1,1,2,3,4,5,6,9]\"" (DAP.evaluateResponseResult sortResp)
 
       -- Map is a qualified import
-      mapResp <- evaluate "show (Map.lookup \"a\" m)"
+      mapResp <- evaluateAtBreak "show (Map.lookup \"a\" m)"
       liftIO $ assertEqual "Map.lookup result" "\"Just 1\"" (DAP.evaluateResponseResult mapResp)
 
       disconnect
@@ -80,15 +80,15 @@ evaluateImportedBindingsNotInOtherModule =
       _ <- assertStoppedLocation DAP.StoppedEventReasonBreakpoint 15
 
       -- Stopped in T233.hs which imports Data.List and Data.Map.Strict as Map
-      sortResp <- evaluate "show (sort xs)"
+      sortResp <- evaluateAtBreak "show (sort xs)"
       liftIO $ assertEqual "sort xs result" "\"[1,1,2,3,4,5,6,9]\"" (DAP.evaluateResponseResult sortResp)
 
       -- Resume and stop at breakpoint in Other.hs, which does not import Map
-      continueThread 0
+      continueThread =<< getCurrentActiveThread
       _ <- assertStoppedLocation DAP.StoppedEventReasonBreakpoint 4
 
       -- Map is not imported in Other.hs; evaluating Map.fromList should fail
-      mapFailResp <- evaluate "Map.fromList [(1,'a')]"
+      mapFailResp <- evaluateAtBreak "Map.fromList [(1,'a')]"
       let result = DAP.evaluateResponseResult mapFailResp
       liftIO $ assertBool
         ("expected 'not in scope' error for Map.fromList, got: " ++ show result)

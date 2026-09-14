@@ -29,7 +29,7 @@ conditionalExpr =
       { sourceBreakpointLine = 13
       , sourceBreakpointCondition = Just "im IM.! 0 == 2" }
     -- Continuing just once is sufficient for it to exit now
-    (continueThread 0)
+    (continueThread =<< getCurrentActiveThread)
 
 hitCount :: Assertion
 hitCount =
@@ -41,7 +41,7 @@ hitCount =
       }
     -- Unlike conditional expression, we hit the breakpoint every time
     -- after the ignore count, so run this twice
-    (continueThread 0 >> continueThread 0)
+    ((continueThread =<< getCurrentActiveThread) >> (continueThread =<< getCurrentActiveThread))
 
 testWith :: Bool -> SourceBreakpoint -> TestDAP () -> Assertion
 testWith needsForcing bp afterCheck =

@@ -182,6 +182,9 @@ instance ToJSON SteppingGranularity where
 instance ToJSON NextArguments where
   toJSON = genericToJSONWithModifier
 
+instance ToJSON StepInArguments where
+  toJSON = genericToJSONWithModifier
+
 instance ToJSON StackFrameFormat where
   toJSON = genericToJSONWithModifier
 
