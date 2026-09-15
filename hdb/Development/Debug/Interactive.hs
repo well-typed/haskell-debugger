@@ -158,11 +158,14 @@ printResponse = \case
   where
     outputEvalResult er = do
       case er of
-        EvalStopped{} -> do
-          -- Print the stopped scope if stopped?
-          -- FIXME: Figure out the CLI interface.
-          -- out <- lift . lift $ execute (GetScopes breakThread 0)
-          -- printResponse out
+        EvalStopped{breakThread} -> do
+          cmd <- lift $ gets runLastCommand
+          if isStepCmd cmd then do
+             -- Always print the stopped scope if stopped?
+             -- FIXME: Figure out the CLI interface.
+             out <- lift . lift $ execute (GetScopes breakThread 0)
+             printResponse out
+          else do
              outputStrLn (showEvalResult er)
         _ -> outputStrLn (showEvalResult er)
       maybeShowException er
@@ -200,6 +203,11 @@ printResponse = \case
         Aborted err -> outputStrLn ("Failed to fetch fields for " ++ varName ++ ": " ++ err) >> pure []
         _ -> outputStrLn ("Unexpected response when fetching fields for " ++ varName) >> pure []
     fetchFields _ _ _ = pure []
+
+    isStepCmd (Just (DoResume _ s _))
+      | ResumeNoStep <- s = False
+      | otherwise         = True
+    isStepCmd _           = False
 
 showEvalResult :: EvalResult -> String
 showEvalResult (EvalCompleted{..}) = resultVal
