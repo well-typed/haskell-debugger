@@ -42,6 +42,7 @@ module GHC.Debugger.Runtime.Interpreter
   ( listThreads
   , decodeThreadStack
   , collectExceptionInfo
+  , unpackStackFields
 
   -- * Re-exports
   , ThreadInfo(..)
@@ -57,10 +58,10 @@ import GHC.Debugger.Interface.Messages (ExceptionInfo,NoShow(..),DbgStackFrameBC
 import GHC.Debugger.Runtime.Interpreter.Custom
 import GHC.Debugger.Runtime.Interpreter.Types
 
-import Data.Binary
 import GHC.Driver.Env (hscInterp)
 import GHC.Driver.Monad (getSession)
 import GHC.Runtime.Interpreter
+import GHC.Exts.Heap.Closures (StackField)
 import Control.Concurrent
 import Control.Exception
 
@@ -99,31 +100,8 @@ collectExceptionInfo excRef = do
   liftIO $ withForeignRef excRef $
     interpDbgCmd interp . CollectExceptionInfo
 
---------------------------------------------------------------------------------
--- * IO+interpreter abstraction
---
--- | Functions on IO which abstract calling the external interpreter or
--- internal interpreter using custom commands. Note that 'CustomMessage' is not
--- available in GHC 9.14 so we don't make these functions available in GHC 9.14
---------------------------------------------------------------------------------
-
--- | Run a 'DbgInterpCmd' in the interpreter's context. By default, the command is
--- serialized and sent to an external iserv process, and the response is
--- deserialized (hence the @Binary@ constraint). With @--internal-interpreter@
--- we execute the command directly here.
---
--- To run a builtin 'Message' command, use 'interpCmd' instead.
-interpDbgCmd :: Binary a => Interp -> DbgInterpCmd a -> IO a
-interpDbgCmd interp command = case interpInstance interp of
-  InternalInterp ->
-    -- Run it directly on this process!
-    runDbgInterpCmd command
-  ExternalInterp{}
-    -- Use interpCmd to send the command as a custom message to external process.
-    -- The custom message will be processed according to the custom command
-    -- handlers registered with `iservWithCustom`
-    | let payload = encodePayload (Some @Binary command) -> do
-      respBytes <- interpCmd interp (CustomMessage dbgInterpCmdTag payload)
-      case decodePayload respBytes of
-        Left err -> fail err
-        Right r  -> pure r
+unpackStackFields :: ForeignRef [StackField] -> Maybe [Int] -> Debugger [ForeignHValue]
+unpackStackFields fldsRef mixs = do
+  interp <- hscInterp <$> getSession
+  liftIO $ withForeignRef fldsRef $ \ flds ->
+    mapM (mkFinalizedHValue interp) =<< interpDbgCmd interp (UnpackStackFields flds mixs)

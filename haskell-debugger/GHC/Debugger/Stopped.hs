@@ -37,9 +37,6 @@ import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame
 import GHC.Debugger.Utils
 import qualified Colog.Core as Logger
 import System.Directory (getCurrentDirectory)
-#if MIN_VERSION_ghc(9,14,2)
-import GHC.Linker.Types
-#endif
 
 {-
 Note [Don't crash if not stopped]
