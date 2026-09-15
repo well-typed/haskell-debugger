@@ -9,7 +9,7 @@ import Test.Tasty.HUnit
 #ifdef mingw32_HOST_OS
 import Test.Tasty.ExpectedFailure
 #endif
-import DAP (threadId, stackFrameId, scopeName, scopeExpensive)
+import DAP (stackFrameId, scopeName, scopeExpensive)
 import Data.List (find)
 import qualified Data.Text as T
 
@@ -30,8 +30,7 @@ scopesExpensiveTest = withTestDAPServer "test/integration/T44" [] $ \ test_dir s
 
       _ <- hitBreakpointWith (mkLaunchConfig test_dir "Main.hs") 6
 
-      thread:_ <- threads
-      frame:_  <- stackTrace (threadId thread)
+      frame:_  <- stackTrace =<< getCurrentActiveThread
       scps     <- scopes (stackFrameId frame)
 
       let lookupExpensive n = scopeExpensive <$> find ((== T.pack n) . scopeName) scps

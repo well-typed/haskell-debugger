@@ -21,6 +21,7 @@ import GHC.Debugger.Monad
 import GHC.Debugger
 import Control.Monad
 import Data.List (intercalate)
+import Data.Maybe (fromJust)
 import qualified Data.Maybe as Maybe
 import GHC.Debugger.Debuggee (DebuggerLog)
 
@@ -134,13 +135,17 @@ showExceptionDetails tid = do
 
 printResponse :: Response -> InteractiveDM ()
 printResponse = \case
-  DidEval er -> outputEvalResult er
+  DidEval er -> outputStrLn (showEvalResult er)
+      -- don't remember thread context for eval requests
+      --
+      -- FIXME: we should track which threads we've started and which have been
+      -- stopped per-thread rather than with a global one, then we could do
+      -- this more uniformly.
   DidSetBreakpoint bf       -> outputStrLn $ show bf
   DidRemoveBreakpoint bf    -> outputStrLn $ show bf
   DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
   DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
-  DidContinue er -> outputEvalResult er
-  DidStep er -> printEvalResult er
+  DidResume er -> outputEvalResult er
   DidExec er -> outputEvalResult er
   GotThreads threads -> outputStrLn $ show threads
   GotStacktrace stackframes -> outputStrLn $ show stackframes
@@ -151,7 +156,17 @@ printResponse = \case
   Initialised -> pure ()
   where
     outputEvalResult er = do
-      outputStrLn (showEvalResult er)
+      case er of
+        EvalStopped{breakThread} -> do
+          cmd <- lift $ gets runLastCommand
+          if isStepCmd cmd then do
+             -- Always print the stopped scope if stopped?
+             -- FIXME: Figure out the CLI interface.
+             out <- lift . lift $ execute (GetScopes breakThread 0)
+             printResponse out
+          else do
+             outputStrLn (showEvalResult er)
+        _ -> outputStrLn (showEvalResult er)
       maybeShowException er
       rememberThreadContext er
 
@@ -162,7 +177,7 @@ printResponse = \case
     rememberThreadContext er =
       case er of
         EvalCompleted{} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Nothing } )
-        EvalException{} -> pure () -- TODO: why does this not have a thread associated?
+        EvalException{} -> pure () -- TODO: exceptions are still not signaling per-thread
         EvalStopped{breakThread} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Just breakThread } )
         EvalAbortedWith{} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Nothing } )
 
@@ -188,13 +203,10 @@ printResponse = \case
         _ -> outputStrLn ("Unexpected response when fetching fields for " ++ varName) >> pure []
     fetchFields _ _ _ = pure []
 
-printEvalResult :: EvalResult -> InteractiveDM ()
-printEvalResult EvalStopped{..} = do
-  out <- lift . lift $ execute (GetScopes breakThread 0)
-  printResponse out
-  when (breakId == Nothing) $
-    showExceptionDetails breakThread
-printEvalResult er = outputStrLn $ showEvalResult er
+    isStepCmd (Just (DoResume _ s _))
+      | ResumeNoStep <- s = False
+      | otherwise         = True
+    isStepCmd _           = False
 
 showEvalResult :: EvalResult -> String
 showEvalResult (EvalCompleted{..}) = resultVal
@@ -317,23 +329,23 @@ cmdParser opts ctx = hsubparser
       ( progDesc "Run the debuggee" ) )
   <>
     Options.Applicative.command "next"
-    ( info (pure $ Do DoStepLocal)
+    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeStepLocal ResumeTheWorld)
       ( progDesc "Step over to the next line" ) )
   <>
     Options.Applicative.command "step"
-    ( info (pure $ Do DoSingleStep)
+    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeSingleStep ResumeTheWorld)
       ( progDesc "Step-in to the next immediate location" ) )
   <>
     Options.Applicative.command "finish"
-    ( info (pure $ Do DoStepOut)
+    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeStepOut ResumeTheWorld)
       ( progDesc "Step-out of the current function into the caller/its continuation" ) )
   <>
     Options.Applicative.command "continue"
-    ( info (pure $ Do DoContinue)
+    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeNoStep ResumeTheWorld)
       ( progDesc "Continue executing from the current breakpoint" ) )
   <>
     Options.Applicative.command "print"
-    ( info (Do . DoEval . unwords <$> many (argument str ( metavar "EXPRESSION"
+    ( info (Do . DoEval ((,0) <$> ctx.runCurrentThread) . unwords <$> many (argument str ( metavar "EXPRESSION"
      <> help "Expression to evaluate in the current context" )))
       ( progDesc "Evaluate an expression in the current context" ) )
   <>

@@ -67,8 +67,8 @@ import GHC.Debugger.Session
 import GHC.Debugger.Session.Builtin
 import GHC.Debugger.Session.Interactive
 import GHC.Debugger.Runtime.Compile.Cache
-import qualified GHC.Debugger.Breakpoint.Map as BM
-import qualified GHC.Debugger.Runtime.Thread.Map as TM
+import qualified GHC.Debugger.Data.BreakpointMap as BM
+import qualified GHC.Debugger.Data.ThreadMap     as TM
 
 import Colog.Core as Logger
 
@@ -82,6 +82,7 @@ import GHC.Debugger.Debuggee
 import GHC.Plugins (HasCallStack)
 import Data.Bifunctor
 import qualified GHC.Unit.Module.Graph as GHC
+import GHCi.RemoteTypes
 
 -- | A debugger action.
 newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
@@ -107,8 +108,11 @@ data DebuggerState = DebuggerState
       , rtinstancesCache  :: IORef RuntimeInstancesCache
       -- ^ RuntimeInstancesCache
 
-      , threadMap         :: IORef TM.ThreadMap
+      , threadMap         :: IORef (TM.ThreadMap (ForeignRef ThreadId))
       -- ^ 'ThreadMap' for threads spawned by the debuggee
+
+      , threadResumeMap   :: IORef (TM.ThreadMap Resume)
+      -- ^ If a thread is currently stopped on a breakpoint, this map will contain
 
       , compCache         :: IORef CompCache
       -- ^ Cache loaded and compiled expressions.
@@ -901,6 +905,7 @@ initialDebuggerState :: LogAction Debugger DebuggerLog -> Maybe UnitId -> GHC.Gh
 initialDebuggerState l hsDbgViewUid =
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
+                <*> liftIO (newIORef TM.emptyThreadMap)
                 <*> liftIO (newIORef TM.emptyThreadMap)
                 <*> liftIO (newIORef emptyCompCache)
                 <*> pure hsDbgViewUid

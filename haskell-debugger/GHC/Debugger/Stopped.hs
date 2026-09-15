@@ -1,8 +1,19 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns, MultiWayIf, OverloadedRecordDot #-}
-module GHC.Debugger.Stopped where
 
+-- | Query information about the debuggee when a thread is stopped
+module GHC.Debugger.Stopped
+  (
+    -- * Query information about the stopped debuggee threads
+    getThreads
+  , getStacktrace
+  , getScopes
+  , getVariables
+  , getExceptionInfo
+  ) where
+
+import Data.Function
 import Control.Monad
 import Control.Monad.Reader
 import Data.IORef
@@ -24,13 +35,14 @@ import GHC.InfoProv
 import GHC.Utils.Outputable as Ppr
 import qualified GHC.Unit.Home.Graph as HUG
 
+import GHC.Debugger.Data.ThreadMap
+
 import GHC.Debugger.Stopped.Exception
 import GHC.Debugger.Stopped.Frames
 import GHC.Debugger.Stopped.Variables
-import GHC.Debugger.Runtime
+import GHC.Debugger.Runtime.Term
 import GHC.Debugger.Runtime.Thread
 import GHC.Debugger.Runtime.Thread.Stack
-import GHC.Debugger.Runtime.Thread.Map
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
 import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame(..))
@@ -39,6 +51,10 @@ import qualified Colog.Core as Logger
 import System.Directory (getCurrentDirectory)
 #if MIN_VERSION_ghc(9,14,2)
 import GHC.Linker.Types
+#endif
+
+#if MIN_VERSION_ghc(10,1,0)
+import GHC.Debugger.Runtime.Thread.Resume
 #endif
 
 {-
@@ -67,45 +83,17 @@ because of the termination event we sent.
 
 getThreads :: Debugger [DebuggeeThread]
 getThreads = do
-  -- TODO: we want something more like 'listThreads', but ensure that we only
-  -- report the threads of the debuggee (and not the debugger, if they
-  -- are the same process). Perhaps the solution is to not allow them to be in
-  -- the same process, in which case 'listThreads' would be correct as is by
-  -- construction.
-  --
-  -- For now, we approximate by just listing out the ThreadsMap, under the
-  -- assumption the debugger client will only care about threads we've already
-  -- stopped at (which are the only ones we've inserted in the threads map),
-  -- but for full multi threaded debugging we need the listThreads.
-  --
-  -- tmap <- liftIO . readIORef =<< asks threadMap
-  -- let (t_ids, remote_refs) = unzip (threadMapToList tmap)
-  --
-  -- Oh, try the listThreads just for fun.
   (t_ids, t_infos) <- unzip <$> listAllLiveRemoteThreads
   let
-    _mkDebuggeeThread tid tinfo
+    mkDebuggeeThread tid tinfo
       = DebuggeeThread
         { tId = tid
         , tName = tinfo.threadInfoLabel
         }
-    _all_threads
-      = zipWith _mkDebuggeeThread t_ids t_infos
+    all_threads
+      = zipWith mkDebuggeeThread t_ids t_infos
 
-  -- TODO: We ignore _all_threads and report only the main execution thread for now.
-  -- See #138 for progress on Multi-threaded debugging.
-  GHC.getResumeContext >>= \case
-    [] ->
-      -- See Note [Don't crash if not stopped]
-      return []
-    r:_ -> do
-      r_tid <- getRemoteThreadIdFromRemoteContext (GHC.resumeContext r)
-      return
-        [ DebuggeeThread
-          { tId = r_tid
-          , tName = Just "Main Thread"
-          }
-        ]
+  return all_threads
 
 --------------------------------------------------------------------------------
 -- * Stack trace
@@ -165,11 +153,21 @@ getStacktrace req_tid = do
               }
 
   -- Add the latest resume context at the head.
-  head_frame <- GHC.getResumeContext >>= \case
+  head_frame <-
+#if MIN_VERSION_ghc(10,1,0)
+                readResume req_tid >>= \case
+    Nothing ->
+#else
+                GHC.getResumeContext >>= \case
     [] ->
+#endif
       -- See Note [Don't crash if not stopped]
       return Nothing
+#if MIN_VERSION_ghc(10,1,0)
+    Just r -> do
+#else
     r:_ -> do
+#endif
       let resumeSpanR = GHC.resumeSpan r
           mRealSpan   = realSrcSpanToSourceSpan cwd <$> srcSpanToRealSrcSpan resumeSpanR
           firstSpan   = DbgStackFrame.sourceSpan <$> listToMaybe decoded_frames
@@ -293,7 +291,7 @@ getVariables threadId frameIx vk = do
           -- It is a "lazy" DAP variable: our reply can ONLY include
           -- this single variable.
 
-          term' <- forceTerm term
+          term' <- seqTerm hsc_env term & liftIO
 
           vi <- termToVarInfo fam_envs key term'
 

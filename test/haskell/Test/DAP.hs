@@ -42,8 +42,23 @@ import qualified Data.List as List
 -- fill as needed; some parts of the highest level DSL will prefer NOT to be sync.
 
 next, stepIn :: TestDAP ()
-next   = void . sync $ nextRequest @Value @Value Null
-stepIn = void . sync $ stepInRequest @Value @Value Null
+next   = nextThread   =<< getCurrentActiveThread
+stepIn = stepInThread =<< getCurrentActiveThread
+
+nextThread, stepInThread :: Int -> TestDAP ()
+nextThread tid = void . sync $ nextRequest @NextArguments @Value $
+  NextArguments
+    { DAP.nextArgumentsThreadId = tid
+    , DAP.nextArgumentsSingleThread = Nothing
+    , DAP.nextArgumentsGranularity = Nothing
+    }
+stepInThread tid = void . sync $ stepInRequest @StepInArguments @Value $
+  StepInArguments
+    { stepInArgumentsThreadId = tid
+    , stepInArgumentsSingleThread = Nothing
+    , stepInArgumentsTargetId = Nothing
+    , stepInArgumentsGranularity = Nothing
+    }
 
 threads :: TestDAP [Thread]
 threads = do
@@ -232,17 +247,17 @@ fetchScopeVars = fetchScopeVarsOfFrame 0
 
 fetchScopeVarsOfFrame :: Int -> T.Text -> TestDAP VarsView
 fetchScopeVarsOfFrame frameIx scopeName_ = do
-  Response{responseBody=Just ThreadsResponse{threads=t:_}} <- sync threadsRequest
-  Response{responseBody=Just StackTraceResponse{stackFrames=frames}} <- sync $ stackTraceRequest $
-    StackTraceArguments
-      { DAP.stackTraceArgumentsThreadId = threadId t
-      , DAP.stackTraceArgumentsStartFrame = Nothing
-      , DAP.stackTraceArgumentsLevels = Nothing
-      , DAP.stackTraceArgumentsFormat = Nothing
-      }
+  tid <- getCurrentActiveThread
+
+  ts <- Test.DAP.threads
+  unless (tid `elem` map threadId ts) $
+    liftIO $ assertFailure $
+      "current active thread (" ++ show tid ++
+      ")is no longer in the listed threads: " ++ show ts
+
+  frames  <- Test.DAP.stackTrace tid
   Just fr <- pure $ frames List.!? frameIx
-  Response{responseBody=Just ScopesResponse{scopes=scs}} <- sync $ scopesRequest $
-    ScopesArguments { DAP.scopesArgumentsFrameId = stackFrameId fr }
+  scs  <- Test.DAP.scopes (stackFrameId fr)
   case List.find ((== scopeName_) . scopeName) scs of
     Nothing -> liftIO $ assertFailure $
       "fetchScopeVars: scope " ++ show scopeName_
@@ -336,16 +351,28 @@ continueThread tid = do
   _ <- sync $ continueRequest @_ @Value
     ContinueArguments
       { DAP.continueArgumentsThreadId = tid
-      , DAP.continueArgumentsSingleThread = False
+      , DAP.continueArgumentsSingleThread = Just False
       }
   pure ()
 
-evaluate :: T.Text -> TestDAP EvaluateResponse
-evaluate expr = do
+-- | Evaluate the expression at the currently stopped breakpoint.
+-- Will yield wrong results if used when not stopped
+evaluateAtBreak :: T.Text -> TestDAP EvaluateResponse
+evaluateAtBreak expr = do
+  fr:_ <- stackTrace =<< getCurrentActiveThread
+  evaluateAt expr (Just (stackFrameId fr))
+
+evaluateAt :: T.Text -> Maybe Int -> TestDAP EvaluateResponse
+evaluateAt expr fid = do
   Response{responseBody=Just r} <- sync $ evaluateRequest $
     EvaluateArguments
       { DAP.evaluateArgumentsExpression = expr
-      , DAP.evaluateArgumentsFrameId = Nothing
+      , DAP.evaluateArgumentsFrameId = fid
+        -- VSCode and Vim always set the frame id when there's a breakpoint at
+        -- which we're evaluating the expression.
+        -- If a DAP client doesn't specify the frame, the current breakpoint
+        -- variables and imports at that module are not available.
+        -- The testsuite driver here works similarly
       , DAP.evaluateArgumentsContext = Nothing
       , DAP.evaluateArgumentsFormat = Nothing
       }
@@ -356,7 +383,7 @@ stepOut tid = do
   _ <- sync $ stepOutRequest @_ @Value
     StepOutArguments
       { DAP.stepOutArgumentsThreadId = tid
-      , DAP.stepOutArgumentsSingleThread = False
+      , DAP.stepOutArgumentsSingleThread = Just False
       , DAP.stepOutArgumentsGranularity = Nothing
       }
   pure ()
