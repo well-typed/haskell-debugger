@@ -1,0 +1,21 @@
+name: action-fedora40
+description: Container for fedora40
+inputs:
+  stage:
+    description: which stage to build
+    required: true
+  version:
+    description: which GHC version to build
+    required: false
+runs:
+  using: docker
+  image: fedora:40
+  entrypoint: .github/scripts/entrypoint.sh
+  env:
+    STAGE: ${{ inputs.stage }}
+    GHC_VERSION: ${{ inputs.version }}
+    PKG_INSTALL_CMD: dnf install -y
+    PKG_TOOLS: autoconf automake binutils bzip2 coreutils curl elfutils-devel elfutils-libs
+      findutils gcc gcc-c++ git gmp gmp-devel jq lbzip2 make ncurses ncurses-compat-libs
+      ncurses-devel openssh-clients patch perl pxz python3 sqlite sudo wget which
+      xz zlib-devel patchelf
