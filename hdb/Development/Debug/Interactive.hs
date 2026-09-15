@@ -135,7 +135,12 @@ showExceptionDetails tid = do
 
 printResponse :: Response -> InteractiveDM ()
 printResponse = \case
-  DidEval er -> outputEvalResult er
+  DidEval er -> outputStrLn (showEvalResult er)
+      -- don't remember thread context for eval requests
+      --
+      -- FIXME: we should track which threads we've started and which have been
+      -- stopped per-thread rather than with a global one, then we could do
+      -- this more uniformly.
   DidSetBreakpoint bf       -> outputStrLn $ show bf
   DidRemoveBreakpoint bf    -> outputStrLn $ show bf
   DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
@@ -152,7 +157,14 @@ printResponse = \case
   Initialised -> pure ()
   where
     outputEvalResult er = do
-      outputStrLn (showEvalResult er)
+      case er of
+        EvalStopped{} -> do
+          -- Print the stopped scope if stopped?
+          -- FIXME: Figure out the CLI interface.
+          -- out <- lift . lift $ execute (GetScopes breakThread 0)
+          -- printResponse out
+             outputStrLn (showEvalResult er)
+        _ -> outputStrLn (showEvalResult er)
       maybeShowException er
       rememberThreadContext er
 
@@ -163,7 +175,7 @@ printResponse = \case
     rememberThreadContext er =
       case er of
         EvalCompleted{} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Nothing } )
-        EvalException{} -> pure () -- TODO: why does this not have a thread associated?
+        EvalException{} -> pure () -- TODO: exceptions are still not signaling per-thread
         EvalStopped{breakThread} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Just breakThread } )
         EvalAbortedWith{} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Nothing } )
 
@@ -188,14 +200,6 @@ printResponse = \case
         Aborted err -> outputStrLn ("Failed to fetch fields for " ++ varName ++ ": " ++ err) >> pure []
         _ -> outputStrLn ("Unexpected response when fetching fields for " ++ varName) >> pure []
     fetchFields _ _ _ = pure []
-
-printEvalResult :: EvalResult -> InteractiveDM ()
-printEvalResult EvalStopped{..} = do
-  out <- lift . lift $ execute (GetScopes breakThread 0)
-  printResponse out
-  when (breakId == Nothing) $
-    showExceptionDetails breakThread
-printEvalResult er = outputStrLn $ showEvalResult er
 
 showEvalResult :: EvalResult -> String
 showEvalResult (EvalCompleted{..}) = resultVal
