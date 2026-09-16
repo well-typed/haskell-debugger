@@ -44,7 +44,7 @@ readResume (remoteThreadIntRef -> rti) = do
     Just tr -> pure (Just tr)
 
 getResumeThreadId :: Resume -> Debugger RemoteThreadId
-#if MIN_VERSION_ghc(10,1,0)
+#ifdef GHC_HAS_MULTITHREADED_DBG
 getResumeThreadId = getRemoteThreadId . resumeContext
 #else
 getResumeThreadId = getRemoteThreadIdFromRemoteContext . resumeContext
@@ -65,7 +65,7 @@ getResumeThreadId = getRemoteThreadIdFromRemoteContext . resumeContext
 -- Either that, or copy all the code over which returns the ExecBreak and
 -- modify it (ie copy `handleRunStatus`).
 execBreakResume :: ExecResult -> Debugger Resume
-#if MIN_VERSION_ghc(10,1,0)
+#ifdef GHC_HAS_MULTITHREADED_DBG
 execBreakResume ExecBreak{breakResume} = pure breakResume
 #else
 execBreakResume ExecBreak{} =

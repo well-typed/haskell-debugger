@@ -57,8 +57,8 @@ resumeExec a b _resume = do
   -- this call later, but why rely on that.
   imports <- GHC.getContext
 
-#if MIN_VERSION_ghc(10,1,0)
-  v <- GHC.resumeExec a MultiThreadedBreaks b resume
+#ifdef GHC_HAS_MULTITHREADED_DBG
+  v <- GHC.resumeExec a MultiThreadedBreaks b _resume
 #else
   v <- GHC.resumeExec a b
 #endif

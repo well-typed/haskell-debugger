@@ -39,9 +39,7 @@ import GHC (
 import GHC.Plugins (SourceError)
 import qualified GHC.Plugins as GHC
 import GHC.Unit.Types
-import GHC.Driver.DynFlags as GHC
 import GHC.Driver.Monad as GHC
-import GHC.Driver.Env as GHC
 import qualified GHC.Driver.Config.Parser as GHC
 import qualified GHCi.Message as GHCi
 
@@ -100,7 +98,7 @@ debugExecution entryFile entry args = do
   logSDoc Logger.Debug "Compiled wrapper."
 
   exec_res <- GHC.execStmt entryExp exOpts
-#if MIN_VERSION_ghc(10,1,0)
+#ifdef GHC_HAS_MULTITHREADED_DBG
     { execIsolateMode = GHC.MultiThreadedBreaks } -- yeah!
 #endif
 

@@ -188,9 +188,14 @@ library
 
     if !os(windows)
         build-depends: unix >= 2.8.6 && < 2.9,
+
     if impl(ghc>=10.1)
         -- from 10.1, we have much fewer stg_ctoi_t<N>_info hardcoded frames
         cc-options: -DFEW_TUPLE_FRAMES
+
+    if impl(ghc >= 10.1.20260820)
+        cpp-options: -DGHC_HAS_MULTITHREADED_DBG
+
     if flag(testing)
         cpp-options: -DTESTING
 

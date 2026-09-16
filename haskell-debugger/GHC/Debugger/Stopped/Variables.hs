@@ -47,7 +47,7 @@ import GHC.Debugger.Utils
 --------------------------------------------------------------------------------
 
 -- | Get the value and type of a given 'Id' as rendered strings in 'VarInfo'.
-#if MIN_VERSION_ghc(10,1,0)
+#ifdef GHC_HAS_MULTITHREADED_DBG
 idToVarInfo :: Id -> Debugger (Maybe VarInfo)
 idToVarInfo (GHC.AnId -> tt) = Just <$> do
   fam_envs <- getFamInstEnvs'

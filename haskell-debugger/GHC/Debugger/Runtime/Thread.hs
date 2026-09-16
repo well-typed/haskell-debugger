@@ -56,7 +56,7 @@ import qualified GHC.Debugger.Runtime.Interpreter as Debuggee
 import qualified GHC.Debugger.Runtime.Interpreter.Legacy as Debuggee
 #endif
 
-#if MIN_VERSION_ghc(10,1,0)
+#ifdef GHC_HAS_MULTITHREADED_DBG
 -- Shim to keep rest of codebase as is despite resumeContext now being just ForeignRef ThreadId
 getRemoteThreadIdFromRemoteContext :: ForeignRef ThreadId -> Debugger RemoteThreadId
 getRemoteThreadIdFromRemoteContext = getRemoteThreadId

@@ -14,9 +14,6 @@ module GHC.Debugger.Session.Interactive where
 
 import Control.Monad.IO.Class
 
-#if MIN_VERSION_ghc(9,15,0)
-import GHC.Linker.Types (modifyHomePackageBytecodeState)
-#endif
 import GHC
 import GHC.Driver.Env
 import GHC.Iface.Env (lookupNameCache)
