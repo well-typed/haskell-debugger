@@ -40,6 +40,8 @@ case "$(uname -s)" in
 	*)      DLL_GLOB="*.so" ;;
 esac
 find "${GHC_STORE_DIR}" -type f -name "${DLL_GLOB}" -exec cp {} "${BINDIST_DIR}/lib/" \;
+## Also include DLLs for sublibraries.
+find . -type f -name "${DLL_GLOB}" -exec cp {} "${BINDIST_DIR}/lib/" \;
 
 # Rewrite the executable's rpath to find the bundled lib/ dir relative to
 # itself, instead of the CI runner's (ephemeral) absolute store path.
