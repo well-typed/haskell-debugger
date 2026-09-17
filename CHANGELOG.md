@@ -1,5 +1,18 @@
 # Revision history for haskell-debugger
 
+## 0.13.2.0 -- 2026-09-17
+
+* Added binary distributions intended for on Linux and macOS.
+* Made debug session survive errors in non-essential operations.
+* Added support to visualize variables bound in earlier stack frames.
+* Improved reporting of session loading and other errors.
+* Switched to loading all components from cradle, from `hie-bios-0.20+`
+* Added support for Stack annotations with optional source locations.
+* Added support for GHC 10.1
+* Removed outdated 'install using stack' README section.
+* Fixed unintended loudness of `hdb server -v0`.
+* Restricted debug console to inner scope of module stopped at.
+
 ## 0.13.1.0 -- 2026-04-28
 
 * Fix critical bug which caused certain breakpoints to be overwritten by or
