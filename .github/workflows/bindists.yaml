@@ -2,7 +2,7 @@ on:
   workflow_call: {}
 
 env:
-  haskellDebuggerVersion: 0.13.1.0
+  haskellDebuggerVersion: 0.13.2.0
 
 name: Build hdb binary distributions
 jobs:
