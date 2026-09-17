@@ -840,7 +840,7 @@ jobs:
 
       - name: Build and package hdb (${{ matrix.arch }})
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}-ghcup
           ARCH: ${{ matrix.arch }}
           OUT_DIR: dist-bin
         run: |

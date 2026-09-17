@@ -22,5 +22,7 @@ if [ "${#versions[@]}" -ne 1 ]; then
 	exit 1
 fi
 
-cp "${versions[0]}hdb-${HDB_VERSION}-${ARTIFACT}.tar.gz" ./
-echo "Bindist for ${ARTIFACT}: hdb-${HDB_VERSION}-${ARTIFACT}.tar.gz"
+TARGET_NAME="hdb-${HDB_VERSION}-ghcup-${ARTIFACT}.tar.gz"
+
+cp "${versions[0]}hdb-${HDB_VERSION}-${ARTIFACT}.tar.gz" "./$TARGET_NAME"
+echo "Bindist for ${ARTIFACT}: $TARGET_NAME"
