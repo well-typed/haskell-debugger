@@ -1,6 +1,6 @@
 # Revision history for haskell-debugger
 
-## 0.13.2.0 -- 2026-09-17
+## 0.14.0.0 -- 2026-09-17
 
 * Added binary distributions intended for on Linux and macOS.
 * Made debug session survive errors in non-essential operations.
