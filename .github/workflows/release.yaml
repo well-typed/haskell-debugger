@@ -46,7 +46,7 @@ jobs:
           ghcup-release-channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/refs/heads/develop/ghcup-prereleases-0.0.9.yaml
 
       - name: Build docs for haskell-debugger
-        run: cabal haddock --haddock-for-hackage --enable-documentation
+        run: cabal haddock --haddock-for-hackage --enable-documentation lib:haskell-debugger
 
       - name: Upload haskell-debugger docs
         uses: actions/upload-artifact@v4
