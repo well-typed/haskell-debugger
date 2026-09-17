@@ -19,7 +19,7 @@ on:
 
 env:
   haskellDebuggerViewVersion: 0.2.1.0
-  haskellDebuggerVersion: 0.13.2.0
+  haskellDebuggerVersion: 0.14.0.0
 
 name: Debugger CI
 jobs:
