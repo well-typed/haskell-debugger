@@ -137,8 +137,7 @@ library
 
                       GHC.Debugger.Session,
                       GHC.Debugger.Session.Builtin,
-                      GHC.Debugger.Session.Interactive,
-
+ 
                       -- Data structures
                       GHC.Debugger.Data.BreakpointMap,
                       GHC.Debugger.Data.ThreadMap,
