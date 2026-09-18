@@ -65,7 +65,6 @@ import qualified GHC.LanguageExtensions as LangExt
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Session
 import GHC.Debugger.Session.Builtin
-import GHC.Debugger.Session.Interactive
 import GHC.Debugger.Runtime.Compile.Cache
 import qualified GHC.Debugger.Data.BreakpointMap as BM
 import qualified GHC.Debugger.Data.ThreadMap     as TM
@@ -408,7 +407,7 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
         code <- compileExprRemote $ moduleNameString debuggerRuntimeInternalModName ++ ".setLineBuffering"
         liftIO $ evalIO interp code
 
-      noPrint <- defineNoPrint
+      noPrint <- lookupNoPrintConstant
       modifySession (\hsc_env -> hsc_env {hsc_IC = GHCi.setInteractivePrintName (hsc_IC hsc_env) noPrint})
 
       runReaderT action

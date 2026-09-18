@@ -4,31 +4,40 @@
 
 -- | Built-in units and modules
 module GHC.Debugger.Session.Builtin
-  ( -- * Built-in mods
+  ( -- * HsDebuggerView unit
+    -- ** Modules
     debuggerViewBuiltinMods
   , debuggerViewInstancesMods
-  , debuggerViewClassModName, debuggerViewClassContents
-    -- * In memory unit
-  , hsDebuggerViewInMemoryUnitId
-  , addInMemoryHsDebuggerViewUnit
-  , makeInMemoryTarget
-  , runInternal
-
-  , debuggerInternalUnitId
-  , addInMemoryDebuggerInternalUnit
-  , debuggerRuntimeInternalContents
-  , debuggerRuntimeInternalModName
-  , debuggerRuntimeInternalUnit
-  , debuggerRuntimeInternalModule
-
-#if !MIN_VERSION_ghc(9,14,2)
-  , addInMemoryFFIInspectUnit
-  , hsDebuggerFFIInspectUnitId
-  , debuggerRuntimeFFIInspectModName, debuggerRuntimeFFIInspectContents
-#endif
   -- Note:
   -- Don't export instances mods individually to make sure we get warnings if
   -- we add new modules but forget to put any part of them there.
+  , debuggerViewClassModName, debuggerViewClassContents
+    -- ** In memory unit
+  , hsDebuggerViewInMemoryUnitId
+  , addInMemoryHsDebuggerViewUnit
+
+    -- * DebuggerInternal unit
+    -- ** Modules
+  , debuggerRuntimeInternalModName, debuggerRuntimeInternalContents
+  , debuggerRuntimeInternalModule
+    -- ** In memory unit
+  , debuggerInternalUnitId
+  , debuggerRuntimeInternalUnit
+  , addInMemoryDebuggerInternalUnit
+    -- ** Utils
+  , lookupNoPrintConstant
+  , runInternal
+
+#if !MIN_VERSION_ghc(9,14,2)
+  -- * FFIInspect unit
+  -- ** Modules
+  , debuggerRuntimeFFIInspectModName, debuggerRuntimeFFIInspectContents
+  -- ** In memory unit
+  , addInMemoryFFIInspectUnit
+  , hsDebuggerFFIInspectUnitId
+#endif
+  -- * Helpers
+  , makeInMemoryTarget
   )
   where
 
@@ -55,6 +64,8 @@ import qualified GHC.Data.EnumSet as EnumSet
 import qualified GHC.LanguageExtensions as LangExt
 import GHC.Runtime.Context (InteractiveContext(..), emptyInteractiveContext)
 import Control.Monad.Catch (finally)
+import GHC.Iface.Env (lookupNameCache)
+import GHC.Types.Name (mkVarOcc)
 
 --------------------------------------------------------------------------------
 -- * Built-in Modules
@@ -197,6 +208,13 @@ addInMemoryDebuggerInternalUnit dflags = do
 
   return ()
 
+-- | Gives @Name@ of a strict @noPrintConstant :: a -> IO ()@
+lookupNoPrintConstant :: Ghc Name
+lookupNoPrintConstant = do
+    hsc_env <- getSession
+    let debuggerInternalUnit = RealUnit (Definite debuggerInternalUnitId)
+    liftIO $ lookupNameCache (hsc_NC hsc_env) (mkModule debuggerInternalUnit debuggerRuntimeInternalModName)
+       (mkVarOcc "noPrintConstant")
 
 addInMemoryUnit :: GhcMonad m
   => UnitId      -- ^ The unit-id for the unit to add
