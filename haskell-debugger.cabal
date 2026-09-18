@@ -330,7 +330,8 @@ test-suite haskell-debugger-test
                       Test.Integration.Conditional,
                       Test.Integration.Evaluate,
                       Test.Integration.StackTrace,
-                      Test.Integration.SelfDebug
+                      Test.Integration.SelfDebug,
+                      Test.Integration.Threads
     build-depends:
         base >=4.14,
         async,
