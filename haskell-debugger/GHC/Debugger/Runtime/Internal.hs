@@ -5,7 +5,6 @@
 {-# LANGUAGE LambdaCase #-}
 module GHC.Debugger.Runtime.Internal
   ( module GHC.Debugger.Runtime.Internal
-  , GHC.evalWrapper
   , Prelude.concat
   , Prelude.putStrLn
   )
@@ -19,6 +18,7 @@ import Data.Maybe
 import Data.List
 import GHC.Base (returnIO)
 import qualified System.IO
+import GHC.Conc
 
 -- | Some extensions can mess with [] and (:) syntax, so we setup these plain
 -- function aliases.
@@ -29,6 +29,14 @@ nil = []
 cons :: a -> [a] -> [a]
 cons = (:)
 
+-- | Wraps GHC's evalWrapper for wrapping the execution of a 'main' in the
+-- interpreter, but first labels the thread "Debuggee Main" (since it'll be
+-- executing the debuggee main thread)
+evalWrapper :: String -> [String] -> IO a -> IO a
+evalWrapper progName args m = do
+  mid <- myThreadId
+  labelThread mid "Debuggee Main"
+  GHC.evalWrapper progName args m
 
 -- Need to be careful not to create extra thunks in the returned `HValue`s, but
 -- also avoid forcing the inside of a `Box`.
