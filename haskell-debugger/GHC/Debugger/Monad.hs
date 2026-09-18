@@ -13,30 +13,29 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NondecreasingIndentation #-}
 
-module GHC.Debugger.Monad where
+module GHC.Debugger.Monad
+  ( module GHC.Debugger.Monad
+  , module GHC.Debugger.Monad.Type
+  , module GHC.Debugger.Monad.Load
+  )
+where
 
 import Control.Concurrent
-import Control.Exception
 import qualified Data.Foldable as Foldable
 import Control.Monad
 import Control.Monad.Catch as MC
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.Function
-import Data.IORef
 import Data.Maybe
-import qualified Data.Set as Set
-import Data.Version (makeVersion, showVersion)
 import Prelude hiding (mod)
 #ifdef MIN_VERSION_unix
 import System.Posix.Signals
 #endif
-import qualified Data.List as L
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified GHC.Conc.Sync as C
 
 import GHC
-import GHC.Data.StringBuffer
 import GHC.Driver.Config.Diagnostic
 import GHC.Driver.Config.Logger
 import GHC.Driver.DynFlags as GHC
@@ -44,151 +43,35 @@ import GHC.Driver.Env as GHC
 import GHC.Driver.Monad
 import GHC.Driver.Errors
 import GHC.Driver.Errors.Types
-import GHC.Driver.Main
 import GHC.Driver.Make
-import GHC.Driver.Ppr
 import GHC.Driver.Session (parseDynamicFlagsCmdLine)
-import GHC.Runtime.Eval
-import GHC.Runtime.Heap.Inspect
 import GHC.Runtime.Interpreter as GHCi
 import GHC.Runtime.Loader as GHC
 import GHC.Runtime.Context as GHCi
 import GHC.Types.Error
-import GHC.Types.SourceError
 import GHC.Unit.Module.Graph
-import GHC.Unit.State
 import GHC.Unit.Types
 import qualified GHC.Utils.Logger as GHC
 import GHC.Utils.Outputable as GHC
 import qualified GHC.LanguageExtensions as LangExt
 
-import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Session
 import GHC.Debugger.Session.Builtin
-import GHC.Debugger.Runtime.Compile.Cache
-import qualified GHC.Debugger.Data.BreakpointMap as BM
-import qualified GHC.Debugger.Data.ThreadMap     as TM
 
 import Colog.Core as Logger
 
-import {-# SOURCE #-} GHC.Debugger.Runtime.Instances.Discover (RuntimeInstancesCache, emptyRuntimeInstancesCache)
 import GHC.Stack.Annotation
-import GHC.Platform.Ways
 import GHC.Unit.Home.Graph
 import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything which uses `Debugger`
-import System.Directory (getCurrentDirectory)
 import GHC.Debugger.Debuggee
 import GHC.Plugins (HasCallStack)
 import Data.Bifunctor
-import qualified GHC.Unit.Module.Graph as GHC
-import GHCi.RemoteTypes
-
--- | A debugger action.
-newtype Debugger a = Debugger { unDebugger :: ReaderT DebuggerState GHC.Ghc a }
-  deriving ( Functor, Applicative, Monad, MonadIO
-           , MonadThrow, MonadCatch, MonadMask
-           , GHC.HasDynFlags, MonadReader DebuggerState )
-
-data BreakpointInfo = BreakpointInfo
-  { bpInfoStatus :: !BreakpointStatus
-  , bpInfoKind   :: !BreakpointKind
-  , bpInfoAction :: !BreakpointAction
-  }
-  deriving (Eq,Show)
-
--- | State required to run the debugger.
---
--- - Keep track of active breakpoints to easily unset them all.
-data DebuggerState = DebuggerState
-      { activeBreakpoints :: IORef (BM.BreakpointMap BreakpointInfo)
-        -- ^ Maps a 'InternalBreakpointId' in Trie representation (map of Module to map of Int) to the
-        -- 'BreakpointStatus' it was activated with.
-
-      , rtinstancesCache  :: IORef RuntimeInstancesCache
-      -- ^ RuntimeInstancesCache
-
-      , threadMap         :: IORef (TM.ThreadMap (ForeignRef ThreadId))
-      -- ^ 'ThreadMap' for threads spawned by the debuggee
-
-      , threadResumeMap   :: IORef (TM.ThreadMap Resume)
-      -- ^ If a thread is currently stopped on a breakpoint, this map will
-      -- contain its resume context (from which we can resume the thread)
-
-      , compCache         :: IORef CompCache
-      -- ^ Cache loaded and compiled expressions.
-
-      , hsDbgViewUnitId   :: Maybe UnitId
-      -- ^ The unit-id of the companion @haskell-debugger-view@ unit, used for
-      -- user-defined and built-in custom debug visualisations of values (e.g.
-      -- for Strings or IntMap).
-      --
-      -- If the user depends on @haskell-debugger-view@ in its transitive
-      -- closure, then we should use that exact unit which was solved by Cabal.
-      -- The built-in instances and additional instances be available for the
-      -- 'DebugView' class found in that unit. We can find the exact unit of
-      -- the module by looking for @haskell-debugger-view@ in the module graph.
-      --
-      -- If the user does not depend on @haskell-debugger-view@ in any way,
-      -- then we create our own unit and try to load the
-      -- @haskell-debugger-view@ modules directly into it. As long as loading
-      -- succeeds, the 'DebugView' class from this custom unit can be used to
-      -- find the built-in instances for types like @'String'@
-      --
-      -- If the user explicitly disabled custom views, use @Nothing@.
-
-      , dbgLogger :: LogAction Debugger DebuggerLog
-      -- ^ See Note [Debugger, debuggee, and DAP logs]
-      }
-
-instance GHC.HasLogger Debugger where
-  getLogger = liftGhc GHC.getLogger
-
-instance GHC.GhcMonad Debugger where
-  getSession = liftGhc GHC.getSession
-  setSession s = liftGhc $ GHC.setSession s
-
--- | Enabling/Disabling a breakpoint
-data BreakpointStatus
-      -- | Breakpoint is disabled
-      --
-      -- Note: this must be the first constructor s.t.
-      --  @BreakpointDisabled < {BreakpointEnabled, BreakpointAfterCount}@
-      = BreakpointDisabled
-      -- | Breakpoint is enabled
-      | BreakpointEnabled
-      -- | Breakpoint is disabled the first N times and enabled afterwards
-      | BreakpointAfterCount Int
-      -- | Breakpoint is enabled when condition evaluates to true
-      | BreakpointWhenCond String
-      -- | Breakpoint is disabled the first N times the condition evaluates to
-      -- true and enabled in the next time it is true
-      | BreakpointAfterCountCond Int String
-      deriving (Eq, Ord, Show)
-
-instance Outputable BreakpointStatus where ppr = text . show
-
--- | What to do when a breakpoint is enabled
-data BreakpointAction
-      -- | Evaluation is stopped, typical behaviour
-      = BreakpointStop
-      {- | A log message is printed and then evaluation resumes.
-        The @String@ is an expression that takes care of interpolation and printing the log message.
-      -}
-      | BreakpointLogAndResume String
-      deriving (Eq, Ord, Show)
-
-instance Outputable BreakpointAction where ppr = text . show
+import GHC.Debugger.Monad.Type
+import GHC.Debugger.Monad.Load
 
 --------------------------------------------------------------------------------
 -- Operations
 --------------------------------------------------------------------------------
-
--- | Additional settings configuring the debugger
-data RunDebuggerSettings = RunDebuggerSettings
-      { supportsANSIStyling :: Bool
-      , supportsANSIHyperlinks :: Bool
-      , interpreterSettings :: InterpreterSettings
-      }
 
 -- | Run a 'Debugger' action on a session constructed by a 'DebugRunner'
 --
@@ -202,32 +85,6 @@ data RunDebuggerSettings = RunDebuggerSettings
 runDebugger :: LogAction IO DebuggerLog -> DebugRunner Ghc a -> RunDebuggerSettings -> Debugger a -> IO a
 runDebugger l debugRunner conf action = annotateCallStackIO $ do
   debugRunner $ \ rootDir extraGhcArgs loadHomeUnit -> runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit action
-
-type DebugSession m a
-  =  FilePath -- ^ project root dir
-  -> [String] -- ^ extra ghc args
-  -> m ()   -- ^ action to load debugee home units
-  -> Ghc a
-
-type DebugRunner m a = DebugSession m a -> IO a
-
-data ProjectDebugSpec = ProjectDebugSpec
-      { rootDir :: FilePath
-      -- ^ Project root directory
-      , componentDir :: FilePath
-      -- ^ Root dir of the loaded 'ComponentOptions'.
-      -- Important for multi-package cabal projects, as packages are not in the
-      -- root of the cradle, but in some sub-directory.
-      , libdir :: FilePath
-        -- ^ The libdir (given with -B as an arg)
-      , units :: [String]
-        -- ^ The list of units included in the invocation
-      , ghcInvocation :: [String]
-      -- ^ The full ghc invocation (as constructed by hie-bios flags)
-      , absEntryFile :: FilePath
-      -- ^ Path to the main function
-      , extraGhcArgs :: [String]
-      }
 
 -- | Construct a session from paths and flags inferred from the debugee's project.
 withProjectDebugSession
@@ -428,110 +285,6 @@ preservingThreadLabel m = do
         liftIO $ C.labelThread thId lbl
         pure x
 
--- | Throws exception when module fails to load.
-loadInternal
-  :: LogAction IO DebuggerLog
-  -> Ways
-  -> Ghc ()
-loadInternal l buildWays = do
-  let ghcLog = liftLogIO l
-
-  dflags <- getDynFlags
-  addInMemoryDebuggerInternalUnit (setDynFlagWays buildWays dflags)
-  let uid = debuggerInternalUnitId
-  successes <- loadInMemoryModules l uid modsToLoad
-  forM_ (zip successes modsToLoad) $ \case
-    (Failed,(modName,_)) -> do
-      ghcLog <& DebuggerLog Logger.Debug
-        (LogFailedToCompileBuiltinModule modName)
-      liftIO $ fail "Failed to load DebuggerInternal Module"
-    (Succeeded,_) ->
-      return ()
-  where
-    modsToLoad =
-      [(debuggerRuntimeInternalModName,debuggerRuntimeInternalContents)]
-
-#if !MIN_VERSION_ghc(9,14,2)
-data FailedToLoadFFIInspectModule = FailedToLoadFFIInspectModule
-  deriving Show
-instance Exception FailedToLoadFFIInspectModule
-
--- | Throws exception when module fails to load.
---   Needed for GHC.Debugger.Runtime.Interpreter.Legacy
-loadFFIInspect
-  :: LogAction IO DebuggerLog
-  -> Ways
-  -> Ghc ()
-loadFFIInspect l buildWays = do
-  let ghcLog = liftLogIO l
-
-  dflags <- getDynFlags
-  uid <- addInMemoryFFIInspectUnit [baseUnitId dflags] (setDynFlagWays buildWays dflags)
-
-  successes <- loadInMemoryModules l uid modsToLoad
-  forM_ (zip successes modsToLoad) $ \case
-    (Failed,(modName,_)) -> do
-      ghcLog <& DebuggerLog Logger.Debug
-        (LogFailedToCompileBuiltinModule modName)
-      liftIO $ throwIO FailedToLoadFFIInspectModule
-    (Succeeded,_) ->
-      return ()
-  where
-    modsToLoad =
-      [(debuggerRuntimeFFIInspectModName,debuggerRuntimeFFIInspectContents)]
-#endif
-
-findOrLoadHaskellDebuggerView :: LogAction IO DebuggerLog
-             -> Ways
-             -> Ghc (UnitId, [ModuleName])
-findOrLoadHaskellDebuggerView l buildWays = do
-  let ghcLog = liftLogIO l
-  hsc_env <- getSession
-
-  -- Try to find or load the built-in classes from `haskell-debugger-view`
-  findHsDebuggerViewUnitId >>= \case
-    Nothing -> (hsDebuggerViewInMemoryUnitId,) <$> do
-      -- Not imported by any module: no custom views. Therefore, the builtin
-      -- ones haven't been loaded. In this case, we will load the package ourselves.
-
-      -- Add the custom unit to the HUG
-      let base_dep_uids = graphsUnits hsc_env
-      addInMemoryHsDebuggerViewUnit base_dep_uids . setDynFlagWays buildWays =<< getDynFlags
-
-      -- Load unit modules using in-memory contents.
-      let
-        -- Don't try to load instances whose packages are not even in the
-        -- module graph.
-        (instanceMods,skipped) = L.partition (\ (_modName,_modContent,pkgName) -> any ((pkgName `L.isPrefixOf`) . unitIdString) base_dep_uids)
-            debuggerViewInstancesMods
-        modsToLoad =
-          (debuggerViewClassModName,debuggerViewClassContents)
-          : [ (modName,modContent)
-            | (modName, modContent, _pkgName) <- instanceMods]
-
-      forM_ skipped $ \(modName,_,pkgName) ->
-        ghcLog <& DebuggerLog Logger.Debug
-          (LogSkippingViewModuleNoPkg modName pkgName (map unitIdString base_dep_uids))
-
-      successes <- loadInMemoryModules l hsDebuggerViewInMemoryUnitId modsToLoad
-
-      fmap catMaybes . forM (zip successes modsToLoad) $ \case
-        (Failed,(modName,_)) -> do
-          ghcLog <& DebuggerLog Logger.Debug
-            (LogFailedToCompileBuiltinModule modName)
-          return $ Nothing
-        (Succeeded,(modName,_)) ->
-          return $ Just modName
-
-    Just uid -> do
-      -- TODO: We assume for now that if you depended on
-      -- @haskell-debugger-view@, then you also depend on all its transitive
-      -- dependencies (containers, text, ...), thus can load all custom
-      -- views. Hence all `debuggerViewBuiltinMods`. In the future, we
-      -- may want to guard all dependencies behind cabal flags that the user
-      -- can tweak when depending on `haskell-debugger-view`.
-      return (uid, map fst debuggerViewBuiltinMods)
-
 {-
 Note [Shutting down the external interpreter]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -632,13 +385,6 @@ cleanupInterp = do
             -- Just unconditionally try to send the message.
             sendMessage i Shutdown
             pure InterpPending
-
-annotateDebuggerStackString :: String -> Debugger a -> Debugger a
-annotateDebuggerStackString s (Debugger m) = Debugger $ do
-  r <- ReaderT $ \val -> do
-    withUnliftGhc $ \ unlift ->
-      annotateStackStringIO s (unlift $ runReaderT m val)
-  pure r
 
 -- | Variant of GHC's parseDynamicFlags which interprets paths relative to first arg.
 parseDynamicFlagsWithRootDir
@@ -785,261 +531,3 @@ as those will contain `Unique`s.
 -}
 --------------------------------------------------------------------------------
 
--- | Run downsweep on the currently set targets (see @hsc_targets@)
-doDownsweep :: GhcMonad m
-            => Maybe ModuleGraph -- ^ Re-use existing module graph which was already summarised
-            -> m ModuleGraph -- ^ Module graph constructed from current set targets
-doDownsweep reuse_mg = do
-  hsc_env <- getSession
-  let msg = batchMultiMsg
-  (errs_base, mod_graph) <- liftIO $
-    downsweep
-      hsc_env mkUnknownDiagnostic (Just msg)
-      (maybe [] mgModSummaries reuse_mg)
-#if MIN_VERSION_ghc(10,1,0)
-      reuse_mg
-#endif
-      [] False
-  when (not $ null errs_base) $ do
-    -- Print the errors to the user, rather than just throwing. When using DAP,
-    -- outputting to the logger the error is what displays it in the "Debug
-    -- Console" rather than "Output" DAP log.
-    logger <- getLogger
-    dflags <- hsc_dflags <$> getSession
-    let ghc_errs = fmap GhcDriverMessage (unionManyMessages errs_base)
-    liftIO $ printMessages logger (initPrintConfig dflags) (initDiagOpts dflags) ghc_errs
-#if MIN_VERSION_ghc(9,15,0)
-    throwErrors (initSourceErrorContext dflags) ghc_errs
-#else
-    throwErrors ghc_errs
-#endif
-  return mod_graph
-
-doLoad :: GhcMonad m => Maybe ModIfaceCache -> LoadHowMuch -> ModuleGraph -> m SuccessFlag
-doLoad if_cache how_much mg = do
-  let msg = batchMultiMsg
-  load' if_cache how_much mkUnknownDiagnostic (Just msg) mg
-
-
-loadInMemoryModules ::
-  LogAction IO DebuggerLog
-  -> UnitId
-  -> [(ModuleName,StringBuffer)] -> Ghc [SuccessFlag]
-loadInMemoryModules l uid ts = do
-  tgts <- forM ts $  \(modName,modContents) ->
-    liftIO $ makeInMemoryTarget uid modName modContents
-  GHC.setTargets tgts
-  mod_graph <- hsc_mod_graph <$> GHC.getSession
-  dvc_mod_graph <- doDownsweep (Just mod_graph)
-  let new_mod_graph
-#if MIN_VERSION_ghc(10,1,0)
-        -- new API allows extending an existing graph.
-        = dvc_mod_graph
-#else
-        = mkModuleGraph $ mg_mss dvc_mod_graph ++ mg_mss mod_graph
-#endif
-  modifySession $ GHC.setModuleGraph new_mod_graph
-
-  restore_logger <- GHC.getLogger
-  dflags <- getSessionDynFlags
-  GHC.modifyLogger $
-    -- Emit it all as Debug-level debugger logs
-    GHC.pushLogHook $ const $ \_ _ _ sdoc ->
-      l <& DebuggerLog Logger.Debug (LogSDoc dflags sdoc)
-
-  -- Might not make sense to keep going if the first fails, but we expect all of
-  -- them to succeed, and it's not that many more modules.
-  s <- forM tgts $ \ tgt -> compileModuleWithDepsInHpt tgt >>= \case
-        Nothing -> pure Succeeded
-        Just e -> do
-          liftLogIO l <& DebuggerLog Logger.Debug (LogSDoc dflags $ text (show e))
-          pure Failed
-
-  -- Restore logger
-  GHC.modifyLogger $
-    GHC.pushLogHook (const $ GHC.putLogMsg restore_logger)
-
-  return s
-
---------------------------------------------------------------------------------
--- * Finding Debugger View
---------------------------------------------------------------------------------
-
--- | Fetch the @haskell-debugger-view@ unit-id from the environment.
--- @Nothing@ means custom debugger views are disabled.
-getHsDebuggerViewUid :: Debugger (Maybe UnitId)
-getHsDebuggerViewUid = asks hsDbgViewUnitId
-
--- | Try to find the @haskell-debugger-view@ unit-id in the transitive closure,
--- or, otherwise, return the a custom unit for which we'll load the
--- @haskell-debugger-view@ modules in it (essentially preparing an in-memory
--- version of the library to find the built-in instances in).
---
--- See also comment on the @'hsDbgViewUnitId'@ field of @'DebuggerState'@
-findHsDebuggerViewUnitId :: GHC.Ghc (Maybe UnitId)
-findHsDebuggerViewUnitId = do
-  hsc_env <- getSession
-  let unitState = hsc_units hsc_env
-
-  -- Note: linear in the module graph but only happens once.
-  let potential_units = graphsUnits hsc_env
-  -- Note: the intermediate set is expected to be small (<= 2).
-  let hskl_dbgr_vws = Set.toList . Set.fromList $
-        [ uid
-        | uid <- potential_units
-        , let uid_s = unitIdString uid
-        , "haskell-debugger-view" `L.isPrefixOf` uid_s
-            || "hskll-dbggr-vw" `L.isPrefixOf` uid_s
-            || "haskell-debug_" `L.isPrefixOf` uid_s
-        ]
-
-      -- If the haskell-debugger-view is in the dependency graph, it must have
-      -- one of the versions the debugger is known to support:
-      supported_ranges -- [min, max(
-        = [ (makeVersion [0, 2], makeVersion [0, 3]) ]
-
-  case hskl_dbgr_vws of
-    [hdv_uid] -> do
-      -- In transitive closure, use that one.
-      -- Check that the version is in supported range.
-      case lookupUnit unitState (RealUnit (Definite hdv_uid)) of
-        Just unitInfo -> do
-          let version = unitPackageVersion unitInfo
-          if any (\(l,h) -> l <= version && version < h) supported_ranges
-            then return (Just hdv_uid)
-            else throwM UnsupportedHsDbgViewVersion{supportedVersions=supported_ranges, actualVersion=version}
-        Nothing
-          | "inplace" `L.isSuffixOf` unitIdString hdv_uid
-          -- will be built as a target later
-          -> return (Just hdv_uid)
-        Nothing ->
-          error "Could not find unit info for haskell-debugger-view"
-    [] -> do
-      return Nothing
-    _  -> do
-      error $ "Multiple unit-ids found for haskell-debugger-view in the transitive closure?!" ++ showSDocUnsafe (withPprStyle (PprDump alwaysQualify) (ppr hskl_dbgr_vws))
-
---------------------------------------------------------------------------------
--- Utilities
---------------------------------------------------------------------------------
-
--- | Initialize a 'DebuggerState'
-initialDebuggerState :: LogAction Debugger DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
-initialDebuggerState l hsDbgViewUid =
-  DebuggerState <$> liftIO (newIORef BM.empty)
-                <*> liftIO (newIORef emptyRuntimeInstancesCache)
-                <*> liftIO (newIORef TM.emptyThreadMap)
-                <*> liftIO (newIORef TM.emptyThreadMap)
-                <*> liftIO (newIORef emptyCompCache)
-                <*> pure hsDbgViewUid
-                <*> pure l
-
--- | Lift a 'Ghc' action into a 'Debugger' one.
-liftGhc :: GHC.Ghc a -> Debugger a
-liftGhc = Debugger . ReaderT . const
-
-data DebuggerFailedToLoad = DebuggerFailedToLoad
-instance Exception DebuggerFailedToLoad
-instance Show DebuggerFailedToLoad where
-  show DebuggerFailedToLoad = "Failed to compile and load user project."
-
-data UnsupportedHsDbgViewVersion = UnsupportedHsDbgViewVersion
-  { supportedVersions :: [ (Version, Version) ]
-  , actualVersion :: Version
-  }
-instance Exception UnsupportedHsDbgViewVersion
-instance Show UnsupportedHsDbgViewVersion where
-  show (UnsupportedHsDbgViewVersion supported actual) =
-    "Cannot use unsupported haskell-debugger-view version found in the transitive closure: " ++ showVersion actual ++
-    " (supported: " ++ L.intercalate ", " (map (\(l,h) -> showVersion l ++ " <= && < " ++ showVersion h) supported) ++ ")"
-
-data NonFatalException = NonFatalException { userMessage :: String, debugMessage :: String }
-  deriving Show
-
-instance Exception NonFatalException
-
-
-expectRight :: Exception e => Either e a -> Debugger a
-expectRight s = case s of
-  Left e -> do
-    logSDoc Logger.Error (text $ displayException e)
-    liftIO $ throwIO $ NonFatalException { userMessage = displayException e, debugMessage = displayExceptionWithInfo $ toException e }
-  Right a -> do
-    pure a
-
---------------------------------------------------------------------------------
--- * Modules
---------------------------------------------------------------------------------
-
--- | List all loaded modules 'ModSummary's
-getAllLoadedModules :: GHC.GhcMonad m => m [GHC.ModuleNodeInfo]
-getAllLoadedModules =
-  (mgInfos . mg_mss <$> GHC.getModuleGraph) >>=
-    filterM (\ms -> GHC.isLoadedModule (moduleNodeInfoUnitId ms) (moduleNodeInfoModuleName ms))
-  where
-    mgInfos xs = [ info | ModuleNode _ info <- xs ]
-
-getAllLoadedModulesWithPaths :: GHC.GhcMonad m =>
-  m [(AbsFilePath,GHC.ModuleNodeInfo)]
-getAllLoadedModulesWithPaths = do
-  ghcCwd <- mkAbsolute <$> liftIO getCurrentDirectory
-  -- TODO: cache?
-  map (\ m -> (absoluteSourcePath ghcCwd m, m)) <$> getAllLoadedModules
-  where
-    absoluteSourcePath :: AbsFilePath -> ModuleNodeInfo -> AbsFilePath
-    absoluteSourcePath ghcCwdDir ms
-      = ghcCwdDir /> (fromMaybe (error $ "missing source path: " ++ show (moduleNodeInfoModuleName ms)) $ ml_hs_file (moduleNodeInfoLocation ms))
-
---------------------------------------------------------------------------------
--- * Forcing laziness
---------------------------------------------------------------------------------
-
--- | The depth determines how much of the runtime structure is traversed.
--- @obtainTerm@ and friends handle fetching arbitrarily nested data structures
--- so we only depth enough to get to the next level of subterms.
-defaultDepth :: Int
-defaultDepth =  2
-
--- | Evaluate a suspended Term to WHNF.
---
--- Used in @'getVariables'@ to reply to a variable introspection request.
-seqTerm :: HscEnv -> Term -> IO Term
-seqTerm hsc_env term = do
-  let
-    interp = hscInterp hsc_env
-    unit_env = hsc_unit_env hsc_env
-  case term of
-    Suspension{val, ty} -> do
-#if MIN_VERSION_ghc(9,15,0)
-      r <- GHCi.seqHValue interp unit_env (hsc_logger hsc_env) val
-#else
-      r <- GHCi.seqHValue interp unit_env val
-#endif
-      () <- fromEvalResult r
-      let
-        forceThunks = False {- whether to force the thunk subterms -}
-        forceDepth  = defaultDepth
-      cvObtainTerm hsc_env forceDepth forceThunks ty val
-    NewtypeWrap{wrapped_term} -> do
-      wrapped_term' <- seqTerm hsc_env wrapped_term
-      return term{wrapped_term=wrapped_term'}
-    _ -> return term
-
--- | Evaluate a Term to NF
-deepseqTerm :: HscEnv -> Term -> IO Term
-deepseqTerm hsc_env t = case t of
-  Suspension{}   -> do t' <- seqTerm hsc_env t
-                       deepseqTerm hsc_env t'
-  Term{subTerms} -> do subTerms' <- mapM (deepseqTerm hsc_env) subTerms
-                       return t{subTerms = subTerms'}
-  NewtypeWrap{wrapped_term}
-                 -> do wrapped_term' <- deepseqTerm hsc_env wrapped_term
-                       return t{wrapped_term = wrapped_term'}
-  _              -> do seqTerm hsc_env t
-
-
-logSDoc :: Logger.Severity -> SDoc -> Debugger ()
-logSDoc sev doc = do
-  dflags <- getDynFlags
-  l <- asks dbgLogger
-  l <& DebuggerLog sev (LogSDoc dflags doc)
