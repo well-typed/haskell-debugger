@@ -131,6 +131,8 @@ library
                       GHC.Debugger.Runtime.Interpreter.Types,
 
                       GHC.Debugger.Monad,
+                      GHC.Debugger.Monad.Load,
+                      GHC.Debugger.Monad.Type,
                       GHC.Debugger.Debuggee,
                       GHC.Debugger.Utils,
                       GHC.Debugger.Utils.Orphans,

@@ -26,6 +26,7 @@ import GHC.Debugger.Monad
 
 import qualified GHC.Debugger.Runtime.Eval.RemoteExpr as Remote
 import qualified GHC.Debugger.Runtime.Compile as Comp
+import GHC.Debugger.Runtime.Term (seqTerm)
 
 -- | The main entry point for running the 'TermParser'.
 obtainParsedTerm

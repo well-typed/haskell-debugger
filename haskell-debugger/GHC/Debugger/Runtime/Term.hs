@@ -1,6 +1,8 @@
 {-# LANGUAGE OrPatterns, GADTs, LambdaCase, NamedFieldPuns, TemplateHaskellQuotes #-}
 module GHC.Debugger.Runtime.Term
   ( obtainTerm
+  , seqTerm
+  , deepseqTerm
   ) where
 
 import Control.Monad.Reader
@@ -12,6 +14,9 @@ import GHC.Runtime.Heap.Inspect
 
 import GHC.Debugger.Runtime.Term.Key
 import GHC.Debugger.Monad
+import GHC.Plugins
+import qualified GHC.Runtime.Interpreter as GHCi
+import GHC.Runtime.Interpreter (fromEvalResult)
 
 -- | Obtain the runtime 'Term' from a 'TermKey'.
 --
@@ -55,3 +60,50 @@ expandTerm hsc_env term = case term of
     return term{wrapped_term=wt'}
   Suspension{val, ty} -> cvObtainTerm hsc_env defaultDepth False ty val
   Prim{} -> return term
+
+--------------------------------------------------------------------------------
+-- * Forcing laziness
+--------------------------------------------------------------------------------
+
+-- | The depth determines how much of the runtime structure is traversed.
+-- @obtainTerm@ and friends handle fetching arbitrarily nested data structures
+-- so we only depth enough to get to the next level of subterms.
+defaultDepth :: Int
+defaultDepth =  2
+
+-- | Evaluate a suspended Term to WHNF.
+--
+-- Used in @'getVariables'@ to reply to a variable introspection request.
+seqTerm :: HscEnv -> Term -> IO Term
+seqTerm hsc_env term = do
+  let
+    interp = hscInterp hsc_env
+    unit_env = hsc_unit_env hsc_env
+  case term of
+    Suspension{val, ty} -> do
+#if MIN_VERSION_ghc(9,15,0)
+      r <- GHCi.seqHValue interp unit_env (hsc_logger hsc_env) val
+#else
+      r <- GHCi.seqHValue interp unit_env val
+#endif
+      () <- fromEvalResult r
+      let
+        forceThunks = False {- whether to force the thunk subterms -}
+        forceDepth  = defaultDepth
+      cvObtainTerm hsc_env forceDepth forceThunks ty val
+    NewtypeWrap{wrapped_term} -> do
+      wrapped_term' <- seqTerm hsc_env wrapped_term
+      return term{wrapped_term=wrapped_term'}
+    _ -> return term
+
+-- | Evaluate a Term to NF
+deepseqTerm :: HscEnv -> Term -> IO Term
+deepseqTerm hsc_env t = case t of
+  Suspension{}   -> do t' <- seqTerm hsc_env t
+                       deepseqTerm hsc_env t'
+  Term{subTerms} -> do subTerms' <- mapM (deepseqTerm hsc_env) subTerms
+                       return t{subTerms = subTerms'}
+  NewtypeWrap{wrapped_term}
+                 -> do wrapped_term' <- deepseqTerm hsc_env wrapped_term
+                       return t{wrapped_term = wrapped_term'}
+  _              -> do seqTerm hsc_env t
