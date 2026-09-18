@@ -109,7 +109,21 @@ getConfig port = do
       , supportsSteppingGranularity           = False
       , supportsInstructionBreakpoints        = False
       , supportsExceptionFilterOptions        = False
+#if MIN_VERSION_ghc(9,14,3)
+      , supportsSingleThreadExecutionRequests = True
+#else
+      -- GHC before 9.14.3 used a global break action with a single resume MVar
+      -- that was shared across all threads, leading to all kinds of
+      -- unpredictable behavior. That, and the resume context wasn't returned
+      -- when hitting a breakpoint (just pushed to a global `ic_resume`), so we
+      -- couldn't use the right `Resume` context per-thread.
+      --
+      -- TL;DR we can't support proper multi-threaded debugging with 9.14.2, so
+      -- no point in having per-thread requests either. Note: this doesn't
+      -- prevent the debuggee from launching threads -- unexpected things will
+      -- still happen.
       , supportsSingleThreadExecutionRequests = False
+#endif
       }
   ServerConfig
     <$> do fromMaybe hostDefault <$> lookupEnv "DAP_HOST"

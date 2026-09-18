@@ -4,6 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE MultiWayIf #-}
 module Test.DAP.Init where
 
 ----------------------------------------------------------------------------
@@ -30,7 +31,7 @@ import Test.Tasty.HUnit (assertFailure)
 import DAP.Server (readPayload)
 import qualified Control.Monad.Catch
 import Test.Utils (withHermeticDir)
-import DAP.Types (OutputEvent (..))
+import DAP.Types (OutputEvent (..), StoppedEvent (..))
 import Test.DAP.Messages.Parser
 
 --------------------------------------------------------------------------------
@@ -120,6 +121,7 @@ withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess se
   where
     runClient = do
       withNewClient (testDAPServerPort server) $ \clientHandle -> do
+        clientCurrentActiveThread  <- newIORef 0
         clientNextSeqRef           <- newIORef 1
         clientReverseRequests      <- newTChanIO
         clientResponses            <- newTChanIO
@@ -157,12 +159,15 @@ handleServerTestDAP = do
     payload <- nextPayload
     liftIO $ case parseMaybe parseType payload of
       Just "event"    -> do
-        let mtxt = fromJSON @(Event OutputEvent) payload
-        atomically $ do
-          writeTChan clientEvents payload
-          case mtxt of
-            Success (Event _ (Just txt)) -> modifyTVar' clientFullOutput (outputEventOutput txt:)
-            _ -> pure ()
+        atomically $ writeTChan clientEvents payload
+        if | Success (Event _ (Just txt))
+                     <- fromJSON @(Event OutputEvent) payload
+           -> atomically $ modifyTVar' clientFullOutput (outputEventOutput txt:)
+           | Success (Event _ (Just StoppedEvent{..}))
+                     <- fromJSON @(Event StoppedEvent) payload
+           -> writeIORef clientCurrentActiveThread (fromMaybe 0 stoppedEventThreadId)
+           | otherwise
+           -> pure ()
       Just "response" ->
         -- Fail immediately if the server reports failure, even if the test
         -- is blocked waiting for some other specific message --

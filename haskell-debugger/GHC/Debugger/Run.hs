@@ -9,31 +9,29 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
-module GHC.Debugger.Run where
+
+-- | Start debugging a program, evaluate statements, and resume stopped threads.
+module GHC.Debugger.Run
+  (
+  -- * Start debugging a program
+    debugExecution
+
+  -- * Resume stopped program
+  , doResume
+
+  -- * Interactive evaluation
+  , doEvalCommand
+  ) where
 
 import GHC.Utils.Outputable
-import Control.Monad.IO.Class
 import Control.Monad.Catch
-import Control.Monad.Reader
-import Data.IORef
 import Data.Maybe
 
 import GHC qualified
 import GHC (
-  ExecOptions (..),
-  ExecResult (..),
-  execStmt',
   ForeignHValue,
-  GhciLStmt,
-  GhcPs,
   InteractiveImport (..),
-  ModSummary (..),
-  Name,
   parseImportDecl,
-  SingleStep (..),
-  SrcSpan (..),
-  StmtLR (..),
-  unLoc,
   mkHsString,
   nlList,
   nlHsLit,
@@ -41,27 +39,23 @@ import GHC (
 import GHC.Plugins (SourceError)
 import qualified GHC.Plugins as GHC
 import GHC.Unit.Types
-import GHC.Driver.DynFlags as GHC
-import GHC.Driver.Main (hscParseStmtWithLocation)
 import GHC.Driver.Monad as GHC
-import GHC.Driver.Env as GHC
 import qualified GHC.Driver.Config.Parser as GHC
-import GHC.Runtime.Debugger.Breakpoints as GHC
 import qualified GHCi.Message as GHCi
-import qualified GHC.Data.Strict as Strict
 
-import GHC.Debugger.Stopped.Variables
 import GHC.Debugger.Monad
-import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
 import Colog.Core as Logger
-import qualified GHC.Debugger.Breakpoint.Map as BM
-import GHC.Debugger.Runtime.Thread
-import GHC.Debugger.Session (setInteractiveDebuggerDynFlags, getInteractiveDebuggerDynFlags, resumeExec)
+import GHC.Debugger.Runtime.Thread.Resume
+import GHC.Debugger.Session (getInteractiveDebuggerDynFlags)
 import Data.List (find)
 import GHC.Unit.Module.Graph as GHC
 import GHC.Debugger.Session.Builtin (runInternal, debuggerRuntimeInternalModName)
+import GHC.Runtime.Eval.Types
 
+import GHC.Debugger.Run.Resume
+import GHC.Debugger.Run.Handler
+import GHC.Debugger.Run.Eval
 
 --------------------------------------------------------------------------------
 -- * Evaluation
@@ -104,6 +98,9 @@ debugExecution entryFile entry args = do
   logSDoc Logger.Debug "Compiled wrapper."
 
   exec_res <- GHC.execStmt entryExp exOpts
+#ifdef GHC_HAS_MULTITHREADED_DBG
+    { execIsolateMode = GHC.MultiThreadedBreaks } -- yeah!
+#endif
 
   logSDoc Logger.Debug $ "Executed entryExp: " <+> text entryExp
 
@@ -124,7 +121,7 @@ debugExecution entryFile entry args = do
                      `GHC.mkHsApp` nlList (map nlHsString args')
       where
         nlHsString = nlHsLit . mkHsString
-        evalWrapper' :: GHC.LHsExpr GhcPs
+        evalWrapper' :: GHC.LHsExpr GHC.GhcPs
         evalWrapper' =
           GHC.nlHsVar $ GHC.mkRdrQual debuggerRuntimeInternalModName (GHC.mkVarOcc "evalWrapper")
 
@@ -137,60 +134,25 @@ debugExecution entryFile entry args = do
           error $ "findUnitIdOfEntryFile: no unit id found for: " ++ unAbs afp ++ "\nCandidates were:\n" ++ unlines (map show norms)
         Just (_,summary) -> pure summary
 
--- | Resume execution of the stopped debuggee program
-doContinue :: Debugger EvalResult
-doContinue = do
-  resumeExec RunToCompletion Nothing
+doResume :: RemoteThreadId -> ResumeStep -> ResumeTheWorld -> Debugger EvalResult
+doResume tid step _stop_world = do
+  resume <- popResume tid
+  ss     <- resolveResumeStep resume step
+  -- TODO: stop_world toggles global hit breakpoints mode (todo: look at mode
+  -- to determine how to stop) and here run all the threads accordingly.
+  -- TODO: for the first iteration, simply call pause on all threads (except
+  -- for those with specific debugger labels); but pause will only set step_in,
+  -- and won't be able to pause compiled threads, but that is follow up work.
+  resumeExec ss Nothing resume
     >>= handleExecResult
-
--- | Resume execution but only take a single step.
-doSingleStep :: Debugger EvalResult
-doSingleStep = do
-  resumeExec SingleStep Nothing
-    >>= handleExecResult
-
-doStepOut :: Debugger EvalResult
-doStepOut = do
-  mb_span <- getCurrentBreakSpan
-  case mb_span of
-    Nothing ->
-      resumeExec (GHC.StepOut Nothing) Nothing
-        >>= handleExecResult
-    Just loc -> do
-      md <- fromMaybe (error "doStepOut") <$> getCurrentBreakModule
-      ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
-      let current_toplevel_decl = enclosingTickSpan ticks loc
-      resumeExec (GHC.StepOut (Just (RealSrcSpan current_toplevel_decl Strict.Nothing))) Nothing
-        >>= handleExecResult
-
--- | Resume execution but stop at the next tick within the same function.
---
--- To do a local step, we get the SrcSpan of the current suspension state and
--- get its 'enclosingTickSpan' to use as a filter for breakpoints in the call
--- to 'resumeExec'. Execution will only stop at breakpoints whose span matches
--- this enclosing span.
-doLocalStep :: Debugger EvalResult
-doLocalStep = do
-  mb_span <- getCurrentBreakSpan
-  case mb_span of
-    Nothing -> error "not stopped at a breakpoint?!"
-    Just (UnhelpfulSpan _) -> do
-      liftIO $ putStrLn "Stopped at an exception. Forcing step into..."
-      resumeExec SingleStep Nothing >>= handleExecResult
-    Just loc -> do
-      md <- fromMaybe (error "doLocalStep") <$> getCurrentBreakModule
-      -- TODO: Cache moduleLineMap?
-      ticks <- fromMaybe (error "doLocalStep:getTicks") <$> makeModuleLineMap md
-      let current_toplevel_decl = enclosingTickSpan ticks loc
-      resumeExec (LocalStep (RealSrcSpan current_toplevel_decl mempty)) Nothing >>= handleExecResult
 
 -- | Generalized `doEval` that also handles `imports`
-doEvalCommand :: String -> Debugger EvalResult
-doEvalCommand expr = do
+doEvalCommand :: Maybe (RemoteThreadId, Int) -> String -> Debugger EvalResult
+doEvalCommand mtid expr = do
   dflags <- getInteractiveDebuggerDynFlags
   let pflags = GHC.initParserOpts dflags
   if GHC.isStmt pflags expr
-    then doEval expr
+    then doEval handleExecResult mtid expr
     else addImport expr
 
 -- | Parses input as an import declaration and applies it to the interactive context.
@@ -203,159 +165,3 @@ addImport s = handleError $ do
   where
     handleError m = m `catch` \ (e::SourceError) -> do
       pure $ EvalAbortedWith $ displayException e
-
--- | Evaluate expression. Includes context of breakpoint if stopped at one (the current interactive context).
-doEval :: String -> Debugger EvalResult
-doEval expr = withCurrentBreakEnv $ do
-  excr <- (Right <$> exec expr GHC.execOptions) `catch` \(e::SomeException) -> pure (Left (displayException e))
-  case excr of
-    Left err -> pure $ EvalAbortedWith err
-    Right (k, ExecBreak{}) -> fmap (addSourceKind k) $ continueToCompletion >>= handleExecResult
-    Right (k, r@ExecComplete{}) -> fmap (addSourceKind k) $ handleExecResult r
-  where
-    exec input exec_opts@ExecOptions{..} = do
-      hsc_env <- getSession
-
-      mb_stmt <-
-        liftIO $
-        runInteractiveHsc hsc_env $
-        hscParseStmtWithLocation execSourceFile execLineNumber input
-
-      case mb_stmt of
-        -- empty statement / comment
-        Nothing -> return (IsStmt, ExecComplete (Right []) 0)
-        Just stmt -> (,) <$> stmtKind stmt <*> execStmt' stmt input exec_opts
-
-    stmtKind (stmt :: GhciLStmt GhcPs) = do
-      pure $ case unLoc stmt of
-        BodyStmt{} -> IsExpr
-        _ -> IsStmt
-
-    addSourceKind :: SourceKind -> EvalResult -> EvalResult
-    addSourceKind k EvalCompleted{..} = EvalCompleted{resultSourceKind = Just k, ..}
-    addSourceKind _ r = r
-
--- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
---
--- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
-continueToCompletion :: Debugger GHC.ExecResult
-continueToCompletion = do
-  execr <- resumeExec GHC.RunToCompletion Nothing
-  case execr of
-    GHC.ExecBreak{} -> continueToCompletion
-    GHC.ExecComplete{} -> return execr
-
--- | @withCurrentBreakEnv m@ executes @m@ with the imports, language, and language
---  extensions of the current breakpoint source module.
---
---  If we are not stopped at a breakpoint @m@ is executed with no change.
-withCurrentBreakEnv :: Debugger a -> Debugger a
-withCurrentBreakEnv m = do
-  mmodl <- getCurrentBreakModule
-  case mmodl of
-    Nothing          -> m
-    Just breakModule -> do
-      ic_dyn_flags <- getInteractiveDebuggerDynFlags
-      break_dyn_flags <- ms_hspp_opts <$> GHC.getModSummary breakModule
-      old_context <- GHC.getContext
-      setInteractiveDebuggerDynFlags $ adjustFlags ic_dyn_flags break_dyn_flags
-      GHC.setContext (IIModule breakModule : old_context)
-      x <- m
-      GHC.setContext old_context
-      setInteractiveDebuggerDynFlags ic_dyn_flags
-      return x
-  where
-    -- Possibly we might want to include more from the module's DynFlags.
-    -- However some are likely to mess with the REPL, e.g. Opt_WarnTypeDefaults,
-    -- Opt_HideAllPackages, Opt_NoIt. See discussion at
-    -- https://github.com/well-typed/haskell-debugger/pull/230#discussion_r2986758826
-    adjustFlags :: DynFlags -> DynFlags -> DynFlags
-    adjustFlags ic modl = ic
-      { extensions = extensions modl
-      , extensionFlags = extensionFlags modl
-      , language = language modl
-      }
-
--- | Turn a GHC's 'ExecResult' into an 'EvalResult' response
-handleExecResult :: GHC.ExecResult -> Debugger EvalResult
-handleExecResult = \case
-    ExecComplete {execResult} -> do
-      case execResult of
-        Left e -> return (EvalException (show e) "SomeException")
-        Right [] -> return (EvalCompleted "" "" Nothing NoVariables) -- Evaluation completed without binding any result.
-        Right (n:_ns) -> inspectName n >>= \case
-          Just VarInfo{varValue, varType, varRef} -> do
-            return (EvalCompleted varValue varType Nothing varRef)
-          Nothing     -> liftIO $ fail "doEval failed"
-    ExecBreak {breakNames = _, breakPointId = Nothing} -> do
-      -- Stopped at an exception
-      -- TODO: force the exception to display string with Backtrace?
-      rt_id <- getRemoteThreadIdFromContext
-      return EvalStopped{ breakId = Nothing
-                        , breakThread = rt_id }
-    ExecBreak {breakNames = _, breakPointId = Just bid} -> do
-      let performAction BreakpointStop = do
-
-                rt_id <- getRemoteThreadIdFromContext
-                return EvalStopped{ breakId = Just bid
-                                  , breakThread = rt_id }
-          performAction (BreakpointLogAndResume logExpr) = do
-            let evalFailedMsg e = text $ unlines ["Evaluation of log message expression failed with " ++ e
-                  , "Expr: " ++ logExpr
-                  , "Ignoring..."]
-            doEval' logExpr evalFailedMsg $ \ _ _ -> resume
-
-      bm <- liftIO . readIORef =<< asks activeBreakpoints
-      case BM.lookup bid bm of
-        -- When stepping (`GHC.resumeExec SingleStep` or similar), we will typically stop at locations not explicitly enabled by the user (i.e. not registered in `activeBreakpoints`).
-        Nothing -> performAction BreakpointStop
-        Just BreakpointInfo{bpInfoStatus = status, bpInfoAction = action} -> do
-          case status of
-           -- todo: BreakpointAfterCountCond is not handled yet.
-            BreakpointAfterCountCond{} -> performAction action
-            BreakpointWhenCond cond -> do
-              let evalFailedMsg e = text $ "Evaluation of conditional breakpoint expression failed with " ++ e ++ "\nIgnoring..."
-
-              doEval' cond evalFailedMsg $ \ resultVal resultType -> do
-                if resultType == "Bool" then do
-                  if resultVal == "True" then do
-                    performAction action
-                  else
-                    resume
-                else do
-                  logSDoc Logger.Warning (evalFailedMsg "\"expression resultType is != Bool\"")
-                  resume
-            BreakpointDisabled -> resume
-            -- The counting is handled by @GHC.setupBreakpoint@
-            BreakpointAfterCount _ -> performAction action
-            BreakpointEnabled -> performAction action
-  where
-    doEval' expr evalFailedMsg k = doEval expr >>= \case
-            EvalStopped{} -> error "impossible for doEval"
-            EvalCompleted { resultVal, resultType } ->
-              k resultVal resultType
-            EvalException { resultVal } -> do
-              logSDoc Logger.Warning (evalFailedMsg resultVal)
-              resume
-            EvalAbortedWith e -> do
-              logSDoc Logger.Warning (evalFailedMsg e)
-              resume
-    resume = resumeExec GHC.RunToCompletion Nothing >>= handleExecResult
-
--- | Get the value and type of a given 'Name' as rendered strings in 'VarInfo'.
-inspectName :: Name -> Debugger (Maybe VarInfo)
-inspectName n = do
-  GHC.lookupName n >>= \case
-    Nothing -> do
-      liftIO . putStrLn =<< display (text "Failed to lookup name: " <+> ppr n)
-      pure Nothing
-    Just tt -> Just <$> do
-      fam_envs <- getFamInstEnvs'
-      tyThingToVarInfo fam_envs tt
-
-getRemoteThreadIdFromContext :: Debugger RemoteThreadId
-getRemoteThreadIdFromContext = do
-  GHC.getResumeContext >>= \case
-    resume1:_ ->
-      getRemoteThreadIdFromRemoteContext $ GHC.resumeContext resume1
-    _ -> error "No resumes but stopped?!?"

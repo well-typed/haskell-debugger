@@ -1,7 +1,19 @@
 {-# LANGUAGE CPP, NamedFieldPuns, TupleSections, LambdaCase,
    DuplicateRecordFields, RecordWildCards, TupleSections, ViewPatterns,
    TypeApplications, ScopedTypeVariables, BangPatterns #-}
-module GHC.Debugger.Breakpoint where
+
+-- | Set/unset breakpoints in the debuggee program
+module GHC.Debugger.Breakpoint
+  (
+    -- * Set/unset and get breakpoints
+    clearBreakpoints
+  , setBreakpoint
+  , getBreakpointsAt
+
+    -- ** Conditional breakpoints and logpoints
+  , condBreakEnableStatus
+  , logMessageExpression
+  ) where
 
 import Prelude hiding ((<>))
 import Control.Exception
@@ -29,7 +41,7 @@ import GHC.Debugger.Monad
 import GHC.Debugger.Session
 import GHC.Debugger.Utils
 import GHC.Debugger.Interface.Messages
-import qualified GHC.Debugger.Breakpoint.Map as BM
+import qualified GHC.Debugger.Data.BreakpointMap as BM
 import Data.Function
 import System.Directory (getCurrentDirectory)
 import GHC.Debugger.Session.Builtin (debuggerRuntimeInternalModName)

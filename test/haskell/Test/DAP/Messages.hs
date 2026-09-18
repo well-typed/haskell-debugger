@@ -52,6 +52,17 @@ data TestDAPClientContext = TestDAPClientContext
     -- ^ How to handle a response with success: false? If this function returns
     -- @Just val@ something then execution will resume with the returned @val@
     -- rather than aborting.
+  , clientCurrentActiveThread :: IORef Int
+    -- ^ When a breakpoint is hit, it reports the thread which hit the breakpoint
+    -- and we store that and consider it to be the the currently active thread.
+    --
+    -- In a multi-threaded scenario where many threads are resumed simultaneously,
+    -- the current active thread may vary a lot (receiving many StoppedEvents) but
+    -- at that point why are you using commands which rely on the current active
+    -- thread (the global buttons)?
+    --
+    -- (Note: the StoppedEvents to update this are caught directly in the
+    -- message handler thread)
   }
 
 newtype TestDAP a = TestDAP { runTestDAP :: TestDAPClientContext -> IO a }
@@ -108,3 +119,7 @@ waitForEvent = do
   TestDAPClientContext{..} <- ask
   liftIO $ atomically $ readTChan clientEvents
 
+-- | See 'clientCurrentActiveThread'
+getCurrentActiveThread :: TestDAP Int
+getCurrentActiveThread = do
+  liftIO . readIORef =<< asks clientCurrentActiveThread

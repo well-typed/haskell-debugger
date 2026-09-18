@@ -138,6 +138,9 @@ stackFrameInfo ss (frameIx,(RetBCO{bco,bcoArgs}, _))
   = do
     xs <- NoShow <$> mkRemoteRef bcoArgs
     -- TODO: change ghc upstream so this offset is available from CgBreakInfo.
+    -- WARNING: This currently makes traversing the stack O(n^2), since
+    -- bcoArgsOffset needs to walk the stack until here and we do it for every
+    -- RetBCO frame. Changing it upstream would fix this asymptotic too.
     let offset = FFIInspect.bcoArgsOffset ss frameIx
     fmap (\ ibi -> StackFrameBreakpointInfo ibi (DbgStackFrameBCOArgs xs offset)) <$> (lookupBCOBreakpoint =<< Heap.getClosureData bco_hval)
 stackFrameInfo _ _

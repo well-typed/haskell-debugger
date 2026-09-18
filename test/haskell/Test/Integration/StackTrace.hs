@@ -11,7 +11,7 @@ import Test.Tasty.HUnit
 import Test.Tasty.ExpectedFailure
 #endif
 import qualified Data.Text as Text
-import DAP (threadId, stackFrameName)
+import DAP (stackFrameName)
 
 stackTraceTests :: TestTree
 stackTraceTests =
@@ -29,8 +29,7 @@ mixedFramesTest =
     withTestDAPServerClient server $ do
       let cfg = mkLaunchConfig test_dir "app/Main.hs"
       hitBreakpointWith cfg 9
-      t:_ <- threads
-      frames <- stackTrace (threadId t)
+      frames <- stackTrace =<< getCurrentActiveThread
       let names = map stackFrameName frames
       liftIO $ do
         -- Contains the interpreter frame
@@ -47,8 +46,7 @@ stackAnnotationsTest =
     withTestDAPServerClient server $ do
       let cfg = mkLaunchConfig test_dir "app/Main.hs"
       hitBreakpointWith cfg 15
-      t:_ <- threads
-      frames <- stackTrace (threadId t)
+      frames <- stackTrace =<< getCurrentActiveThread
       let names = map stackFrameName frames
       liftIO $ do
         -- Contains the stack annotations
