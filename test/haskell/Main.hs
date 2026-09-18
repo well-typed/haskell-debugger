@@ -39,6 +39,7 @@ import Test.Integration.Conditional (conditionalTests)
 import Test.Integration.Evaluate (evaluateTests)
 import Test.Integration.StackTrace (stackTraceTests)
 import Test.Integration.SelfDebug (selfDebugTests)
+import Test.Integration.Threads (threadsTests)
 import Test.Utils
 import qualified Data.Char as C
 import qualified Data.Text as T
@@ -105,6 +106,7 @@ unitTests =
   , evaluateTests
   , stackTraceTests
   , selfDebugTests
+  , threadsTests
   ]
 
 -- | Receives as an argument the path to the @*.hdb-test@ which contains the
