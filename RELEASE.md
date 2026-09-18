@@ -18,9 +18,13 @@
   `./scripts/release.sh` from master.
   This script will validate a few things and then add a version tag.
 
-  A dry-run of the release pipeline is triggered by pushing the tag `git push --tags`.
+- A dry-run of the release pipeline is triggered by pushing the tag `git push --tags`.
   
-  Review the generated artefacts uploaded as a github draft release.
+- Review the generated artefacts uploaded as a github draft release. 
+
+- Check for warnings and docs on the release candidates's page on Hackage.
   
-  To actually do the release explicitly trigger `workflow_dispatch` on the
-  `release` workflow with `publish: true`
+- To actually do the release explicitly trigger `workflow_dispatch` on the
+  `release` workflow with `publish: true` with the `v...` tag for the ref
+  (dispatching the workflow from `master` makes the Github Release step fail, 
+  even if they both point to the same commit).
