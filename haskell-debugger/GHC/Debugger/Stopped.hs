@@ -80,15 +80,26 @@ because of the termination event we sent.
 
 getThreads :: Debugger [DebuggeeThread]
 getThreads = do
-  (t_ids, t_infos) <- unzip <$> listAllLiveRemoteThreads
+  thds <- listAllLiveRemoteThreads
   let
     mkDebuggeeThread tid tinfo
       = DebuggeeThread
         { tId = tid
         , tName = tinfo.threadInfoLabel
+          -- TODO: display thread status, but without displaying
+          -- "BlockedOnMVar" when its the dbg resume MVar
         }
     all_threads
-      = zipWith mkDebuggeeThread t_ids t_infos
+      = [ mkDebuggeeThread t_id t_info
+        | (t_id, t_info) <- thds
+
+        -- hide "helper" interpreter process threads
+        , case t_info.threadInfoLabel of
+            Just "TimerManager"            -> False
+            Just "Ext. Interpreter Server" -> False
+            Just (take 9 -> "IOManager")   -> False
+            _ -> True
+        ]
 
   return all_threads
 

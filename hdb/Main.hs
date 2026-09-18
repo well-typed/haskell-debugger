@@ -46,6 +46,8 @@ import GHC.Utils.Logger (defaultLogActionWithHandles)
 import Development.Debug.Session.Setup (hieDebugRunner)
 import GHC.Debugger.Debuggee (mkCliInterpreterSettings)
 import GHC.Debugger.Session (initUniqSupplyIO)
+import GHC.Conc (labelThread)
+import Control.Concurrent
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -110,6 +112,8 @@ main = do
         runExternalInterpreterServer h h hdbOpts.verbosity
   where
     runExternalInterpreterServer inh outh verbosity = do
+      mid <- myThreadId
+      labelThread mid "Ext. Interpreter Server"
       GHCi.installSignalHandlers
       pipe <- GHCi.mkPipeFromHandles inh outh
       let verbose = verbosity <= Info -- Debug || Info
