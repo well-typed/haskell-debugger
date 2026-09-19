@@ -12,6 +12,7 @@ import Control.Monad
 import Control.Applicative
 import Control.Exception
 import System.IO
+import System.IO.Error
 
 import GHC
 import GHC.Data.FastString
@@ -31,15 +32,19 @@ import GHC.Debugger.Interface.Messages
 -- * Handle utils
 --------------------------------------------------------------------------------
 
+silenceEOF :: Handle -> IO () -> IO ()
+silenceEOF h m = do
+  m `catchNoPropagate`
+    \x@(ExceptionWithContext _ctx e) -> do
+      if isEOFError e && ioeGetHandle e == Just h
+        then return ()
+        else rethrowIO x
+
 -- | Read output from the given handle and write it to the given
 -- log action (forever).
 forwardHandleToLogger :: Handle -> LogAction IO T.Text -> IO ()
 forwardHandleToLogger read_h logger = do
-  forwarding `catch` -- handles read EOF
-    \(_e::SomeException) -> do
-      -- Cleanly exit on exception
-      -- print _e
-      return ()
+  silenceEOF read_h forwarding
   where
     forwarding = forever $ do
       -- Mask exceptions to avoid being killed between reading
