@@ -21,6 +21,7 @@ import System.Environment (lookupEnv)
 import System.FilePath ((</>), (<.>))
 import qualified System.Process as P
 ----------------------------------------------------------------------------
+import GHC.Debugger.Utils (silenceEOF)
 import           Test.DAP.Messages
 import Control.Concurrent.STM
 import Control.Concurrent.Async
@@ -155,7 +156,7 @@ withNewClient port continue = do
 handleServerTestDAP :: TestDAP ()
 handleServerTestDAP = do
   TestDAPClientContext{..} <- ask
-  forever $ do
+  silenceEOFTextDAP clientHandle $ forever $ do
     payload <- nextPayload
     liftIO $ case parseMaybe parseType payload of
       Just "event"    -> do
@@ -200,3 +201,6 @@ handleServerTestDAP = do
         else do
           msg <- o .:? "message" .!= "DAP response had success: false (no message)"
           pure (msg :: String)
+
+silenceEOFTextDAP :: Handle -> TestDAP () -> TestDAP ()
+silenceEOFTextDAP h m = TestDAP $ \ r -> silenceEOF h $ runTestDAP m r

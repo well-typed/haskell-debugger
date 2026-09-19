@@ -44,6 +44,7 @@ import Colog.Core
 import Development.Debug.Adapter
 import qualified Control.Exception as E
 import GHC.Debugger.Interface.Messages (unAbs)
+import GHC.Debugger.Utils (silenceEOF)
 
 -- | Fork a new thread to run the server-side of the proxy.
 --
@@ -176,10 +177,10 @@ runInTerminalHdbProxy l port = do
     runTCPClient "127.0.0.1" (show port) $ \sock -> do
       -- Forward stdin to sock
       concurrently_
-        (catch (forever $ do
-          str <- BS8.hGetLine stdin
-          NBS.sendAll sock (str <> BS8.pack "\n")
-          ) $ \(_e::IOException) -> return ()) -- connection dropped, just exit.
+        (silenceEOF stdin $ -- connection dropped, just exit.
+          forever $ mask_ $ do
+            str <- BS8.hGetLine stdin
+            NBS.sendAll sock (str <> BS8.pack "\n"))
 
         (-- Forward stdout from sock
         catch (forever $ do
