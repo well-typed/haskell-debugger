@@ -42,7 +42,7 @@ import Development.Debug.Session.Setup
 import Development.Debug.Adapter.Proxy
 import Network.Socket (socketPort, close)
 import GHC.Debugger.Debuggee as Debugger
-import GHC.Debugger.Utils (forwardHandleToLogger)
+import GHC.Debugger.Utils (forwardHandleToLogger, silenceEOF)
 
 data DAPDebuggee = DAPDebuggee
   { dapdInterpreterSettings :: InterpreterSettings
@@ -202,8 +202,8 @@ stdoutCaptureThread :: Maybe (Chan BS.ByteString) -> (DebugAdaptorCont () -> IO 
 stdoutCaptureThread msyncOut withAdaptor = do
   tid <- myThreadId
   labelThread tid "Stdout Capture Thread"
-  withInterceptedStdout $ \_ interceptedStdout -> do
-    forever $ do
+  withInterceptedStdout $ \_ interceptedStdout -> silenceEOF interceptedStdout $ do
+    forever $ mask_ $ do
       line <- liftIO $ T.hGetLine interceptedStdout
       case msyncOut of
         Nothing -> pure ()
@@ -220,8 +220,8 @@ stderrCaptureThread :: Maybe (Chan BS.ByteString) -> (DebugAdaptorCont () -> IO 
 stderrCaptureThread msyncErr withAdaptor = do
   tid <- myThreadId
   labelThread tid "Stderr Capture Thread"
-  withInterceptedStderr $ \_ interceptedStderr -> do
-    forever $ do
+  withInterceptedStderr $ \_ interceptedStderr -> silenceEOF interceptedStderr $ do
+    forever $ mask_ $ do
       line <- liftIO $ T.hGetLine interceptedStderr
       case msyncErr of
         Nothing -> pure ()
