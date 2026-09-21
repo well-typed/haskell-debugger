@@ -5,7 +5,7 @@ module Main where
 
 import System.Process
 import System.Environment
-import Control.Exception (bracket, uninterruptibleMask, bracketOnError)
+import Control.Exception (bracket, uninterruptibleMask, bracketOnError, catchNoPropagate, rethrowIO, displayExceptionWithInfo, Exception (toException))
 import Control.Exception.Backtrace
 
 import DAP
@@ -48,6 +48,9 @@ import GHC.Debugger.Debuggee (mkCliInterpreterSettings)
 import GHC.Debugger.Session (initUniqSupplyIO)
 import GHC.Conc (labelThread)
 import Control.Concurrent
+import GHC.Utils.Exception (ExceptionWithContext(..))
+import System.IO.Error
+import qualified Colog.Core as Logger
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -106,11 +109,15 @@ main = do
       runExternalInterpreterServer inh outh hdbOpts.verbosity
     HdbExternalInterpreterPort{port} -> do
       pid <- getCurrentPid
-      withExternalInterpreterPort (fromIntegral port) $ \h -> do
+      let l = externalLogger hdbOpts.verbosity
+      withExternalInterpreterPort l (fromIntegral port) $ \h -> do
         hPutStrLn h (show pid)
         hFlush h
         runExternalInterpreterServer h h hdbOpts.verbosity
   where
+    externalLogger verbosity =
+      filterBySeverity verbosity getSeverity
+      $ getMsg Logger.>$< Logger.logStringStderr
     runExternalInterpreterServer inh outh verbosity = do
       mid <- myThreadId
       labelThread mid "Ext. Interpreter Server"
@@ -127,10 +134,18 @@ main = do
         -- we cannot allow any async exceptions while communicating, because
         -- we will lose sync in the protocol, hence uninterruptibleMask.
 
-    withExternalInterpreterPort :: PortNumber -> (Handle -> IO a) -> IO a
-    withExternalInterpreterPort port k = do
-      bracket (mkHandleFromPortSock "127.0.0.1" port) hClose $ \ h -> do
+    withExternalInterpreterPort :: LogAction IO (WithSeverity String) -> PortNumber -> (Handle -> IO a) -> IO a
+    withExternalInterpreterPort l port k = do
+      bracket (mkHandleFromPortSock "127.0.0.1" port) hCloseGracefully $ \ h -> do
         annotateCallStackIO $ k h
+      where
+        hCloseGracefully h = do
+          catchNoPropagate (hClose h) $ \ x@(ExceptionWithContext _ e) ->
+            if ioeGetLocation e == "hClose" && ioeGetHandle e == Just h
+            then l <& ("withExternalInterpreterPort: "
+                       ++ displayExceptionWithInfo (toException x))
+                       `WithSeverity` Logger.Debug
+            else rethrowIO x
 
     mkHandleFromPortSock :: HostName -> PortNumber -> IO Handle
     mkHandleFromPortSock host port = do
