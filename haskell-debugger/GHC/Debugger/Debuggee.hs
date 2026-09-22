@@ -120,6 +120,8 @@ mkExternalInterpreterSubProcessSetup std_in std_out std_err putHandles _l dflags
                 { std_in
                 , std_out
                 , std_err
+                -- We want to send sigINT, and System.Process makes you target the whole group.
+                , create_group = True
                 -- Override executable path
                 -- See Note [Custom external interpreter]
 #if MIN_VERSION_ghc(9,15,0)
