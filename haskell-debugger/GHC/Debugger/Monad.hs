@@ -33,9 +33,14 @@ import Prelude hiding (mod)
 import System.Posix.Signals
 #endif
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified GHC.Conc.Sync as C
+import System.Process (terminateProcess, interruptProcessGroupOf, getPid, ProcessHandle)
+import System.Timeout (timeout)
+import System.IO.Error (isEOFError, isResourceVanishedError)
+import Control.Exception
 
+import qualified GHC.Conc.Sync as C
 import GHC
+import GHC.Runtime.Interpreter.Types
 import GHC.Driver.Config.Diagnostic
 import GHC.Driver.Config.Logger
 import GHC.Driver.DynFlags as GHC
@@ -68,6 +73,9 @@ import GHC.Plugins (HasCallStack)
 import Data.Bifunctor
 import GHC.Debugger.Monad.Type
 import GHC.Debugger.Monad.Load
+import GHCi.Message
+import Data.Binary.Get
+import qualified Data.Text as T
 
 --------------------------------------------------------------------------------
 -- Operations
@@ -129,7 +137,7 @@ runDebuggerAction :: forall a. LogAction IO DebuggerLog
   -> Debugger a
   -> Ghc a
 runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
-  = flip MC.finally cleanupInterp $
+  = flip MC.finally (cleanupInterp l True) $
           -- See Note [Shutting down the external interpreter]
   do
   dflags0 <- GHC.getSessionDynFlags
@@ -370,21 +378,94 @@ See also #283
 -}
 
 -- | See Note [Shutting down the external interpreter]
-cleanupInterp :: Ghc ()
-cleanupInterp = do
+-- Can be called from main debug thread to try and stop debuggee/interp process.
+-- Reports whether we can presume success.
+-- Escalates to sigKILL if called with True.
+cleanupInterp :: LogAction IO DebuggerLog -> Bool -> Ghc Bool
+cleanupInterp l kill = do
   interp <- hscInterp <$> getSession
   case interpInstance interp of
-    InternalInterp -> pure ()
-    ExternalInterp ext -> liftIO $ withExtInterpStatus ext $ \mstate -> do
-      MC.mask $ \_restore -> modifyMVar_ mstate $ \state -> do
+    InternalInterp -> do
+      pure True
+    ExternalInterp ext -> do
+     liftIO $ withExtInterpStatus ext $ \mstate -> do
+      MC.mask $ \_restore -> modifyMVar mstate $ \state -> do
         case state of
-          InterpPending    -> pure state -- already stopped
-          InterpRunning i  -> do
+          InterpPending    -> pure (state,True) -- already stopped
+          InterpRunning i  -> (`MC.onException` finalTry i) $ do
+            tryStoppingExtInterp i $
+             -- a second interrupt has a chance to reset main loop even with stubborn debuggee,
+             -- c.f. redirectInterrupts.
+             tryStoppingExtInterp i $ finalTry i
+         where
+           finalTry i
+             | kill = do
+               killProcess' i.instProcess.interpHandle
+               success
+             | otherwise = pure (InterpRunning i,False)
+           success = pure (InterpPending,True)
+           tryStoppingExtInterp i keepGoing = MC.mask_ $ do
             -- Can't use  `getProcessExitCode` because the interp process is
             -- not necessarily a child of this process (runInTerminal case).
-            -- Just unconditionally try to send the message.
-            sendMessage i Shutdown
-            pure InterpPending
+            -- TODO: let runGhc handle this when interp process is a child?
+
+            -- This hopefully interrupts the debuggee.
+            interruptProcessGroupOf i.instProcess.interpHandle
+
+            -- The Pipe type does not expose the Handle, so we can't confirm the
+            -- IOError is from the pipe in the catches below.
+            -- TODO: We could stash the Handles somewhere since we create them ourselves though.
+            let isPipeClosedError (fromException -> Just e)
+                  = isEOFError e || isResourceVanishedError e
+                  -- any other IOError to include?
+                isPipeClosedError _ = False
+
+            let
+              handlePipeException m k = do
+                er <- MC.try m
+                case er of
+                  Right r -> k r
+                  Left x
+                    | isPipeClosedError x -> do
+                      l <& DebuggerSessionLog Debug (T.pack $ displayExceptionWithInfo x)
+                      success
+                    | otherwise -> do
+                      l <& DebuggerSessionLog Debug (T.pack $ displayExceptionWithInfo x)
+                      keepGoing
+
+            -- However, we do use writePipe/readPipe directly, to avoid parsing
+            -- errors and the exception handling in sendMessage.
+            let pipe = i.instProcess.interpPipe
+
+            -- We `writePipe` rather than `sendMessage` to avoid the exception
+            -- handling logic in the latter.
+            handlePipeException (writePipe pipe (putMessage Shutdown)) $ \() -> do
+
+            -- We wrote Shutdown, which does not send a reply.
+            --
+            -- Now we read to see EOF, which should indicate the
+            -- interpreter closed the socket and is shutting down.
+            --
+            -- We give the interpreter 1s to close the socket, otherwise we escalate.
+            handlePipeException (timeout 1_000_000 (readPipe pipe getRemainingLazyByteString)) $ \case
+             Nothing -> do
+                keepGoing
+             (Just bs) -> do
+                -- We read to the end of the pipe, catching EOF?
+                -- I don't believe this ever happens, but it would be a success.
+                l <& DebuggerSessionLog Debug (T.pack $ "cleanupInterp: Read bytes: " ++ show bs)
+                success
+
+killProcess' :: ProcessHandle -> IO ()
+#ifdef MIN_VERSION_unix
+killProcess' h = do
+  mpid <- getPid h
+  case mpid of
+    Just pid -> signalProcess killProcess pid
+    Nothing -> terminateProcess h
+#else
+killProcess' h = terminateProcess h -- TODO: sigKILL on POSIX.
+#endif
 
 -- | Variant of GHC's parseDynamicFlags which interprets paths relative to first arg.
 parseDynamicFlagsWithRootDir

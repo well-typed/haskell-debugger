@@ -60,7 +60,9 @@ runInTerminal1 flags = do
               liftIO $ hFlush err_h
               (Just rit_in, Nothing, Nothing, rit_p)
                 <- liftIO $ P.createProcess (P.shell invocation)
-                    {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.UseHandle out_h, P.std_err = P.UseHandle err_h}
+                    {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.UseHandle out_h, P.std_err = P.UseHandle err_h
+                    -- cleanupInterp sends sigINT to whole group.
+                    , P.create_group = True}
               Just rit_pid <- liftIO $ P.getPid rit_p
               pure ((rit_in, rit_p), fromIntegral rit_pid))
 
