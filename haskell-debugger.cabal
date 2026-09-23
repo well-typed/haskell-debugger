@@ -89,6 +89,9 @@ library
                       GHC.Debugger,
                       GHC.Debugger.Interface.Messages,
 
+                      -- Debugger Script Language
+                      GHC.Debugger.Script,
+
                       -- Top-level debugger commands
                       GHC.Debugger.Run,
                       GHC.Debugger.Run.Eval,
