@@ -30,7 +30,7 @@ import Development.Debug.Adapter
 -- Terminate the *debuggee* gracefully
 commandTerminate :: DebugAdaptor ()
 commandTerminate = do
-  destroyDebugSession -- kills debugger GHC session (which handles stopping the debuggee ext-interp too)
+  safeDestroyDebugSession -- kills debugger GHC session (which handles stopping the debuggee ext-interp too)
   sendTerminateResponse
   sendTerminatedEvent (TerminatedEvent False) -- we're done debugging now!
 
