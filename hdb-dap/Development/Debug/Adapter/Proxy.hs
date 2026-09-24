@@ -72,41 +72,53 @@ mkServerSideHdbProxy l dbIn dbOut dbErr client_conn_signal =
     myThreadId >>= \tid -> labelThread tid "Debug/Adapter/Proxy: TCP Server"
     runTCPServerWithSocket' sock $ \scket -> do
 
+      -- The proxy is machine-local, so we don't need the delays of TCP.
+      setSocketOption scket NoDelay 1
+
       infoMsg (T.pack $ "Connected to client on port " ++ show port ++ "...!")
       putMVar client_conn_signal () -- signal ready (see #95)
 
+      -- TODO: we use race here and concurrently on the client side.
+      -- race = cancel others when one ends
+      -- concurrently = wait for all to end
+      --
+      --
       race_
         (race_
           (-- Read stdout from chan and write to socket
            ignoreIOException $ do
              labelMe "Debug/Adapter/Proxy: Forward stdout"
-             forever $ do
+             forever $ mask_ $ do
                bs <- readChan dbOut
                debugMsg (T.pack $ "Writing to socket: " ++ BS8.unpack bs)
                NBS.sendAll scket bs)
           (-- Read stderr from chan and write to socket
            ignoreIOException $ do
              labelMe "Debug/Adapter/Proxy: Forward stderr"
-             forever $ do
+             forever $ mask_ $ do
                bs <- readChan dbErr
                debugMsg (T.pack $ "Writing to socket (from stderr): " ++ BS8.unpack bs)
                NBS.sendAll scket bs))
         (-- Read stdin from socket and write to chan
          let
-          loop = do
+          loop = join $ mask_ $ do
             bs <- NBS.recv scket 4096
             if BS8.null bs
               then do
                 debugMsg (T.pack "Connection to client was closed.")
-                close scket
+                -- Let runTCPServer do it.
+                -- close scket
+                pure $ pure ()
               else do
                 debugMsg (T.pack $ "Read from socket: " ++ BS8.unpack bs)
-                writeChan dbIn bs >> loop
+                writeChan dbIn bs
+                pure loop
           in ignoreIOException $ do
               labelMe "Debug/Adapter/Proxy: Read stdin"
               loop)
 
   where
+    -- TODO: more specific catching?
     ignoreIOException a = catch a $ \(e::IOException) ->
       infoMsg (T.pack $ "Ignoring connection broken to proxy client: " ++ show e)
     debugMsg msg = l <& WithSeverity msg Debug
@@ -117,12 +129,14 @@ mkServerSideHdbProxy l dbIn dbOut dbErr client_conn_signal =
 runTCPServerWithSocket' :: Socket -> (Socket -> IO a1) -> IO a2
 runTCPServerWithSocket' sock server = do
   let
-    serverLoop = forever $ E.bracketOnError (accept sock) (close . fst) $
+    gClose conn = gracefulClose conn 5000
+    serverLoop = E.bracketOnError (accept sock) (gClose . fst) $
       \(conn, _peer) ->
+        -- TODO: what is mask_ achieving here? does it mean we can drop E.bracketOnError?
         mask_ $ withAsyncWithUnmask
           (\ unmask ->
              unmask (labelMe "TCP Server handler" >> server conn)
-            `finally` gracefulClose conn 5000)
+            `finally` gClose conn)
           (const serverLoop)
   serverLoop
 
@@ -172,12 +186,14 @@ runInTerminalHdbProxy l port = do
     Nothing  -> pure ()
     Just inv ->
       putStrLn $ "Running the debugger input/output proxy for the following debuggee execution:\n\n\n    " ++ inv ++ "\n\n"
-
+  let settings = defaultSettings { settingsOpenClientSocket = openClientSocketWithOptions [(NoDelay,1)] }
   catch (
-    runTCPClient "127.0.0.1" (show port) $ \sock -> do
+    runTCPClientWithSettings settings "127.0.0.1" (show port) $ \sock -> do
       -- Forward stdin to sock
       concurrently_
-        (silenceEOF stdin $ -- connection dropped, just exit.
+        (silenceEOF stdin $ -- stdin closed, just exit.
+                            -- TODO: what about sendAll exceptions? WAS: catch IOException and dropping it, with comment "connection dropped, just exit".
+          -- TODO: reuse forwarding Thread
           forever $ mask_ $ do
             str <- BS8.hGetLine stdin
             NBS.sendAll sock (str <> BS8.pack "\n"))
@@ -188,11 +204,12 @@ runInTerminalHdbProxy l port = do
           if BS8.null msg
             then do
               l <& WithSeverity (T.pack "Exiting...") Info
-              close sock
+              -- Let runTCPClient do it gracefully.
+              -- close sock
               exitSuccess
             else BS8.hPut stdout msg >> hFlush stdout
           ) $ \(_e::IOException) -> return ()) -- connection dropped, just exit.
-
+              -- TODO: can we be more specific?
     ) $ \(_e::IOException) -> do
       hPutStrLn stderr "Failed to connect to debugger server proxy -- did the debuggee compile and start running successfully?"
 
