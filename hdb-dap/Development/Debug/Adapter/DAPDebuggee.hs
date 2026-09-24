@@ -67,7 +67,7 @@ internalNoInTerminalDAPD
       DAPDebuggee
         interpSettings
         (pure ())
-        [ stdoutCaptureThread Nothing, stderrCaptureThread Nothing ]
+        [ stdoutCaptureThread (const $ pure ()), stderrCaptureThread (const $ pure ()) ]
         (pure ())
 
 externalNoInTerminalDAPD :: MonadIO f => FilePath -> [String] -> f DAPDebuggee
@@ -127,14 +127,15 @@ externalInTerminalDAPD hdbProg extraInterpArgs
         })
 
 internalInTerminalDAPD :: LogAction IO DAPSessionLog -> FilePath -> Adaptor DebugAdaptorState r DAPDebuggee
-internalInTerminalDAPD l hdbProg = do
-    (syncProxyIn, syncProxyOut, syncProxyErr)
-                <- liftIO $ (,,) <$> newChan <*> newChan <*> newChan
-    proxyClientReady <- liftIO $ newEmptyMVar
-
-    (serverPort, serverProxyThread) <- liftIO $
-      mkServerSideHdbProxy (contramap RunProxyServerLog l)
-        syncProxyIn syncProxyOut syncProxyErr proxyClientReady
+internalInTerminalDAPD l hdbProg = liftIO $ do
+    proxyClientReady <- newEmptyMVar
+    bracketOnError openSocketAvailablePort close $ \ sock -> do
+    serverPort <- socketPort sock
+    serverProxyThread <- do
+      writeIn <- stdinForwardAction
+      pure $ \debugAdapter -> do
+        mkServerSideHdbProxy (contramap RunProxyServerLog l) sock
+          writeIn (`stdoutCaptureThread` debugAdapter) (`stderrCaptureThread` debugAdapter) proxyClientReady
     let interpSettings = InterpreterSettings
           { interpreterFlags = mkInternalInterpreterFlags
           , interpreterSetup = mkInternalInterpreterSetup
@@ -145,13 +146,7 @@ internalInTerminalDAPD l hdbProg = do
     pure $ DAPDebuggee
       interpSettings
       waitForDebuggee
-      [ const serverProxyThread
-      -- Setup capturing of the process' own stdout and forwarding of the process' own stdin,
-      -- but only because we're using the internal interpreter!
-      , stdinForwardThread  syncProxyIn
-      , stdoutCaptureThread (Just syncProxyOut)
-      , stderrCaptureThread (Just syncProxyErr)
-      ]
+      [ serverProxyThread ]
 
       -- When using the internal interpreter and 'runInTerminal' is supported
       -- (the 'RunProxyInTerminal' case), we ask the DAP client to launch the
@@ -174,11 +169,8 @@ data DAPSessionLog
 --------------------------------------------------------------------------------
 
 -- | Hijack the current process stdin and forward to it the messages from the given channel
-stdinForwardThread :: Chan BS.ByteString -> (DebugAdaptorCont () -> IO ()) -> IO ()
-stdinForwardThread syncIn _withAdaptor = do
-  tid <- myThreadId
-  labelThread tid "Stdin Forward Thread"
-
+stdinForwardAction :: IO (BS.ByteString -> IO ())
+stdinForwardAction = do
   -- We need to hijack stdin to write to it
 
   -- 1. Create a new pipe from writeEnd->readEnd
@@ -188,8 +180,7 @@ stdinForwardThread syncIn _withAdaptor = do
   _ <- hDuplicateTo readEnd stdin
   hClose readEnd -- we'll never need to read from readEnd
 
-  forever $ do
-    i <- readChan syncIn
+  pure $ \ i -> do
     -- 3. Write to write-end of the pipe
     BS.hPut writeEnd i >> hFlush writeEnd
 
@@ -197,26 +188,27 @@ stdinForwardThread syncIn _withAdaptor = do
 -- NOTE, redirecting the stdout handle is a process-global operation. So this thread
 -- will capture ANY stdout the debuggee emits. Therefore you should never directly
 -- write to stdout, but always write to the appropiate handle.
-stdoutCaptureThread :: Maybe (Chan BS.ByteString) -> (DebugAdaptorCont () -> IO ()) -> IO ()
+stdoutCaptureThread :: (BS.ByteString -> IO ()) -> (DebugAdaptorCont () -> IO ()) -> IO ()
 stdoutCaptureThread msyncOut withAdaptor = do
   tid <- myThreadId
   labelThread tid "Stdout Capture Thread"
   withInterceptedStdout $ \_ -> forwardingCaptured msyncOut (withAdaptor . Output.stdout)
 
 -- | Like 'stdoutCaptureThread' but for stderr
-stderrCaptureThread :: Maybe (Chan BS.ByteString) -> (DebugAdaptorCont () -> IO ()) -> IO ()
+stderrCaptureThread :: (BS.ByteString -> IO ()) -> (DebugAdaptorCont () -> IO ()) -> IO ()
 stderrCaptureThread msyncErr withAdaptor = do
   tid <- myThreadId
   labelThread tid "Stderr Capture Thread"
   withInterceptedStderr $ \_ -> forwardingCaptured msyncErr (withAdaptor . Output.stderr)
 
-forwardingCaptured :: Maybe (Chan BS.ByteString) -> (T.Text -> IO ()) -> Handle -> IO ()
-forwardingCaptured msync debugConsole intercepted = forwardHandleToLogger intercepted $ LogAction $ \ line -> do
-      case msync of
-        Nothing -> pure ()
-        -- TODO: do we need the channel indirection?
-        Just sync -> writeChan sync $ T.encodeUtf8 (line <> "\n")
-
+forwardingCaptured
+  :: (BS.ByteString -> IO ()) -- ^ send to proxy
+  -> (T.Text -> IO ())        -- ^ send to DAP. 
+  -> Handle                   -- ^ captured Handle
+  -> IO ()
+forwardingCaptured proxy debugConsole intercepted =
+  forwardHandleToLogger intercepted $ LogAction $ \ line -> do
+      proxy $ T.encodeUtf8 (line <> "\n")
       -- Always output to Debug Console
       catch
         (debugConsole line)
