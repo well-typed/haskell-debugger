@@ -20,7 +20,6 @@ import GHC.Stack.Annotation (annotateStackStringIO)
 import System.Process
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
 import qualified Data.Text.Encoding as T
 import Control.Monad.Trans
 import System.IO
@@ -42,7 +41,7 @@ import Development.Debug.Session.Setup
 import Development.Debug.Adapter.Proxy
 import Network.Socket (socketPort, close)
 import GHC.Debugger.Debuggee as Debugger
-import GHC.Debugger.Utils (forwardHandleToLogger, silenceEOF)
+import GHC.Debugger.Utils (forwardHandleToLogger)
 
 data DAPDebuggee = DAPDebuggee
   { dapdInterpreterSettings :: InterpreterSettings
@@ -202,34 +201,25 @@ stdoutCaptureThread :: Maybe (Chan BS.ByteString) -> (DebugAdaptorCont () -> IO 
 stdoutCaptureThread msyncOut withAdaptor = do
   tid <- myThreadId
   labelThread tid "Stdout Capture Thread"
-  withInterceptedStdout $ \_ interceptedStdout -> silenceEOF interceptedStdout $ do
-    forever $ mask_ $ do
-      line <- liftIO $ T.hGetLine interceptedStdout
-      case msyncOut of
-        Nothing -> pure ()
-        Just syncOut -> writeChan syncOut $ T.encodeUtf8 (line <> T.pack "\n")
-
-      -- Always output to Debug Console
-      catch
-        (withAdaptor $ Output.stdout line)
-        (\(_ :: IOException) ->
-          throwIO (FailedToWriteToAdaptor line))
+  withInterceptedStdout $ \_ -> forwardingCaptured msyncOut (withAdaptor . Output.stdout)
 
 -- | Like 'stdoutCaptureThread' but for stderr
 stderrCaptureThread :: Maybe (Chan BS.ByteString) -> (DebugAdaptorCont () -> IO ()) -> IO ()
 stderrCaptureThread msyncErr withAdaptor = do
   tid <- myThreadId
   labelThread tid "Stderr Capture Thread"
-  withInterceptedStderr $ \_ interceptedStderr -> silenceEOF interceptedStderr $ do
-    forever $ mask_ $ do
-      line <- liftIO $ T.hGetLine interceptedStderr
-      case msyncErr of
+  withInterceptedStderr $ \_ -> forwardingCaptured msyncErr (withAdaptor . Output.stderr)
+
+forwardingCaptured :: Maybe (Chan BS.ByteString) -> (T.Text -> IO ()) -> Handle -> IO ()
+forwardingCaptured msync debugConsole intercepted = forwardHandleToLogger intercepted $ LogAction $ \ line -> do
+      case msync of
         Nothing -> pure ()
-        Just syncErr -> writeChan syncErr $ T.encodeUtf8 (line <> "\n")
+        -- TODO: do we need the channel indirection?
+        Just sync -> writeChan sync $ T.encodeUtf8 (line <> "\n")
 
       -- Always output to Debug Console
       catch
-        (withAdaptor $ Output.stderr line)
+        (debugConsole line)
         (\(_ :: IOException) ->
           throwIO (FailedToWriteToAdaptor line))
 

@@ -19,8 +19,7 @@ import GHC.IO.Handle
 import System.Process
 import Control.Exception
 import Control.Concurrent.Async
-import Control.Monad (forever)
-import GHC.Debugger.Utils (silenceEOF)
+import GHC.Debugger.Utils (forwardHandleToLogger)
 
 handleLogger :: Handle -> IO (LogAction IO T.Text)
 handleLogger out_handle = do
@@ -60,7 +59,7 @@ withInterceptedStderrForwarding :: (T.Text -> IO ())
                                 -> IO ()
 withInterceptedStderrForwarding write_stderr k = do
   withInterceptedStderr $ \realStderr interceptedStderr -> do
-      withAsync (forwardingThread write_stderr interceptedStderr) $ \_ -> do
+      withAsync (forwardHandleToLogger interceptedStderr (LogAction write_stderr)) $ \_ -> do
         k realStderr
 
 -- | Intercept stdout, and spawn a thread which forwards the input
@@ -72,7 +71,7 @@ withInterceptedStdoutForwarding :: (T.Text -> IO ())
                                 -> IO ()
 withInterceptedStdoutForwarding write_stdout k = do
   withInterceptedStdout $ \realStdout interceptedStdout -> do
-    withAsync (forwardingThread write_stdout interceptedStdout) $ \_ ->
+    withAsync (forwardHandleToLogger interceptedStdout (LogAction write_stdout)) $ \_ ->
         k realStdout
 
 --------------------------------------------------------------------------------
@@ -115,12 +114,6 @@ withHandleBypass originalHandle interceptWriteHandle action =
       hFlush originalHandle
       hDuplicateTo realHandle originalHandle
       hClose realHandle
-
--- | Thread to read from the intercepted stdout pipe and forward onwards
-forwardingThread :: (T.Text -> IO ()) -> Handle -> IO ()
-forwardingThread write_action fromPipe = silenceEOF fromPipe $ forever $ mask_ $ do
-  line <- T.hGetLine fromPipe
-  write_action line
 
 withPipe :: (Handle -> Handle -> IO r) -> IO r
 withPipe action = bracket createPipe closeBoth (uncurry action)
