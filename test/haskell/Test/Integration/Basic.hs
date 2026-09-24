@@ -6,10 +6,12 @@
 module Test.Integration.Basic (basicTests) where
 
 import Control.Monad.Reader
+import System.Timeout
 import Test.DAP
 import Test.DAP.Messages.Parser
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.ExpectedFailure (expectFailBecause)
 import qualified DAP
 
 basicTests :: TestTree
@@ -30,6 +32,10 @@ basicTests =
     , testGroup "Multi-module standalone (no cabal/hie.yaml)"
         [ testCase "breakpoints in two modules (#297)" multiModuleStandaloneBreakpoints
         , testCase "breakpoints in two modules (flipped) (#297)" multiModuleStandaloneBreakpoints2
+        ]
+    , testGroup "Ending session"
+        [ expectFailBecause "DAP thread stuck waiting for EvalResult" $
+              testCase "disconnect promptly when debuggee blocked" debuggeeIdleDisconnectTest
         ]
     ]
 
@@ -128,3 +134,24 @@ multiModuleStandaloneBreakpoints2 =
       continueThread =<< getCurrentActiveThread
       assertStoppedLocation DAP.StoppedEventReasonBreakpoint 5
       disconnect
+
+debuggeeIdleDisconnectTest :: IO ()
+debuggeeIdleDisconnectTest = do
+  let projectRoot = "test/integration/T325a/"
+  let entryFile = "T325a/T325a.hs"
+  withTestDAPServer projectRoot [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir entryFile
+      _ <- sync $ launchWith cfg
+      waitFiltering_ EventTy "initialized"
+      _ <- sync configurationDone
+      -- Just want it to terminate.
+      withTimeout disconnect
+  where
+    -- we do our own timeout check as it's part of the spec and plays better
+    -- with withTestDAPServerClient
+    withTimeout (TestDAP m) = TestDAP $ \ env -> do
+      x <- timeout 5_000_000 $ m env
+      case x of
+        Just a -> pure a
+        Nothing -> assertFailure "Timeout after 5s"
