@@ -105,8 +105,6 @@ runInTerminal1 flags = do
           ("The stderr of the runInTerminal process shouldn't have any errors, but has: " ++ err_str ++ "\nStdout: " ++ out_str)
           (not ("GHCi.Message.readPipe:" `isInfixOf` err_str) && not ("Uncaught exception" `isInfixOf` err_str))
 
-        -- -- Kill the process
-        P.terminateProcess rit_p
 
   where
     addRITEnv :: Maybe (H.HashMap T.Text T.Text) -> T.Text
