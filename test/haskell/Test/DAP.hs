@@ -405,6 +405,14 @@ disconnect = do
   liftIO $ assertBool "disconnect response should indicate success" responseSuccess
   return ()
 
+terminate :: TestDAP ()
+terminate = do
+  Response{responseSuccess} <- sync $ terminateRequest @_ @Value $ Just
+    TerminateArguments
+      {DAP.terminateArgumentsRestart = False}
+  liftIO $ assertBool "disconnect response should indicate success" responseSuccess
+  return ()
+
 --------------------------------------------------------------------------------
 -- ** Convenience methods (based on vscode-debugadapter-node/testSupport)
 --------------------------------------------------------------------------------
@@ -482,15 +490,22 @@ waitFiltering_ ty s = void $ waitFiltering @Value ty s
 -- | Drop messages of the given type until a message with the given
 -- eventType/command is found. The matching message is returned.
 -- FIXME: Timeouts on waiting, to avoid hanging forever in the testsuite!!
-waitFiltering :: forall a. FromJSON a => MsgType -> String -> TestDAP a
-waitFiltering ty s = do
+waitFiltering :: forall a. (HasCallStack, FromJSON a) => MsgType -> String -> TestDAP a
+waitFiltering ty s = waitFiltering' ty (msgMatch ty s)
+
+waitFiltering' :: forall a. (HasCallStack, FromJSON a) => MsgType -> MessageMatch -> TestDAP a
+waitFiltering' ty mm = do
   ch <- asks (msgChan ty)
-  let mm = msgMatch ty s
   let loop = do
         v <- atomically $ readTChan ch -- block waiting for input
         if messageMatchMatches mm v
           then case fromJSON @a v of
-            Error e -> error $ "waitFiltering: Failed to parse message MATCHING " ++ s ++ ":" ++ show ty ++ " with error: " ++ e ++ "\nFull message was: " ++ show v
+            Error e -> error $ unwords
+              [ "waitFiltering: Failed to parse message of type", show ty
+              , "MATCHING", messageMatchDescription mm
+              , "with error:", e
+              , "\nFull message was: ", show v
+              ]
             Success x -> return x
           else loop
   liftIO loop
