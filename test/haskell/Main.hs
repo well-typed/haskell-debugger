@@ -1,7 +1,7 @@
-{-# LANGUAGE LambdaCase, OverloadedStrings, ViewPatterns, QuasiQuotes, CPP #-}
+{-# LANGUAGE LambdaCase, OverloadedStrings, ViewPatterns, QuasiQuotes, CPP, RecordWildCards #-}
 module Main (main) where
 
-import Data.List (isSuffixOf, isInfixOf)
+import Data.List (isSuffixOf, isInfixOf, stripPrefix)
 import qualified Data.Set as Set
 import Text.RE.TDFA.Text.Lazy
 import Text.Printf
@@ -20,6 +20,7 @@ import System.Environment
 import Control.Exception
 
 import Test.Tasty
+import Test.Tasty.Runners qualified as Tasty
 import Test.Tasty.ExpectedFailure
 import Test.Tasty.Golden as G
 import Test.Tasty.Golden.Advanced as G
@@ -78,7 +79,7 @@ main = do
   let intinterp_goldens = map (mkTest ("--internal-interpreter " ++ baseFlags)) testsForInternal
   let individualTimeout = 5*60*1_000_000
 
-  defaultMain $ localOption (mkTimeout individualTimeout) $
+  defaultMain $ localOption (mkTimeout individualTimeout) $ wrapTest (fmap $ deleteLongDescOnSuccess . relabelExpectedFail) $
     testGroup "Tests"
       [ testGroup "Golden tests" default_goldens
       ,
@@ -108,6 +109,24 @@ unitTests =
   , selfDebugTests
   , threadsTests
   ]
+
+-- | No reason to see lots of output for a Success (e.g. an expected failure)
+deleteLongDescOnSuccess :: Tasty.Result -> Tasty.Result
+deleteLongDescOnSuccess = silenceDiff
+  where
+      silenceDiff x@Tasty.Result{..} =
+        case resultOutcome of
+          Tasty.Success -> Tasty.Result{Tasty.resultDescription = "",..}
+          Tasty.Failure{} -> x
+
+-- | Replaces "FAIL" with "Fail" so actual failures are easier to search for in logs.
+relabelExpectedFail :: Tasty.Result -> Tasty.Result
+relabelExpectedFail r@Tasty.Result{..} =
+  case resultOutcome of
+    Tasty.Failure{} -> r
+    Tasty.Success -> case stripPrefix "FAIL" resultShortDescription of
+      Nothing -> r
+      Just rest -> Tasty.Result{resultShortDescription = "Fail" ++ rest, ..} 
 
 -- | Receives as an argument the path to the @*.hdb-test@ which contains the
 -- shell invocation for running
