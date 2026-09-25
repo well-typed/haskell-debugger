@@ -11,7 +11,6 @@ module Test.DAP.Init where
 import Data.Maybe
 import Data.List (isInfixOf)
 import           Control.Exception hiding (handle)
-import qualified Control.Exception as E
 import           Network.Run.TCP
 import           Network.Socket             (Family(AF_INET), SockAddr(SockAddrInet, SockAddrInet6), SocketOption(ReuseAddr), SocketType(Stream), bind, close, defaultProtocol, getSocketName, setSocketOption, socket, socketToHandle, tupleToHostAddress)
 import           System.IO
@@ -28,7 +27,7 @@ import Control.Concurrent.Async
 import Control.Monad.Reader
 import Control.Monad
 import Data.Aeson.Types
-import Test.Tasty.HUnit (assertFailure)
+import Test.Tasty.HUnit (assertFailure, HUnitFailure (..))
 import DAP.Server (readPayload)
 import qualified Control.Monad.Catch
 import Test.Utils (withHermeticDir)
@@ -42,7 +41,7 @@ import Test.DAP.Messages.Parser
 data TestDAPServer = TestDAPServer
   { testDAPServerPort :: Int
   , testDAPServerCleanup :: IO ()
-  , testDAPServerFlushOutput :: IO ()
+  , testDAPServerOutput :: String
   }
 
 -- | Launch an @hdb server@ for tests on a random local port and capture stdout.
@@ -68,15 +67,17 @@ startTestDAPServer testDir flags = do
   pid <- fromMaybe 0 <$> P.getPid p
   writeFile (nameTemplate <.> "pid") (show pid)
 
-  let flushServerOutput = do
-        putStrLn "\n--- SERVER OUTPUT ---"
-        putStrLn $ "See: " ++ testDir
-        putStrLn $ "Might need: KEEP_TEMP_DIRS=True"
-        putStrLn "---------------------\n"
+  let flushServerOutput = unlines
+        [ ""
+        , "--- SERVER OUTPUT ---"
+        , "See: " ++ testDir
+        , "Might need: KEEP_TEMP_DIRS=True"
+        , "---------------------"
+        ]
 
   pure TestDAPServer
     { testDAPServerPort = testPort
-    , testDAPServerFlushOutput = flushServerOutput
+    , testDAPServerOutput = flushServerOutput
     , testDAPServerCleanup = do
         P.cleanupProcess (Just hin, Just hout, Just herr, p)
 
@@ -117,9 +118,16 @@ withTestDAPServerClient = withTestDAPServerClientWith False (\_ _ -> pure Nothin
 --- and server log flushing on failure.
 withTestDAPServerClientWith :: Bool {-^ Announce support for runInTerminal? -} -> (String -> Value -> IO (Maybe Value))
                             -> TestDAPServer -> TestDAP a -> IO a
-withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess server continue = do
-  runClient `E.onException` testDAPServerFlushOutput server
+withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess server continue = addServerOutput runClient
   where
+    addServerOutput m = catchNoPropagate m $ (rethrowIO =<<) . annotate
+    annotate = \case
+      (ExceptionWithContext ctx e) | Just (HUnitFailure srcpos msg) <- fromException e ->
+        pure $ ExceptionWithContext ctx $ toException $ HUnitFailure srcpos (msg ++ testDAPServerOutput server)
+      e -> do
+        putStrLn $ testDAPServerOutput server
+        pure e
+
     runClient = do
       withNewClient (testDAPServerPort server) $ \clientHandle -> do
         clientCurrentActiveThread  <- newIORef 0
