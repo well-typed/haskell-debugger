@@ -23,9 +23,10 @@ import GHC.IO.Handle
 import qualified Data.Text as T
 import qualified System.Process as P
 import Control.Exception (displayExceptionWithInfo, ExceptionWithContext (ExceptionWithContext), AsyncException (..))
-import Control.Monad (when)
+import Control.Monad (when, void)
 import Control.Monad.Except
 import Control.Monad.Trans
+import Control.Monad.Trans.Control (liftBaseDiscard)
 import Data.Function
 import Data.Maybe
 import Data.UUID.V4 qualified as UUID
@@ -203,7 +204,9 @@ destroyDebugSessionOnException l k withAdaptor = do
         _ -> do
           withAdaptor $ do
             sendTerminatedEvent (TerminatedEvent False)
-            safeDestroyDebugSession
+            -- Without forkIO we might kill ourselves first and not kill anything else.
+            void $ liftBaseDiscard forkIO $
+              safeDestroyDebugSession
 
 initDAPDebuggee
   :: LogAction IO DAPSessionLog

@@ -68,6 +68,7 @@ import GHC.Plugins (HasCallStack)
 import Data.Bifunctor
 import GHC.Debugger.Monad.Type
 import GHC.Debugger.Monad.Load
+import System.Process (terminateProcess)
 
 --------------------------------------------------------------------------------
 -- Operations
@@ -380,10 +381,14 @@ cleanupInterp = do
         case state of
           InterpPending    -> pure state -- already stopped
           InterpRunning i  -> do
+            terminateProcess i.instProcess.interpHandle
+
             -- Can't use  `getProcessExitCode` because the interp process is
             -- not necessarily a child of this process (runInTerminal case).
             -- Just unconditionally try to send the message.
-            sendMessage i Shutdown
+
+            -- We control the process though, and we know it will not ignore sigTERM.
+            -- TODO: we could setup a side channel to confirm. (pidfd, known empty PIPE we could check for EOF, ..).
             pure InterpPending
 
 -- | Variant of GHC's parseDynamicFlags which interprets paths relative to first arg.
