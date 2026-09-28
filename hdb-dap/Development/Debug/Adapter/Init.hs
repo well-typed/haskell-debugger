@@ -170,6 +170,7 @@ initDebugger l0 servConf interpChoice
           }
         absEntryFile = projectRoot /> entryFile
         daState = DAS{entryFile=absEntryFile,waitForDebuggee = dapdWaitForDebuggee dapd,..}
+        ld = contramap (ForwardingThreadLog . flip WithSeverity Debug) l
 
       registerNewDebugSession sessionId daState $ map (destroyDebugSessionOnException l) $
         [ \withAdaptor -> do
@@ -182,7 +183,7 @@ initDebugger l0 servConf interpChoice
                 , "args: " <> unwords args
                 ]
             debuggerThread dbgLog debugRunner defaultRunConf syncRequests syncResponses
-        , \withAdaptor -> forwardHandleToLogger readDAPOutput $
+        , \withAdaptor -> forwardHandleToLogger ld readDAPOutput $
             LogAction (\msg -> withAdaptor (Output.neutral msg))
         ]
         ++
@@ -214,12 +215,12 @@ initDAPDebuggee
   -> InterpreterChoice
   -> [String]
   -> DebugAdaptor DAPDebuggee
-initDAPDebuggee _ _ InterpreterChoice{runInTerminal = False, internal = True} _
-  = internalNoInTerminalDAPD
-initDAPDebuggee _ hdbProg InterpreterChoice{runInTerminal = False, internal = False} extraInterpArgs
-  = externalNoInTerminalDAPD hdbProg extraInterpArgs
-initDAPDebuggee _ hdbProg InterpreterChoice{internal = False, runInTerminal = True} extraInterpArgs
-  = externalInTerminalDAPD hdbProg extraInterpArgs
+initDAPDebuggee l _ InterpreterChoice{runInTerminal = False, internal = True} _
+  = internalNoInTerminalDAPD l
+initDAPDebuggee l hdbProg InterpreterChoice{runInTerminal = False, internal = False} extraInterpArgs
+  = externalNoInTerminalDAPD l hdbProg extraInterpArgs
+initDAPDebuggee l hdbProg InterpreterChoice{internal = False, runInTerminal = True} extraInterpArgs
+  = externalInTerminalDAPD l hdbProg extraInterpArgs
 initDAPDebuggee l hdbProg InterpreterChoice{runInTerminal = True, internal = True} _
   = internalInTerminalDAPD l hdbProg
 

@@ -52,27 +52,29 @@ withInterceptedStderr k = do
 
 -- | Intercept stderr, and spawn a thread which forwards the input
 -- onwards using the supplied IO action.
-withInterceptedStderrForwarding :: (T.Text -> IO ())
+withInterceptedStderrForwarding :: LogAction IO T.Text
+                                -> (T.Text -> IO ())
                                 -- ^ All stderr input that is intercepted is forwarded to this thread
                                 -> (Handle -> IO ())
                                 -- ^ The continuation receives the REAL STDERR
                                 -> IO ()
-withInterceptedStderrForwarding write_stderr k = do
+withInterceptedStderrForwarding l write_stderr k = do
   withInterceptedStderr $ \realStderr interceptedStderr -> do
-      withAsync (forwardHandleToLogger interceptedStderr (LogAction write_stderr)) $ \_ -> do
+      withAsync (forwardHandleToLogger l interceptedStderr (LogAction write_stderr)) $ \_ -> do
         k realStderr
 
 -- | Intercept stdout, and spawn a thread which forwards the input
 -- onwards using the supplied IO action.
 withInterceptedStdoutForwarding :: (T.Text -> IO ())
                                 -- ^ All stdout input that is intercepted is forwarded to this thread
-                                -> (Handle -> IO ())
+                                -> (Handle -> IO (LogAction IO T.Text, IO ()))
                                 -- ^ The continuation receives the REAL STDOUT
                                 -> IO ()
-withInterceptedStdoutForwarding write_stdout k = do
+withInterceptedStdoutForwarding write_stdout mkC = do
   withInterceptedStdout $ \realStdout interceptedStdout -> do
-    withAsync (forwardHandleToLogger interceptedStdout (LogAction write_stdout)) $ \_ ->
-        k realStdout
+    (l,cont) <- mkC realStdout
+    withAsync (forwardHandleToLogger l interceptedStdout (LogAction write_stdout)) $ \_ ->
+      cont
 
 --------------------------------------------------------------------------------
 -- Auxiliary

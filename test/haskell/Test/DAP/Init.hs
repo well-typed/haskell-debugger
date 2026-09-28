@@ -33,6 +33,8 @@ import qualified Control.Monad.Catch
 import Test.Utils (withHermeticDir)
 import DAP.Types (OutputEvent (..), StoppedEvent (..))
 import Test.DAP.Messages.Parser
+import DAP.Log (LogAction(..))
+import qualified Data.Text.IO as T
 
 --------------------------------------------------------------------------------
 -- * Launch the DAP server process (what we're testing)
@@ -212,4 +214,4 @@ handleServerTestDAP = do
           pure (msg :: String)
 
 silenceEOFTextDAP :: Handle -> TestDAP () -> TestDAP ()
-silenceEOFTextDAP h m = TestDAP $ \ r -> silenceEOF h $ runTestDAP m r
+silenceEOFTextDAP h m = TestDAP $ \ r -> silenceEOF (LogAction $ T.putStrLn) h $ runTestDAP m r
