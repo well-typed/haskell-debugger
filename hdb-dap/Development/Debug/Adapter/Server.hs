@@ -264,6 +264,7 @@ data DAPLog
   = DAPSessionLog !SessionId !ThreadId DAPSessionLog
   | DAPLaunchLog (WithSeverity T.Text)
   | DAPLibraryLog DAP.DAPLog
+  | DAPStdoutForwardingLog (WithSeverity T.Text)
 
 logSessionLog :: Show a => LogAction IO Text -> Severity -> WithSeverity a -> IO ()
 logSessionLog l threshold (WithSeverity msg sev)
@@ -318,7 +319,9 @@ logDAPLog logGhcLog l threshold = LogAction $ \case
           (DAPSessionSetupLog sessionLog)       -> logSessionLog l1 threshold sessionLog
           (DAPDebuggerLog debuggerLog)          -> logDebuggerLog logGhcLog1 l1 threshold debuggerLog
           (RunProxyServerLog sev_msg) -> defaultLog l1 threshold sev_msg
+          (ForwardingThreadLog sev_msg)  -> defaultLog l1 threshold sev_msg
       DAPLaunchLog sev_msg      -> defaultLog (cmapM renderWithTimestamp l) threshold sev_msg
+      DAPStdoutForwardingLog sev_msg      -> defaultLog (cmapM renderWithTimestamp l) threshold sev_msg
       DAPLibraryLog t | convert t.severity >= threshold ->
         l <& DAP.renderDAPLog t
         | otherwise -> pure ()

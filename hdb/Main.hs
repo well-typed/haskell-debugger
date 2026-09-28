@@ -52,7 +52,7 @@ import qualified Colog.Core as Logger
 import Control.Exception
 import Data.List (isPrefixOf)
 import System.Directory (doesFileExist)
-import Control.Monad (when)
+import Control.Monad (when, join)
 import Development.Debug.Adapter.DAPDebuggee (sessionFileEnvVar)
 
 #if MIN_VERSION_ghc(9,15,0)
@@ -85,7 +85,8 @@ main = do
       redirectRealStdout internalInterpreter $ \realStdout -> do
         hSetBuffering realStdout LineBuffering
         l <- contramap DAPLog <$> mainLogger hdbOpts.verbosity realStdout
-        runDAPServerWithLogger (contramap DAPLibraryLog l) config
+        let ld = contramap (DAPStdoutForwardingLog . flip WithSeverity Debug) l
+        pure . (ld,) $ runDAPServerWithLogger (contramap DAPLibraryLog l) config
           (talk l servConf internalInterpreter)
           (ack l )
     HdbCLI{..} -> do
@@ -182,7 +183,7 @@ main = do
         withInterceptedStdoutForwarding
           (\interceptedOut -> T.hPutStrLn stderr ("[INTERCEPTED STDOUT] " <> interceptedOut))
           (\realStdout -> k realStdout)
-      | otherwise = k stdout
+      | otherwise = join $ snd <$> k stdout
 
 handleNoHostServer :: IO () -> IO ()
 handleNoHostServer m =

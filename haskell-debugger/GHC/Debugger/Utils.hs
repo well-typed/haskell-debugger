@@ -32,19 +32,19 @@ import GHC.Debugger.Interface.Messages
 -- * Handle utils
 --------------------------------------------------------------------------------
 
-silenceEOF :: Handle -> IO () -> IO ()
-silenceEOF h m = do
+silenceEOF :: LogAction IO T.Text -> Handle -> IO () -> IO ()
+silenceEOF l h m = do
   m `catchNoPropagate`
     \x@(ExceptionWithContext _ctx e) -> do
       if isEOFError e && ioeGetHandle e == Just h
-        then return ()
+        then l <& (T.pack $ "Ignored EOF exception: " ++ displayExceptionWithInfo (toException x))
         else rethrowIO x
 
 -- | Read output from the given handle and write it to the given
 -- log action (forever).
-forwardHandleToLogger :: Handle -> LogAction IO T.Text -> IO ()
-forwardHandleToLogger read_h logger = do
-  silenceEOF read_h forwarding
+forwardHandleToLogger :: LogAction IO T.Text -> Handle -> LogAction IO T.Text -> IO ()
+forwardHandleToLogger l read_h logger = do
+  silenceEOF l read_h forwarding
   where
     forwarding = forever $ do
       -- Mask exceptions to avoid being killed between reading

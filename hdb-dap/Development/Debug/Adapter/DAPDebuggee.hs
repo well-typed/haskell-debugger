@@ -57,8 +57,8 @@ data DAPDebuggee = DAPDebuggee
   }
 
 
-internalNoInTerminalDAPD :: Applicative f => f DAPDebuggee
-internalNoInTerminalDAPD
+internalNoInTerminalDAPD :: Applicative f => LogAction IO DAPSessionLog -> f DAPDebuggee
+internalNoInTerminalDAPD l
   -- Not using the terminal proxy, but we still want to output our own
   -- stdout/err (from the internal interpreter) as console events.
   = do
@@ -66,15 +66,16 @@ internalNoInTerminalDAPD
           { interpreterFlags = mkInternalInterpreterFlags
           , interpreterSetup = mkInternalInterpreterSetup
           }
+    let ld = contramap (ForwardingThreadLog . flip WithSeverity Debug) l
     pure $
       DAPDebuggee
         interpSettings
         (pure ())
-        [ stdoutCaptureThread (const $ pure ()), stderrCaptureThread (const $ pure ()) ]
+        [ stdoutCaptureThread ld (const $ pure ()), stderrCaptureThread ld (const $ pure ()) ]
         (pure ())
 
-externalNoInTerminalDAPD :: MonadIO f => FilePath -> [String] -> f DAPDebuggee
-externalNoInTerminalDAPD hdbProg extraInterpArgs = do
+externalNoInTerminalDAPD :: MonadIO f => LogAction IO DAPSessionLog -> FilePath -> [String] -> f DAPDebuggee
+externalNoInTerminalDAPD l hdbProg extraInterpArgs = do
   iserv_handles <- liftIO newEmptyMVar
   let interpSettings = InterpreterSettings
         { interpreterFlags = mkExternalInterpreterFlags hdbProg extraInterpArgs
@@ -90,12 +91,13 @@ externalNoInTerminalDAPD hdbProg extraInterpArgs = do
   where
     fwdThread iserv_handles logOut logErr = annotateStackStringIO "External interpreter forwarding parent thread" $ do
       (_, Just serv_out, Just serv_err, _) <- takeMVar iserv_handles
+      let ld = contramap (ForwardingThreadLog . flip WithSeverity Debug) l
       concurrently_
-        (annotateStackStringIO "External interpreter stderr forwarding" $ forwardHandleToLogger serv_err logErr)
-        (annotateStackStringIO "External interpreter stdout forwarding" $ forwardHandleToLogger serv_out logOut)
+        (annotateStackStringIO "External interpreter stderr forwarding" $ forwardHandleToLogger ld serv_err logErr)
+        (annotateStackStringIO "External interpreter stdout forwarding" $ forwardHandleToLogger ld serv_out logOut)
 
-externalInTerminalDAPD :: MonadIO m => FilePath -> [String] -> m DAPDebuggee
-externalInTerminalDAPD hdbProg extraInterpArgs
+externalInTerminalDAPD :: MonadIO m => LogAction IO DAPSessionLog -> FilePath -> [String] -> m DAPDebuggee
+externalInTerminalDAPD _l hdbProg extraInterpArgs
   -- No additional bookkeeping is needed in this case because GHC will
   -- naturally have to wait for the external interpreter in order to start execution
   = liftIO $ do
@@ -136,10 +138,11 @@ internalInTerminalDAPD l hdbProg = liftIO $ do
     bracketOnError openSocketAvailablePort close $ \ sock -> do
     serverPort <- socketPort sock
     serverProxyThread <- do
+      let ld = contramap (ForwardingThreadLog . flip WithSeverity Debug) l
       writeIn <- stdinForwardAction
       pure $ \debugAdapter -> do
         mkServerSideHdbProxy (contramap RunProxyServerLog l) sock
-          writeIn (`stdoutCaptureThread` debugAdapter) (`stderrCaptureThread` debugAdapter) proxyClientReady
+          writeIn (\ k -> stdoutCaptureThread ld k debugAdapter) (\ k -> stderrCaptureThread ld k debugAdapter) proxyClientReady
     let interpSettings = InterpreterSettings
           { interpreterFlags = mkInternalInterpreterFlags
           , interpreterSetup = mkInternalInterpreterSetup
@@ -170,7 +173,7 @@ data DAPSessionLog
   = DAPSessionSetupLog (WithSeverity SessionSetupLog)
   | DAPDebuggerLog Debugger.DebuggerLog
   | RunProxyServerLog (WithSeverity T.Text)
-
+  | ForwardingThreadLog (WithSeverity T.Text)
 
 --------------------------------------------------------------------------------
 -- * Capturing stdout, stderr, and writing to self stdin
@@ -196,26 +199,27 @@ stdinForwardAction = do
 -- NOTE, redirecting the stdout handle is a process-global operation. So this thread
 -- will capture ANY stdout the debuggee emits. Therefore you should never directly
 -- write to stdout, but always write to the appropiate handle.
-stdoutCaptureThread :: (BS.ByteString -> IO ()) -> (DebugAdaptorCont () -> IO ()) -> IO ()
-stdoutCaptureThread msyncOut withAdaptor = do
+stdoutCaptureThread :: LogAction IO T.Text -> (BS.ByteString -> IO ()) -> (DebugAdaptorCont () -> IO ()) -> IO ()
+stdoutCaptureThread l msyncOut withAdaptor = do
   tid <- myThreadId
   labelThread tid "Stdout Capture Thread"
-  withInterceptedStdout $ \_ -> forwardingCaptured msyncOut (withAdaptor . Output.stdout)
+  withInterceptedStdout $ \_ -> forwardingCaptured l msyncOut (withAdaptor . Output.stdout)
 
 -- | Like 'stdoutCaptureThread' but for stderr
-stderrCaptureThread :: (BS.ByteString -> IO ()) -> (DebugAdaptorCont () -> IO ()) -> IO ()
-stderrCaptureThread msyncErr withAdaptor = do
+stderrCaptureThread :: LogAction IO T.Text -> (BS.ByteString -> IO ()) -> (DebugAdaptorCont () -> IO ()) -> IO ()
+stderrCaptureThread l msyncErr withAdaptor = do
   tid <- myThreadId
   labelThread tid "Stderr Capture Thread"
-  withInterceptedStderr $ \_ -> forwardingCaptured msyncErr (withAdaptor . Output.stderr)
+  withInterceptedStderr $ \_ -> forwardingCaptured l msyncErr (withAdaptor . Output.stderr)
 
 forwardingCaptured
-  :: (BS.ByteString -> IO ()) -- ^ send to proxy
+  :: LogAction IO T.Text      -- ^ debug msg
+  -> (BS.ByteString -> IO ()) -- ^ send to proxy
   -> (T.Text -> IO ())        -- ^ send to DAP. 
   -> Handle                   -- ^ captured Handle
   -> IO ()
-forwardingCaptured proxy debugConsole intercepted =
-  forwardHandleToLogger intercepted $ LogAction $ \ line -> do
+forwardingCaptured l proxy debugConsole intercepted =
+  forwardHandleToLogger l intercepted $ LogAction $ \ line -> do
       proxy $ T.encodeUtf8 (line <> "\n")
       -- Always output to Debug Console
       catch
