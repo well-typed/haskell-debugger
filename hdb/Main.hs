@@ -5,7 +5,6 @@ module Main where
 
 import System.Process
 import System.Environment
-import Control.Exception (bracket, uninterruptibleMask, bracketOnError, catchNoPropagate, rethrowIO, displayExceptionWithInfo, Exception (toException))
 import Control.Exception.Backtrace
 
 import DAP
@@ -48,9 +47,13 @@ import GHC.Debugger.Debuggee (mkCliInterpreterSettings)
 import GHC.Debugger.Session (initUniqSupplyIO)
 import GHC.Conc (labelThread)
 import Control.Concurrent
-import GHC.Utils.Exception (ExceptionWithContext(..))
 import System.IO.Error
 import qualified Colog.Core as Logger
+import Control.Exception
+import Data.List (isPrefixOf)
+import System.Directory (doesFileExist)
+import Control.Monad (when)
+import Development.Debug.Adapter.DAPDebuggee (sessionFileEnvVar)
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -99,15 +102,15 @@ main = do
               , interpreterSettings = cliInterpSettings }
         runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs cradleFile
           runConf debugInteractive
-    HdbProxy{port} -> do
+    HdbProxy{port} -> handleNoHostServer $ do
         setBacktraceMechanismState IPEBacktrace True
         l <- mainLogger hdbOpts.verbosity stdout
-        runInTerminalHdbProxy (contramap RunProxyClientLog l) port
+        runInTerminalHdbProxy (contramap RunProxyClientLog l) port `onConnectionError` throwIO NoHostServer
     HdbExternalInterpreter{writeFd, readFd} -> do
       inh  <- GHCi.readGhcHandle (show readFd)
       outh <- GHCi.readGhcHandle (show writeFd)
       runExternalInterpreterServer inh outh hdbOpts.verbosity
-    HdbExternalInterpreterPort{port} -> do
+    HdbExternalInterpreterPort{port} -> handleNoHostServer $ do
       pid <- getCurrentPid
       let l = externalLogger hdbOpts.verbosity
       withExternalInterpreterPort l (fromIntegral port) $ \h -> do
@@ -158,7 +161,7 @@ main = do
         (\sock -> do
             -- Don't delay, avoids batching
             setSocketOption sock NoDelay 1
-            connect sock (addrAddress addr)
+            connect sock (addrAddress addr) `onConnectionError` throwIO NoHostServer
             h <- socketToHandle sock ReadWriteMode
             hSetBuffering h NoBuffering
             return h)
@@ -181,6 +184,30 @@ main = do
           (\realStdout -> k realStdout)
       | otherwise = k stdout
 
+handleNoHostServer :: IO () -> IO ()
+handleNoHostServer m =
+  catch m $ \NoHostServer -> do
+    ms <- lookupEnv $ T.unpack sessionFileEnvVar
+    let fallback = hPutStrLn stderr "Could not connect to debug adapter server. Check Haskell Debugger logs to determine what went wrong."
+    case ms of
+      Nothing -> fallback
+      Just s  -> do
+        b <- doesFileExist s
+        when b $ fallback
+
+onConnectionError :: IO () -> IO () -> IO ()
+onConnectionError m k =
+  catchNoPropagate m $ \case
+    ExceptionWithContext _ e
+      | isDoesNotExistError e
+        && "Network.Socket.connect:" `isPrefixOf` ioeGetLocation e
+        -> k
+    x   -> rethrowIO x
+
+data NoHostServer = NoHostServer
+ deriving Show
+
+instance Exception NoHostServer
 
 
 --------------------------------------------------------------------------------

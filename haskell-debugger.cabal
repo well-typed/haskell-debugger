@@ -244,6 +244,7 @@ library dap-server
         implicit-hie ^>=0.1.4.0,
         transformers >= 0.6 && < 0.7,
         time,
+        temporary >=1.3 && < 1.4,
 
         directory >= 1.3.9 && < 1.4,
         network >= 3.2.8 && < 3.3,

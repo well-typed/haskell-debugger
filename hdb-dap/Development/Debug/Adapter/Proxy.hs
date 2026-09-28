@@ -44,6 +44,7 @@ import Colog.Core
 import Development.Debug.Adapter
 import qualified Control.Exception as E
 import GHC.Debugger.Interface.Messages (unAbs)
+import Data.Text (Text)
 
 -- | Fork a new thread to run the server-side of the proxy.
 --
@@ -171,9 +172,8 @@ runInTerminalHdbProxy l port = do
     Just inv ->
       putStrLn $ "Running the debugger input/output proxy for the following debuggee execution:\n\n\n    " ++ inv ++ "\n\n"
   let settings = defaultSettings { settingsOpenClientSocket = openClientSocketWithOptions [(NoDelay,1)] }
-  -- Other IOErrors are caught below, so only connection IOErrors propagate here.
-  handleIOError (hPutStrLn stderr "Failed to connect to debugger server proxy -- did the debuggee compile and start running successfully?") $
-    runTCPClientWithSettings settings "127.0.0.1" (show port) $ \sock -> do
+
+  runTCPClientWithSettings settings "127.0.0.1" (show port) $ \sock -> do
       -- Forward stdin to sock
       concurrently_
         (handleIOError (pure ()) $ -- connection dropped or stdin closed, just stop.
@@ -199,8 +199,8 @@ runInTerminalHdbProxy l port = do
 
 -- | Send a 'runInTerminal' reverse request to the DAP client
 -- with the @hdb proxy@ invocation
-sendRunProxyInTerminal :: FilePath -> PortNumber -> DebugAdaptor ()
-sendRunProxyInTerminal hdbProg port = do
+sendRunProxyInTerminal :: FilePath -> PortNumber -> H.HashMap Text Text -> DebugAdaptor ()
+sendRunProxyInTerminal hdbProg port env = do
   DAS { entryFile
       , entryPoint
       , entryArgs
@@ -213,6 +213,6 @@ sendRunProxyInTerminal hdbProg port = do
       , runInTerminalRequestArgumentsTitle = Just debuggee_inv
       , runInTerminalRequestArgumentsCwd = ""
       , runInTerminalRequestArgumentsArgs = [T.pack hdbProg, "proxy", "--port", T.pack (show port)]
-      , runInTerminalRequestArgumentsEnv = Just (H.singleton "DEBUGGEE_INVOCATION" debuggee_inv)
+      , runInTerminalRequestArgumentsEnv = Just (H.singleton "DEBUGGEE_INVOCATION" debuggee_inv <> env )
       , runInTerminalRequestArgumentsArgsCanBeInterpretedByShell = False
       }
