@@ -23,6 +23,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Control.Monad.Trans
 import System.IO
+import System.IO.Temp
 import Control.Monad.Catch
 import Control.Exception (throwIO, IOException)
 import Control.Concurrent
@@ -42,6 +43,8 @@ import Development.Debug.Adapter.Proxy
 import Network.Socket (socketPort, close)
 import GHC.Debugger.Debuggee as Debugger
 import GHC.Debugger.Utils (forwardHandleToLogger)
+import qualified Data.HashMap.Strict as HM
+import System.Directory (removeFile)
 
 data DAPDebuggee = DAPDebuggee
   { dapdInterpreterSettings :: InterpreterSettings
@@ -108,12 +111,13 @@ externalInTerminalDAPD hdbProg extraInterpArgs
           $ extInterpFromListeningSocket sock
       }
   extInterpPort <- liftIO $ socketPort sock
+  tempfile <- liftIO $ emptySystemTempFile "hdb-session.tmp"
   pure $
     DAPDebuggee
     interpSettings
     (pure ())
     -- When session is killed the socket is closed too.
-    [\ _ -> forever (threadDelay 100_000_000) `finally` Network.Socket.close sock]
+    [\ _ -> forever (threadDelay 100_000_000) `finally` Network.Socket.close sock `finally` removeFile tempfile ]
     (sendRunInTerminalReverseRequest
       RunInTerminalRequestArguments
         { runInTerminalRequestArgumentsKind = Just RunInTerminalRequestArgumentsKindIntegrated
@@ -122,7 +126,7 @@ externalInTerminalDAPD hdbProg extraInterpArgs
         , runInTerminalRequestArgumentsArgs =
             [T.pack hdbProg, "external-interpreter", "--port", T.pack (show extInterpPort)]
             ++ map T.pack extraInterpArgs
-        , runInTerminalRequestArgumentsEnv = Nothing
+        , runInTerminalRequestArgumentsEnv = Just $ HM.singleton sessionFileEnvVar $ T.pack tempfile
         , runInTerminalRequestArgumentsArgsCanBeInterpretedByShell = False
         })
 
@@ -143,16 +147,20 @@ internalInTerminalDAPD l hdbProg = liftIO $ do
         waitForDebuggee =
           -- Only start executing after proxy client connects succesfully (#95)
           takeMVar proxyClientReady
+    tempfile <- liftIO $ emptySystemTempFile "hdb-session.tmp"
     pure $ DAPDebuggee
       interpSettings
       waitForDebuggee
-      [ serverProxyThread ]
+      [ \ dap -> serverProxyThread dap `finally` removeFile tempfile ]
 
       -- When using the internal interpreter and 'runInTerminal' is supported
       -- (the 'RunProxyInTerminal' case), we ask the DAP client to launch the
       -- `hdb proxy` attached to the user's terminal. The proxy forwards
       -- input/output from the user terminal to the debugger+debuggee shared process
-      (sendRunProxyInTerminal hdbProg serverPort)
+      (sendRunProxyInTerminal hdbProg serverPort $ HM.singleton sessionFileEnvVar $ T.pack tempfile)
+
+sessionFileEnvVar :: T.Text
+sessionFileEnvVar = "SESSIONFILE"
 
 --------------------------------------------------------------------------------
 -- * Logging
