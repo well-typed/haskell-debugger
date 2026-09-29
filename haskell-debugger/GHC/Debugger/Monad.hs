@@ -314,6 +314,8 @@ However, this check is incorrect(!) when the external interpreter process is
 not a child of this process (which will happen in the runInTerminal external
 interpreter case). `getProcessExitCode` should error with `ECHILD` in this case
 (see `man 2 wait`), even if it doesn't yet (see process#359).
+Note that `getProcessExitCode` is also called when handling any I/O or parsing
+error during communication with the external interpreter.
 
 Therefore, the debugger must step in and make sure the external interpreter is
 exited cleanly, WITHOUT resorting to `getProcessExitCode`. To this effect, we
@@ -321,6 +323,30 @@ add our own `MC.finally cleanupInterp` call which sends the `Shutdown` message
 to the external interpreter before propagating the exception further (to GHC's
 `withCleanupSession`, which will now do Nothing because we set `InterpPending`,
 and beyond).
+
+To get the external interpreter (EI) to shutdown cleanly we adopt this sequence:
+1. Interrupt the EI process.
+   - Delivers UserInterrupt to whatever is being evaluated, or gets ignored.
+2. Send `Shutdown`
+3. Check for EOF from EI's Pipe. This is done by reading from it with a 1s timeout.
+   a. If EOF then EI must have closed the pipe while shutting down: success.
+   b. Otherwise, repeat steps 1-3 but send sigKILL if we reach 3.b again.
+
+EI sets up signal handlers so that an interrupt is redirected as an
+UserInterrupt exception to its server loop thread. Then two things can happen:
+- if waiting for debuggee to stop running, the UserInterrupt
+  will be redirected to the user code thread.
+- otherwise, the UserInterrupt will be ignored.
+
+In the first case, the debuggee might just ignore the UserInterrupt, in which
+case the server loop is again stuck waiting for the debuggee to end. Repeating
+step 1 of our sequence is meant to help with that.
+Note this will not help if the server loop is blocked while delivering the first
+UserInterrupt to the debuggee though, because the throwTo is done without
+unmasking.
+
+The sequence is modified for `terminateDebuggee` to just report the status
+rather signal with `sigKILL` when reaching 3.b again.
 
 Note [Must explicitly expose module graph units]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
