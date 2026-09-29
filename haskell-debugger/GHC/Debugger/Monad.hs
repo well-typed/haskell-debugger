@@ -137,7 +137,7 @@ runDebuggerAction :: forall a. LogAction IO DebuggerLog
   -> Debugger a
   -> Ghc a
 runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
-  = flip MC.finally (cleanupInterp l True) $
+  = flip MC.finally (cleanupInterp l KillMode) $
           -- See Note [Shutting down the external interpreter]
   do
   dflags0 <- GHC.getSessionDynFlags
@@ -276,7 +276,7 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
       modifySession (\hsc_env -> hsc_env {hsc_IC = GHCi.setInteractivePrintName (hsc_IC hsc_env) noPrint})
 
       runReaderT action
-        =<< initialDebuggerState (liftLogIO l)
+        =<< initialDebuggerState l
             (if loadedBuiltinModNames == []
               then Nothing
               else Just hdv_uid)
@@ -377,12 +377,19 @@ one.
 See also #283
 -}
 
+terminateDebuggee :: Debugger Bool
+terminateDebuggee = do
+  l <- asks dbgLogger
+  liftGhc $ cleanupInterp (liftLogIO l) TerminateMode
+
+data CleanupMode = TerminateMode | KillMode
+
 -- | See Note [Shutting down the external interpreter]
 -- Can be called from main debug thread to try and stop debuggee/interp process.
 -- Reports whether we can presume success.
 -- Escalates to sigKILL if called with True.
-cleanupInterp :: LogAction IO DebuggerLog -> Bool -> Ghc Bool
-cleanupInterp l kill = do
+cleanupInterp :: LogAction IO DebuggerLog -> CleanupMode -> Ghc Bool
+cleanupInterp l mode = do
   interp <- hscInterp <$> getSession
   case interpInstance interp of
     InternalInterp -> do
@@ -399,7 +406,7 @@ cleanupInterp l kill = do
              tryStoppingExtInterp i $ finalTry i
          where
            finalTry i
-             | kill = do
+             | KillMode <- mode = do
                killProcess' i.instProcess.interpHandle
                success
              | otherwise = pure (InterpRunning i,False)
