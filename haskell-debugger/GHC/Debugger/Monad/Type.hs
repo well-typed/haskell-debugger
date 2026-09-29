@@ -103,7 +103,7 @@ data DebuggerState = DebuggerState
       --
       -- If the user explicitly disabled custom views, use @Nothing@.
 
-      , dbgLogger :: LogAction Debugger DebuggerLog
+      , dbgLogger :: LogAction IO DebuggerLog
       -- ^ See Note [Debugger, debuggee, and DAP logs]
       }
 
@@ -188,7 +188,7 @@ data ProjectDebugSpec = ProjectDebugSpec
 --------------------------------------------------------------------------------
 
 -- | Initialize a 'DebuggerState'
-initialDebuggerState :: LogAction Debugger DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
+initialDebuggerState :: LogAction IO DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
 initialDebuggerState l hsDbgViewUid =
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
@@ -239,4 +239,4 @@ logSDoc :: Logger.Severity -> SDoc -> Debugger ()
 logSDoc sev doc = do
   dflags <- getDynFlags
   l <- asks dbgLogger
-  l <& DebuggerLog sev (LogSDoc dflags doc)
+  liftLogIO l <& DebuggerLog sev (LogSDoc dflags doc)
