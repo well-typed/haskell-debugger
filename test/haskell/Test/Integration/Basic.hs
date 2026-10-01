@@ -141,29 +141,23 @@ multiModuleStandaloneBreakpoints2 =
       disconnect
 
 debuggeeIdleDisconnectTest :: IO ()
-debuggeeIdleDisconnectTest = debuggeeIdleTestSetup $ \server -> do
+debuggeeIdleDisconnectTest = debuggeeIdleTestSetup $ do
   disconnect
   waitFiltering_ EventTy "terminated"
   assertFullOutput "debuggee shutting down"
-  liftIO $ putStrLn "ACTUALLY DISCONNECTED"
-  liftIO $ do
-    let (o,e) = testDAPServerPaths server
-    output <- readFile o
-    err <- readFile e
-    putStrLn (output ++ "\nERR\n\n" ++ err)
 
 debuggeeIdleTerminateTest :: IO ()
-debuggeeIdleTerminateTest = debuggeeIdleTestSetup $ \server -> do
+debuggeeIdleTerminateTest = debuggeeIdleTestSetup $ do
   terminate
   waitFiltering_ EventTy "terminated"
   assertFullOutput "debuggee shutting down"
 
 debuggeeIdleTestSetupTest :: IO ()
-debuggeeIdleTestSetupTest = debuggeeIdleTestSetup $ \server -> do
+debuggeeIdleTestSetupTest = debuggeeIdleTestSetup $ do
   (_ :: Value) <- waitFiltering' EventTy (stdoutMatch "Started\n")
   pure ()
 
-debuggeeIdleTestSetup :: (TestDAPServer -> TestDAP ()) -> IO ()
+debuggeeIdleTestSetup :: TestDAP () -> IO ()
 debuggeeIdleTestSetup test = do
   let projectRoot = "test/integration/T325a"
   let entryFile = "T325a.hs"
@@ -173,7 +167,7 @@ debuggeeIdleTestSetup test = do
       _ <- sync $ launchWith cfg
       waitFiltering_ EventTy "initialized"
       _ <- sync configurationDone
-      withTimeout $ test server
+      withTimeout test
   where
     -- we do our own timeout check as it's part of the spec and plays better
     -- with withTestDAPServerClient
