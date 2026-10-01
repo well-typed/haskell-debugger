@@ -131,6 +131,12 @@ withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess se
         pure $ ExceptionWithContext ctx $ toException $ HUnitFailure srcpos (msg ++ testDAPServerOutput server)
       e -> do
         putStrLn $ testDAPServerOutput server
+        let (out,err) = testDAPServerPaths server
+        putStrLn =<< readFile out
+        hFlush stdout
+        putStrLn "ERR"
+        hFlush stdout
+        putStrLn =<< readFile err
         hFlush stdout
         pure e
 
