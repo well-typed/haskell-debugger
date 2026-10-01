@@ -64,6 +64,7 @@ startTestDAPServer testDir flags = do
         , P.std_out = P.UseHandle hout
         , P.std_err = P.UseHandle herr
         , P.std_in = P.CreatePipe
+        , P.create_group = True
         }
 
   pid <- fromMaybe 0 <$> P.getPid p
@@ -81,7 +82,7 @@ startTestDAPServer testDir flags = do
     { testDAPServerPort = testPort
     , testDAPServerOutput = flushServerOutput
     , testDAPServerCleanup = do
-        P.cleanupProcess (Just hin, Just hout, Just herr, p)
+        P.cleanupProcess (Just hin, Nothing, Nothing, p)
 
     }
 

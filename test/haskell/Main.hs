@@ -44,9 +44,19 @@ import Test.Integration.Threads (threadsTests)
 import Test.Utils
 import qualified Data.Char as C
 import qualified Data.Text as T
+import System.Posix.Resource
+
+raiseFdLimit :: IO ()
+raiseFdLimit = do
+  lim <- getResourceLimit ResourceOpenFiles
+  let target = case hardLimit lim of
+        ResourceLimit n -> ResourceLimit n
+        _               -> ResourceLimit 10240  -- macOS rejects "infinity"
+  setResourceLimit ResourceOpenFiles lim { softLimit = target }
 
 main :: IO ()
 main = do
+  raiseFdLimit
   env <- getEnvironment
   let mkTest = mkGoldenTest (maybe False read (lookup "KEEP_TEMP_DIRS" env)) env
   golden_tests_paths <- findByExtension [".hdb-test"] "test/golden"
