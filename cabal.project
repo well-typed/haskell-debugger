@@ -4,8 +4,8 @@ allow-newer: ghc-bignum,containers,time,ghc,base,template-haskell
 
 source-repository-package
     type: git
-    location: https://github.com/haskell/hie-bios
-    tag: 96ceadb49af86f77248f12dc3ae77d0dbb1457d5
+    location: https://github.com/Saizan/hie-bios
+    tag: 076a13c183a6875b9c3458fcfa62c2296ebad02e
 
 if !os(windows)
     package *
