@@ -43,6 +43,9 @@ import Development.Debug.Adapter
 import qualified GHC.Utils.Logger as GHC
 import GHC.Debugger.Debuggee (DebuggerLog(..))
 import qualified GHC.Plugins as GHC
+import Control.Monad.Catch
+import Control.Exception
+import Data.String
 
 
 -------------------------------------------------------------------------
@@ -130,6 +133,12 @@ getConfig port = do
     <*> do fromMaybe portDefault . (readMaybe =<<) <$> do lookupEnv "DAP_PORT"
     <*> pure capabilities
     <*> pure True
+
+respondWithErrorOnException :: Adaptor app request a -> Adaptor app request a
+respondWithErrorOnException m = m `Control.Monad.Catch.catch` \ e -> do
+  sendError (fromString (displayExceptionWithInfo e)) Nothing
+  safeDestroyDebugSession
+  throw e
 
 --------------------------------------------------------------------------------
 -- * Talk
