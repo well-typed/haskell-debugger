@@ -206,7 +206,7 @@ hieBiosFlags cradle root relTarget = runExceptT $ do
 unwrapCradleResult :: MonadError String m => [Char] -> HIE.CradleLoadResult a -> m a
 unwrapCradleResult m = \case
   HIE.CradleNone      -> throwError $ "HIE.CradleNone\n" ++ m
-  HIE.CradleFail err  -> throwError $ unlines (HIE.cradleErrorStderr err) ++ "\n" ++ m
+  HIE.CradleFail err  -> throwError $ show err ++ "\n" ++ m
   HIE.CradleSuccess x -> return x
 
 extractUnits :: [String] -> ([String], [String])
