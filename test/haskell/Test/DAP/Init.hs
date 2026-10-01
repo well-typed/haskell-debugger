@@ -9,7 +9,6 @@ module Test.DAP.Init where
 
 ----------------------------------------------------------------------------
 import Data.Maybe
-import Data.List (isInfixOf)
 import           Control.Exception hiding (handle)
 import           Network.Run.TCP
 import           Network.Socket             (Family(AF_INET), SockAddr(SockAddrInet, SockAddrInet6), SocketOption(ReuseAddr), SocketType(Stream), bind, close, defaultProtocol, getSocketName, setSocketOption, socket, socketToHandle, tupleToHostAddress)
@@ -35,6 +34,7 @@ import DAP.Types (OutputEvent (..), StoppedEvent (..))
 import Test.DAP.Messages.Parser
 import DAP.Log (LogAction(..))
 import qualified Data.Text.IO as T
+import System.IO.Error (ioeGetLocation)
 
 --------------------------------------------------------------------------------
 -- * Launch the DAP server process (what we're testing)
@@ -143,9 +143,17 @@ withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess se
         clientEvents               <- newTChanIO
         clientFullOutput           <- newTVarIO []
         let ctx = TestDAPClientContext{..}
-        join $ either (\x -> putStrLn "continue RETURNED" >> hFlush stdout >> pure x) (\() -> error "handleServerTestDAP unexpectedly returned") <$> race
+        r <- race
           (runTestDAP continue ctx)
           (runTestDAP handleServerTestDAP ctx)
+        case r of
+          Left x -> do
+           putStrLn "continue RETURNED"
+           hFlush stdout
+           pure x
+          Right () -> do
+            putStrLn "handleServerTestDAP unexpectedly returned"
+            throwIO (userError "handleServerTestDAP unexpectedly returned")
 
 -- | Spawns a new mock client that connects to the mock server.
 withNewClient :: forall a. Int -- ^ Port
@@ -160,7 +168,7 @@ withNewClient port continue = do
   where
     retry_handlers =
       skipAsyncExceptions ++
-      [const $ Control.Monad.Catch.Handler $ \ (e :: IOException) -> return $ "Network.Socket.connect" `isInfixOf` show e]
+      [const $ Control.Monad.Catch.Handler $ \ (e :: IOException) -> return $ ioeGetLocation e == "Network.Socket.connect"]
 
 --------------------------------------------------------------------------------
 -- ** Handle server responses, events, and reverse requests
