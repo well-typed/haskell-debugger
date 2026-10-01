@@ -4,7 +4,7 @@ import Control.Concurrent
 import Control.Monad
 import Control.Exception
 import System.IO
-
+main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   putStrLn "Started"
