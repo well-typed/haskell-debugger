@@ -227,5 +227,5 @@ jobs:
           if [ "$RUNNER_OS" == "Windows" ]; then
             cabal run haskell-debugger-test
           else
-            cabal run haskell-debugger-test --enable-executable-dynamic -- -p 'Ending session' -j1
+            cabal run haskell-debugger-test --enable-executable-dynamic
           fi
