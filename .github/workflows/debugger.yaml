@@ -224,6 +224,7 @@ jobs:
       - name: Build and Run Haskell tests
         shell: bash
         run: |
+          export PRINT_FULL_SERVER_OUTPUT=True
           if [ "$RUNNER_OS" == "Windows" ]; then
             cabal run haskell-debugger-test
           else
