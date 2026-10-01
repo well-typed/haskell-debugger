@@ -35,6 +35,7 @@ import Test.DAP.Messages.Parser
 import DAP.Log (LogAction(..))
 import qualified Data.Text.IO as T
 import System.IO.Error (ioeGetLocation)
+import Data.List (isPrefixOf)
 
 --------------------------------------------------------------------------------
 -- * Launch the DAP server process (what we're testing)
@@ -168,7 +169,7 @@ withNewClient port continue = do
   where
     retry_handlers =
       skipAsyncExceptions ++
-      [const $ Control.Monad.Catch.Handler $ \ (e :: IOException) -> return $ ioeGetLocation e == "Network.Socket.connect"]
+      [const $ Control.Monad.Catch.Handler $ \ (e :: IOException) -> return $ "Network.Socket.connect" `isPrefixOf` ioeGetLocation e ]
 
 --------------------------------------------------------------------------------
 -- ** Handle server responses, events, and reverse requests
