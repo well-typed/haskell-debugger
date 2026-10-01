@@ -1,8 +1,11 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DerivingStrategies #-}
 module Development.Debug.Adapter where
 
 import Control.Concurrent
+import Control.Monad.Catch
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.IO.Class (MonadIO(..))
 import qualified Data.IntSet as IS
@@ -18,6 +21,9 @@ import GHC.Debugger.Interface.Messages (AbsFilePath, unAbs)
 type DebugAdaptor = Adaptor DebugAdaptorState Request
 type DebugAdaptorCont = Adaptor DebugAdaptorState ()
 type DebugAdaptorX r = Adaptor DebugAdaptorState r ()
+
+deriving newtype instance MonadThrow (Adaptor a b)
+deriving newtype instance MonadCatch (Adaptor a b)
 
 -- | Debugger state:
 --
