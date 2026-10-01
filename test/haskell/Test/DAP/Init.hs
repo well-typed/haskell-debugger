@@ -120,7 +120,7 @@ withTestDAPServerClient = withTestDAPServerClientWith False (\_ _ -> pure Nothin
 
 --- | Connect a test client to a running 'TestDAPServer', with retry semantics
 --- and server log flushing on failure.
-withTestDAPServerClientWith :: Bool {-^ Announce support for runInTerminal? -} -> (String -> Value -> IO (Maybe Value))
+withTestDAPServerClientWith :: forall a. Bool {-^ Announce support for runInTerminal? -} -> (String -> Value -> IO (Maybe Value))
                             -> TestDAPServer -> TestDAP a -> IO a
 withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess server continue = addServerOutput runClient
   where
@@ -133,6 +133,7 @@ withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess se
         hFlush stdout
         pure e
 
+    runClient :: IO a
     runClient = do
       withNewClient (testDAPServerPort server) $ \clientHandle -> do
         clientCurrentActiveThread  <- newIORef 0
@@ -142,7 +143,7 @@ withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess se
         clientEvents               <- newTChanIO
         clientFullOutput           <- newTVarIO []
         let ctx = TestDAPClientContext{..}
-        either id (\() -> error "handleServerTestDAP unexpectedly returned") <$> race
+        join $ either (\x -> putStrLn "continue RETURNED" >> hFlush stdout >> pure x) (\() -> error "handleServerTestDAP unexpectedly returned") <$> race
           (runTestDAP continue ctx)
           (runTestDAP handleServerTestDAP ctx)
 

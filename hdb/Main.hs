@@ -72,7 +72,7 @@ main = do
     HdbDAPServer{port, internalInterpreter, disableIpeBacktraces} -> do
       setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
       tid <- myThreadId
-      installHandler sigTERM (Catch $ putStrLn "SIGTERM" >> killThread tid) Nothing
+      _ <- installHandler sigTERM (Catch $ putStrLn "SIGTERM" >> killThread tid) Nothing
 
       config <- getConfig port
       -- the same program invoked with `external-interpreter` serves as the external interpreter
