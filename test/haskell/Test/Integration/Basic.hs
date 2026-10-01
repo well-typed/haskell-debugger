@@ -165,8 +165,8 @@ debuggeeIdleTestSetupTest = debuggeeIdleTestSetup $ \server -> do
 
 debuggeeIdleTestSetup :: (TestDAPServer -> TestDAP ()) -> IO ()
 debuggeeIdleTestSetup test = do
-  let projectRoot = "test/integration/T325a/"
-  let entryFile = "T325a/T325a.hs"
+  let projectRoot = "test/integration/T325a"
+  let entryFile = "T325a.hs"
   withTestDAPServer projectRoot [] $ \test_dir server ->
     withTestDAPServerClient server $ do
       let cfg = mkLaunchConfig test_dir entryFile
