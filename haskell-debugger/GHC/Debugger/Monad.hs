@@ -33,7 +33,7 @@ import Prelude hiding (mod)
 import System.Posix.Signals
 #endif
 import qualified Data.List.NonEmpty as NonEmpty
-import System.Process (terminateProcess, interruptProcessGroupOf, getPid, ProcessHandle)
+import System.Process (terminateProcess, interruptProcessGroupOf, getPid, ProcessHandle, waitForProcess)
 import System.Timeout (timeout)
 import System.IO.Error (isEOFError, isResourceVanishedError)
 import Control.Exception
@@ -416,6 +416,7 @@ data CleanupMode = TerminateMode | KillMode
 -- Escalates to sigKILL if called with True.
 cleanupInterp :: LogAction IO DebuggerLog -> CleanupMode -> Ghc Bool
 cleanupInterp l mode = do
+  liftIO $ l <& DebuggerSessionLog Debug (T.pack "INTERP")
   interp <- hscInterp <$> getSession
   case interpInstance interp of
     InternalInterp -> do
@@ -433,10 +434,17 @@ cleanupInterp l mode = do
          where
            finalTry i
              | KillMode <- mode = do
+               l <& DebuggerSessionLog Debug (T.pack "KILLING")
                killProcess' i.instProcess.interpHandle
-               success
+               success i
              | otherwise = pure (InterpRunning i,False)
-           success = pure (InterpPending,True)
+           success i = do
+             -- TODO: only for child
+             
+             l <& DebuggerSessionLog Debug (T.pack "WAITING")
+             e <- waitForProcess i.instProcess.interpHandle
+             l <& DebuggerSessionLog Debug (T.pack $ "EXIT CODE" ++ show e)
+             pure (InterpPending,True)
            tryStoppingExtInterp i keepGoing = MC.mask_ $ do
             -- Can't use  `getProcessExitCode` because the interp process is
             -- not necessarily a child of this process (runInTerminal case).
@@ -461,7 +469,7 @@ cleanupInterp l mode = do
                   Left x
                     | isPipeClosedError x -> do
                       l <& DebuggerSessionLog Debug (T.pack $ displayExceptionWithInfo x)
-                      success
+                      success i
                     | otherwise -> do
                       l <& DebuggerSessionLog Debug (T.pack $ displayExceptionWithInfo x)
                       keepGoing
@@ -487,7 +495,7 @@ cleanupInterp l mode = do
                 -- We read to the end of the pipe, catching EOF?
                 -- I don't believe this ever happens, but it would be a success.
                 l <& DebuggerSessionLog Debug (T.pack $ "cleanupInterp: Read bytes: " ++ show bs)
-                success
+                success i
 
 killProcess' :: ProcessHandle -> IO ()
 #ifdef MIN_VERSION_unix

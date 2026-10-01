@@ -54,6 +54,7 @@ import Data.List (isPrefixOf)
 import System.Directory (doesFileExist)
 import Control.Monad (when, join)
 import Development.Debug.Adapter.DAPDebuggee (sessionFileEnvVar)
+import System.Posix
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -70,10 +71,13 @@ main = do
   case hdbOpts of
     HdbDAPServer{port, internalInterpreter, disableIpeBacktraces} -> do
       setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
+      tid <- myThreadId
+      installHandler sigTERM (Catch $ putStrLn "SIGTERM" >> killThread tid) Nothing
+
       config <- getConfig port
       -- the same program invoked with `external-interpreter` serves as the external interpreter
       hdbProgram <- getExecutablePath
-
+      
       -- See Note [UniqueSupply is process global]
       initUniqSupplyIO
 
