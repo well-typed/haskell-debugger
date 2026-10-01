@@ -27,22 +27,23 @@ import Data.Attoparsec.Text
 
 import Colog.Core as Logger
 import GHC.Debugger.Interface.Messages
+import GHC.Stack
 
 --------------------------------------------------------------------------------
 -- * Handle utils
 --------------------------------------------------------------------------------
 
-silenceEOF :: LogAction IO T.Text -> Handle -> IO () -> IO ()
+silenceEOF :: HasCallStack => LogAction IO T.Text -> Handle -> IO () -> IO ()
 silenceEOF l h m = do
   m `catchNoPropagate`
     \x@(ExceptionWithContext _ctx e) -> do
       if isEOFError e && ioeGetHandle e == Just h
-        then l <& (T.pack $ "Ignored EOF exception: " ++ displayExceptionWithInfo (toException x))
+        then l <& (T.pack $ "Ignored EOF exception: \n" ++ displayExceptionWithInfo (toException x) ++ "\n" ++ prettyCallStack callStack)
         else rethrowIO x
 
 -- | Read output from the given handle and write it to the given
 -- log action (forever).
-forwardHandleToLogger :: LogAction IO T.Text -> Handle -> LogAction IO T.Text -> IO ()
+forwardHandleToLogger :: HasCallStack => LogAction IO T.Text -> Handle -> LogAction IO T.Text -> IO ()
 forwardHandleToLogger l read_h logger = do
   silenceEOF l read_h forwarding
   where
