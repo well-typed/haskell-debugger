@@ -87,7 +87,7 @@ main = do
         l <- contramap DAPLog <$> mainLogger hdbOpts.verbosity realStdout
         let ld = contramap (DAPStdoutForwardingLog . flip WithSeverity Debug) l
         pure . (ld,) $ runDAPServerWithLogger (contramap DAPLibraryLog l) config
-          (talk l servConf internalInterpreter)
+          (respondWithErrorOnException . talk l servConf internalInterpreter)
           (ack l )
     HdbCLI{..} -> do
         setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
