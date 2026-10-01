@@ -155,11 +155,8 @@ withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess se
           (runTestDAP handleServerTestDAP ctx)
         case r of
           Left x -> do
-           putStrLn "continue RETURNED"
-           hFlush stdout
-           pure x
+            pure x
           Right () -> do
-            putStrLn "handleServerTestDAP unexpectedly returned"
             throwIO (userError "handleServerTestDAP unexpectedly returned")
 
 -- | Spawns a new mock client that connects to the mock server.

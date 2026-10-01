@@ -174,7 +174,5 @@ debuggeeIdleTestSetup test = do
     withTimeout (TestDAP m) = TestDAP $ \ env -> do
       x <- timeout 5_000_000 $ m env
       case x of
-        Just a -> do
-          putStrLn "Completed within timeout."
-          pure a
+        Just a  -> pure a
         Nothing -> assertFailure "Timeout after 5s"
