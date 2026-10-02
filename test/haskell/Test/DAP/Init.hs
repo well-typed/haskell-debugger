@@ -33,6 +33,7 @@ import Test.Utils (withHermeticDir)
 import DAP.Types (OutputEvent (..), StoppedEvent (..))
 import Test.DAP.Messages.Parser
 import DAP.Log (LogAction(..))
+import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import System.IO.Error (ioeGetLocation)
 import Data.List (isPrefixOf)
@@ -45,6 +46,7 @@ data TestDAPServer = TestDAPServer
   { testDAPServerPort :: Int
   , testDAPServerCleanup :: IO ()
   , testDAPServerOutput :: String
+  , testDAPServerTestDir :: FilePath
   , testDAPServerPaths :: (String,String)
   }
 
@@ -85,6 +87,7 @@ startTestDAPServer testDir flags = do
     , testDAPServerOutput = flushServerOutput
     , testDAPServerCleanup = do
         P.cleanupProcess (Just hin, Nothing, Nothing, p)
+    , testDAPServerTestDir = testDir
     , testDAPServerPaths = (nameTemplate <.> "out", nameTemplate <.> "err") 
     }
 
@@ -151,12 +154,13 @@ withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess se
         clientFullOutput           <- newTVarIO []
         clientConnectionClosed     <- newTVarIO False
         let ctx = TestDAPClientContext{..}
+        let logger = LogAction $ T.appendFile (testDAPServerTestDir server </> "test_client" <.> "out")
         -- The drainer thread can correctly return early if the connection is
         -- closed.
         --
         -- `continue` could still be working on what we drained so far, or
         -- whatever else, so we don't want to kill it yet.
-        withAsync (runTestDAP handleServerTestDAP ctx) $ \ drainer -> do
+        withAsync (runTestDAP (handleServerTestDAP logger) ctx) $ \ drainer -> do
           link drainer
           runTestDAP continue ctx
 
@@ -180,15 +184,15 @@ withNewClient port continue = do
 --------------------------------------------------------------------------------
 
 -- | Forever: read messages from handle and write them either to clientNonEvents or clientEvents
-handleServerTestDAP :: TestDAP ()
-handleServerTestDAP = do
+handleServerTestDAP :: LogAction IO T.Text -> TestDAP ()
+handleServerTestDAP l = do
   TestDAPClientContext{..} <- ask
   -- we do not set clientConnectionClosed to True on an exception so we don't
   -- create a race between reporting the exception originated here and the one
   -- the TChan consumers might throw when the connections closes.
   -- The actual Handle is closed upstream.
   (>> liftIO (atomically $ writeTVar clientConnectionClosed True)) $
-      silenceEOFTextDAP clientHandle $ forever $ do
+      silenceEOFTextDAP l clientHandle $ forever $ do
     payload <- nextPayload
     liftIO $ case parseMaybe parseType payload of
       Just "event"    -> do
@@ -234,5 +238,5 @@ handleServerTestDAP = do
           msg <- o .:? "message" .!= "DAP response had success: false (no message)"
           pure (msg :: String)
 
-silenceEOFTextDAP :: Handle -> TestDAP () -> TestDAP ()
-silenceEOFTextDAP h m = TestDAP $ \ r -> silenceEOF (LogAction $ T.putStrLn) h $ runTestDAP m r
+silenceEOFTextDAP :: LogAction IO T.Text -> Handle -> TestDAP () -> TestDAP ()
+silenceEOFTextDAP l h m = TestDAP $ \ r -> silenceEOF l h $ runTestDAP m r
