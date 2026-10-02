@@ -44,6 +44,7 @@ data TestDAPServer = TestDAPServer
   { testDAPServerPort :: Int
   , testDAPServerCleanup :: IO ()
   , testDAPServerOutput :: String
+  , testDAPServerPaths :: (String,String)
   }
 
 -- | Launch an @hdb server@ for tests on a random local port and capture stdout.
@@ -82,7 +83,7 @@ startTestDAPServer testDir flags = do
     , testDAPServerOutput = flushServerOutput
     , testDAPServerCleanup = do
         P.cleanupProcess (Just hin, Just hout, Just herr, p)
-
+    , testDAPServerPaths = (nameTemplate <.> "out", nameTemplate <.> "err")
     }
 
 -- | Prefer this to startTestDAPServer
