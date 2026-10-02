@@ -200,6 +200,9 @@ instance ToJSON ValueFormat where
 instance ToJSON DisconnectArguments where
   toJSON = genericToJSONWithModifier
 
+instance ToJSON TerminateArguments where
+    toJSON = genericToJSONWithModifier
+
 instance ToJSON VariablesArguments where
   toJSON VariablesArguments{..} = object $
     [ "variablesReference" .= variablesArgumentsVariablesReference

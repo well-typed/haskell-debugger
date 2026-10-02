@@ -9,9 +9,7 @@ module Test.DAP.Init where
 
 ----------------------------------------------------------------------------
 import Data.Maybe
-import Data.List (isInfixOf)
 import           Control.Exception hiding (handle)
-import qualified Control.Exception as E
 import           Network.Run.TCP
 import           Network.Socket             (Family(AF_INET), SockAddr(SockAddrInet, SockAddrInet6), SocketOption(ReuseAddr), SocketType(Stream), bind, close, defaultProtocol, getSocketName, setSocketOption, socket, socketToHandle, tupleToHostAddress)
 import           System.IO
@@ -21,18 +19,26 @@ import System.Environment (lookupEnv)
 import System.FilePath ((</>), (<.>))
 import qualified System.Process as P
 ----------------------------------------------------------------------------
+import GHC.Debugger.Utils (silenceEOF)
 import           Test.DAP.Messages
 import Control.Concurrent.STM
 import Control.Concurrent.Async
 import Control.Monad.Reader
 import Control.Monad
 import Data.Aeson.Types
-import Test.Tasty.HUnit (assertFailure)
+import Test.Tasty.HUnit (assertFailure, HUnitFailure (..))
 import DAP.Server (readPayload)
 import qualified Control.Monad.Catch
 import Test.Utils (withHermeticDir)
 import DAP.Types (OutputEvent (..), StoppedEvent (..))
 import Test.DAP.Messages.Parser
+import DAP.Log (LogAction(..))
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
+import System.IO.Error (ioeGetLocation)
+import Data.List (isPrefixOf)
+import Control.Exception.Annotation
+import Control.Exception.Context
 
 --------------------------------------------------------------------------------
 -- * Launch the DAP server process (what we're testing)
@@ -41,7 +47,9 @@ import Test.DAP.Messages.Parser
 data TestDAPServer = TestDAPServer
   { testDAPServerPort :: Int
   , testDAPServerCleanup :: IO ()
-  , testDAPServerFlushOutput :: IO ()
+  , testDAPServerOutput :: String
+  , testDAPServerTestDir :: FilePath
+  , testDAPServerPaths :: (String,String)
   }
 
 -- | Launch an @hdb server@ for tests on a random local port and capture stdout.
@@ -62,23 +70,27 @@ startTestDAPServer testDir flags = do
         , P.std_out = P.UseHandle hout
         , P.std_err = P.UseHandle herr
         , P.std_in = P.CreatePipe
+        , P.create_group = True
         }
 
   pid <- fromMaybe 0 <$> P.getPid p
   writeFile (nameTemplate <.> "pid") (show pid)
 
-  let flushServerOutput = do
-        putStrLn "\n--- SERVER OUTPUT ---"
-        putStrLn $ "See: " ++ testDir
-        putStrLn $ "Might need: KEEP_TEMP_DIRS=True"
-        putStrLn "---------------------\n"
+  let flushServerOutput = unlines
+        [ ""
+        , "--- SERVER OUTPUT ---"
+        , "See: " ++ testDir
+        , "Might need: KEEP_TEMP_DIRS=True"
+        , "---------------------"
+        ]
 
   pure TestDAPServer
     { testDAPServerPort = testPort
-    , testDAPServerFlushOutput = flushServerOutput
+    , testDAPServerOutput = flushServerOutput
     , testDAPServerCleanup = do
-        P.cleanupProcess (Just hin, Just hout, Just herr, p)
-
+        P.cleanupProcess (Just hin, Nothing, Nothing, p)
+    , testDAPServerTestDir = testDir
+    , testDAPServerPaths = (nameTemplate <.> "out", nameTemplate <.> "err") 
     }
 
 -- | Prefer this to startTestDAPServer
@@ -112,13 +124,43 @@ getAvailablePort =
 withTestDAPServerClient :: TestDAPServer -> TestDAP a -> IO a
 withTestDAPServerClient = withTestDAPServerClientWith False (\_ _ -> pure Nothing)
 
+data ServerMessages = ServerMessages { server_output :: String, server_err :: String }
+  deriving Show
+instance ExceptionAnnotation ServerMessages where
+  displayExceptionAnnotation ServerMessages{..} =
+    unlines $ [server_output, server_err]
+
 --- | Connect a test client to a running 'TestDAPServer', with retry semantics
 --- and server log flushing on failure.
-withTestDAPServerClientWith :: Bool {-^ Announce support for runInTerminal? -} -> (String -> Value -> IO (Maybe Value))
+withTestDAPServerClientWith :: forall a. Bool {-^ Announce support for runInTerminal? -} -> (String -> Value -> IO (Maybe Value))
                             -> TestDAPServer -> TestDAP a -> IO a
-withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess server continue = do
-  runClient `E.onException` testDAPServerFlushOutput server
+withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess server continue = addServerOutput runClient
   where
+    addServerOutput m = catchNoPropagate m $ (rethrowIO =<<) . annotate
+    annotate = \case
+      (ExceptionWithContext ctx e) -> do
+        ann <- lookupEnv "PRINT_FULL_SERVER_OUTPUT" >>= \case
+          Nothing -> do
+            let server_output = testDAPServerOutput server
+            let server_err = ""
+            pure ServerMessages{..}
+          Just{} -> do
+            let (out,err) = testDAPServerPaths server
+            let bracketWithPath path s =
+                  concat ["--- ", path, " ---\n", s, "--- END ", path, " ---\n"]
+            server_output <- (testDAPServerOutput server ++) . bracketWithPath out <$> readFile out
+            server_err <- bracketWithPath err <$> readFile err
+            pure ServerMessages{..}
+
+        -- HUnitFailure is special cased by `testCase` which disregards the
+        -- exception context, so we embed the output in the message.
+        let e' | Just (HUnitFailure srcpos msg) <- fromException e
+              = toException $ HUnitFailure srcpos (msg ++ "\n" ++ displayExceptionAnnotation ann)
+               | otherwise
+              = e
+        pure $ ExceptionWithContext (addExceptionAnnotation ann ctx) e'
+
+    runClient :: IO a
     runClient = do
       withNewClient (testDAPServerPort server) $ \clientHandle -> do
         clientCurrentActiveThread  <- newIORef 0
@@ -127,10 +169,17 @@ withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess se
         clientResponses            <- newTChanIO
         clientEvents               <- newTChanIO
         clientFullOutput           <- newTVarIO []
+        clientConnectionClosed     <- newTVarIO False
         let ctx = TestDAPClientContext{..}
-        either id (\() -> error "handleServerTestDAP unexpectedly returned") <$> race
-          (runTestDAP continue ctx)
-          (runTestDAP handleServerTestDAP ctx)
+        let logger = LogAction $ T.appendFile (testDAPServerTestDir server </> "test_client" <.> "out")
+        -- The drainer thread can correctly return early if the connection is
+        -- closed.
+        --
+        -- `continue` could still be working on what we drained so far, or
+        -- whatever else, so we don't want to kill it yet.
+        withAsync (runTestDAP (handleServerTestDAP logger) ctx) $ \ drainer -> do
+          link drainer
+          runTestDAP continue ctx
 
 -- | Spawns a new mock client that connects to the mock server.
 withNewClient :: forall a. Int -- ^ Port
@@ -145,17 +194,22 @@ withNewClient port continue = do
   where
     retry_handlers =
       skipAsyncExceptions ++
-      [const $ Control.Monad.Catch.Handler $ \ (e :: IOException) -> return $ "Network.Socket.connect" `isInfixOf` show e]
+      [const $ Control.Monad.Catch.Handler $ \ (e :: IOException) -> return $ "Network.Socket.connect" `isPrefixOf` ioeGetLocation e ]
 
 --------------------------------------------------------------------------------
 -- ** Handle server responses, events, and reverse requests
 --------------------------------------------------------------------------------
 
 -- | Forever: read messages from handle and write them either to clientNonEvents or clientEvents
-handleServerTestDAP :: TestDAP ()
-handleServerTestDAP = do
+handleServerTestDAP :: LogAction IO T.Text -> TestDAP ()
+handleServerTestDAP l = do
   TestDAPClientContext{..} <- ask
-  forever $ do
+  -- we do not set clientConnectionClosed to True on an exception so we don't
+  -- create a race between reporting the exception originated here and the one
+  -- the TChan consumers might throw when the connections closes.
+  -- The actual Handle is closed upstream.
+  (>> liftIO (atomically $ writeTVar clientConnectionClosed True)) $
+      silenceEOFTextDAP l clientHandle $ forever $ do
     payload <- nextPayload
     liftIO $ case parseMaybe parseType payload of
       Just "event"    -> do
@@ -200,3 +254,6 @@ handleServerTestDAP = do
         else do
           msg <- o .:? "message" .!= "DAP response had success: false (no message)"
           pure (msg :: String)
+
+silenceEOFTextDAP :: LogAction IO T.Text -> Handle -> TestDAP () -> TestDAP ()
+silenceEOFTextDAP l h m = TestDAP $ \ r -> silenceEOF l h $ runTestDAP m r

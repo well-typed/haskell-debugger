@@ -1,12 +1,13 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DerivingStrategies #-}
 module Development.Debug.Adapter where
 
 import Control.Concurrent
-import Control.Monad (void)
+import Control.Monad.Catch
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.IO.Class (MonadIO(..))
-import Control.Monad.Trans.Control (liftBaseDiscard)
 import qualified Data.IntSet as IS
 import qualified Data.Map as Map
 import qualified Data.IntMap as IM
@@ -20,6 +21,9 @@ import GHC.Debugger.Interface.Messages (AbsFilePath, unAbs)
 type DebugAdaptor = Adaptor DebugAdaptorState Request
 type DebugAdaptorCont = Adaptor DebugAdaptorState ()
 type DebugAdaptorX r = Adaptor DebugAdaptorState r ()
+
+deriving newtype instance MonadThrow (Adaptor a b)
+deriving newtype instance MonadCatch (Adaptor a b)
 
 -- | Debugger state:
 --
@@ -53,10 +57,14 @@ instance MonadFail DebugAdaptor where
   fail a = sendError (ErrorMessage (T.pack a)) Nothing
 
 safeDestroyDebugSession :: Adaptor app request ()
-safeDestroyDebugSession = void $ do
-  -- Without forkIO we might kill ourselves first and not kill anything else.
-  liftBaseDiscard forkIO $
-    destroyDebugSession `catchError` \ e -> liftIO $ putStrLn ("safeDestroyDebugSession: ignoring missing session: " ++ show e)
+safeDestroyDebugSession = do
+  destroyDebugSession `catchError` \ e -> liftIO $ putStrLn ("safeDestroyDebugSession: ignoring missing session: " ++ show e)
+
+-- | Thrown from commandDisconnect so the DAP lib disconnects from client.
+data DisconnectDAPClientCleanly = DisconnectDAPClientCleanly
+  deriving Show
+
+instance Exception DisconnectDAPClientCleanly
 
 --------------------------------------------------------------------------------
 -- * Utilities

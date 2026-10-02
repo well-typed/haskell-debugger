@@ -12,6 +12,7 @@ import Control.Monad
 import Control.Applicative
 import Control.Exception
 import System.IO
+import System.IO.Error
 
 import GHC
 import GHC.Data.FastString
@@ -26,20 +27,25 @@ import Data.Attoparsec.Text
 
 import Colog.Core as Logger
 import GHC.Debugger.Interface.Messages
+import GHC.Stack
 
 --------------------------------------------------------------------------------
 -- * Handle utils
 --------------------------------------------------------------------------------
 
+silenceEOF :: HasCallStack => LogAction IO T.Text -> Handle -> IO () -> IO ()
+silenceEOF l h m = do
+  m `catchNoPropagate`
+    \x@(ExceptionWithContext _ctx e) -> do
+      if isEOFError e && ioeGetHandle e == Just h
+        then l <& (T.pack $ "Ignored EOF exception: \n" ++ displayExceptionWithInfo (toException x) ++ "\n" ++ prettyCallStack callStack)
+        else rethrowIO x
+
 -- | Read output from the given handle and write it to the given
 -- log action (forever).
-forwardHandleToLogger :: Handle -> LogAction IO T.Text -> IO ()
-forwardHandleToLogger read_h logger = do
-  forwarding `catch` -- handles read EOF
-    \(_e::SomeException) -> do
-      -- Cleanly exit on exception
-      -- print _e
-      return ()
+forwardHandleToLogger :: HasCallStack => LogAction IO T.Text -> Handle -> LogAction IO T.Text -> IO ()
+forwardHandleToLogger l read_h logger = do
+  silenceEOF l read_h forwarding
   where
     forwarding = forever $ do
       -- Mask exceptions to avoid being killed between reading

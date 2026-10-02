@@ -5,7 +5,6 @@ module Main where
 
 import System.Process
 import System.Environment
-import Control.Exception (bracket, uninterruptibleMask, bracketOnError)
 import Control.Exception.Backtrace
 
 import DAP
@@ -48,6 +47,14 @@ import GHC.Debugger.Debuggee (mkCliInterpreterSettings)
 import GHC.Debugger.Session (initUniqSupplyIO)
 import GHC.Conc (labelThread)
 import Control.Concurrent
+import System.IO.Error
+import qualified Colog.Core as Logger
+import Control.Exception
+import Data.List (isPrefixOf)
+import System.Directory (doesFileExist)
+import Control.Monad (when, join)
+import Development.Debug.Adapter.DAPDebuggee (sessionFileEnvVar)
+import System.Posix
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -64,10 +71,13 @@ main = do
   case hdbOpts of
     HdbDAPServer{port, internalInterpreter, disableIpeBacktraces} -> do
       setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
+      tid <- myThreadId
+      _ <- installHandler sigTERM (Catch $ putStrLn "SIGTERM" >> killThread tid) Nothing
+
       config <- getConfig port
       -- the same program invoked with `external-interpreter` serves as the external interpreter
       hdbProgram <- getExecutablePath
-
+      
       -- See Note [UniqueSupply is process global]
       initUniqSupplyIO
 
@@ -79,8 +89,9 @@ main = do
       redirectRealStdout internalInterpreter $ \realStdout -> do
         hSetBuffering realStdout LineBuffering
         l <- contramap DAPLog <$> mainLogger hdbOpts.verbosity realStdout
-        runDAPServerWithLogger (contramap DAPLibraryLog l) config
-          (talk l servConf internalInterpreter)
+        let ld = contramap (DAPStdoutForwardingLog . flip WithSeverity Debug) l
+        pure . (ld,) $ runDAPServerWithLogger (contramap DAPLibraryLog l) config
+          (respondWithErrorOnException . talk l servConf internalInterpreter)
           (ack l )
     HdbCLI{..} -> do
         setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
@@ -96,21 +107,25 @@ main = do
               , interpreterSettings = cliInterpSettings }
         runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs cradleFile
           runConf debugInteractive
-    HdbProxy{port} -> do
+    HdbProxy{port} -> handleNoHostServer $ do
         setBacktraceMechanismState IPEBacktrace True
         l <- mainLogger hdbOpts.verbosity stdout
-        runInTerminalHdbProxy (contramap RunProxyClientLog l) port
+        runInTerminalHdbProxy (contramap RunProxyClientLog l) port `onConnectionError` throwIO NoHostServer
     HdbExternalInterpreter{writeFd, readFd} -> do
       inh  <- GHCi.readGhcHandle (show readFd)
       outh <- GHCi.readGhcHandle (show writeFd)
       runExternalInterpreterServer inh outh hdbOpts.verbosity
-    HdbExternalInterpreterPort{port} -> do
+    HdbExternalInterpreterPort{port} -> handleNoHostServer $ do
       pid <- getCurrentPid
-      withExternalInterpreterPort (fromIntegral port) $ \h -> do
+      let l = externalLogger hdbOpts.verbosity
+      withExternalInterpreterPort l (fromIntegral port) $ \h -> do
         hPutStrLn h (show pid)
         hFlush h
         runExternalInterpreterServer h h hdbOpts.verbosity
   where
+    externalLogger verbosity =
+      filterBySeverity verbosity getSeverity
+      $ getMsg Logger.>$< Logger.logStringStderr
     runExternalInterpreterServer inh outh verbosity = do
       mid <- myThreadId
       labelThread mid "Ext. Interpreter Server"
@@ -127,10 +142,18 @@ main = do
         -- we cannot allow any async exceptions while communicating, because
         -- we will lose sync in the protocol, hence uninterruptibleMask.
 
-    withExternalInterpreterPort :: PortNumber -> (Handle -> IO a) -> IO a
-    withExternalInterpreterPort port k = do
-      bracket (mkHandleFromPortSock "127.0.0.1" port) hClose $ \ h -> do
+    withExternalInterpreterPort :: LogAction IO (WithSeverity String) -> PortNumber -> (Handle -> IO a) -> IO a
+    withExternalInterpreterPort l port k = do
+      bracket (mkHandleFromPortSock "127.0.0.1" port) hCloseGracefully $ \ h -> do
         annotateCallStackIO $ k h
+      where
+        hCloseGracefully h = do
+          catchNoPropagate (hClose h) $ \ x@(ExceptionWithContext _ e) ->
+            if ioeGetLocation e == "hClose" && ioeGetHandle e == Just h
+            then l <& ("withExternalInterpreterPort: "
+                       ++ displayExceptionWithInfo (toException x))
+                       `WithSeverity` Logger.Debug
+            else rethrowIO x
 
     mkHandleFromPortSock :: HostName -> PortNumber -> IO Handle
     mkHandleFromPortSock host port = do
@@ -143,7 +166,7 @@ main = do
         (\sock -> do
             -- Don't delay, avoids batching
             setSocketOption sock NoDelay 1
-            connect sock (addrAddress addr)
+            connect sock (addrAddress addr) `onConnectionError` throwIO NoHostServer
             h <- socketToHandle sock ReadWriteMode
             hSetBuffering h NoBuffering
             return h)
@@ -164,8 +187,32 @@ main = do
         withInterceptedStdoutForwarding
           (\interceptedOut -> T.hPutStrLn stderr ("[INTERCEPTED STDOUT] " <> interceptedOut))
           (\realStdout -> k realStdout)
-      | otherwise = k stdout
+      | otherwise = join $ snd <$> k stdout
 
+handleNoHostServer :: IO () -> IO ()
+handleNoHostServer m =
+  catch m $ \NoHostServer -> do
+    ms <- lookupEnv $ T.unpack sessionFileEnvVar
+    let fallback = hPutStrLn stderr "Could not connect to debug adapter server. Check Haskell Debugger logs to determine what went wrong."
+    case ms of
+      Nothing -> fallback
+      Just s  -> do
+        b <- doesFileExist s
+        when b $ fallback
+
+onConnectionError :: IO () -> IO () -> IO ()
+onConnectionError m k =
+  catchNoPropagate m $ \case
+    ExceptionWithContext _ e
+      | isDoesNotExistError e
+        && "Network.Socket.connect:" `isPrefixOf` ioeGetLocation e
+        -> k
+    x   -> rethrowIO x
+
+data NoHostServer = NoHostServer
+ deriving Show
+
+instance Exception NoHostServer
 
 
 --------------------------------------------------------------------------------

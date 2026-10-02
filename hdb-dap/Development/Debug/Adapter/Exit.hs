@@ -24,15 +24,23 @@ module Development.Debug.Adapter.Exit where
 
 import DAP
 import Development.Debug.Adapter
+import Development.Debug.Adapter.Interface (sendSync)
+import GHC.Debugger.Interface.Messages (Command(TerminateDebuggee), Response (DidTerminate))
+import Control.Monad (when)
+import Control.Monad.Catch
 
 -- | Command terminate (1a)
 --
 -- Terminate the *debuggee* gracefully
 commandTerminate :: DebugAdaptor ()
 commandTerminate = do
-  destroyDebugSession -- kills debugger GHC session (which handles stopping the debuggee ext-interp too)
+  DidTerminate b <- sendSync TerminateDebuggee
+  when b $ do
+    safeDestroyDebugSession
+    sendTerminatedEvent (TerminatedEvent False) -- we're done debugging now!
+  -- the response only acknowledges the command,
+  -- does not imply successful termination.
   sendTerminateResponse
-  sendTerminatedEvent (TerminatedEvent False) -- we're done debugging now!
 
 -- | Command disconnect (1b)
 --
@@ -43,3 +51,4 @@ commandDisconnect = do
   -- ignore error if session has already been destroyed (e.g. client sends disconnect after terminate)
   safeDestroyDebugSession
   sendDisconnectResponse
+  throwM DisconnectDAPClientCleanly

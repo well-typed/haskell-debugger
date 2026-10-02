@@ -147,6 +147,7 @@ printResponse = \case
   DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
   DidResume er -> outputEvalResult er
   DidExec er -> outputEvalResult er
+  DidTerminate b -> outputStrLn $ if b then "Terminated." else "Could not terminate."
   GotThreads threads -> outputStrLn $ show threads
   GotStacktrace stackframes -> outputStrLn $ show stackframes
   GotScopes scopeinfos -> outputStrLn $ show scopeinfos

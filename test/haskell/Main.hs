@@ -1,7 +1,7 @@
-{-# LANGUAGE LambdaCase, OverloadedStrings, ViewPatterns, QuasiQuotes, CPP #-}
+{-# LANGUAGE LambdaCase, OverloadedStrings, ViewPatterns, QuasiQuotes, CPP, RecordWildCards #-}
 module Main (main) where
 
-import Data.List (isSuffixOf, isInfixOf)
+import Data.List (isSuffixOf, isInfixOf, stripPrefix)
 import qualified Data.Set as Set
 import Text.RE.TDFA.Text.Lazy
 import Text.Printf
@@ -20,6 +20,7 @@ import System.Environment
 import Control.Exception
 
 import Test.Tasty
+import Test.Tasty.Runners qualified as Tasty
 import Test.Tasty.ExpectedFailure
 import Test.Tasty.Golden as G
 import Test.Tasty.Golden.Advanced as G
@@ -78,7 +79,8 @@ main = do
   let intinterp_goldens = map (mkTest ("--internal-interpreter " ++ baseFlags)) testsForInternal
   let individualTimeout = 5*60*1_000_000
 
-  defaultMain $ localOption (mkTimeout individualTimeout) $
+  defaultMain $ localOption (mkTimeout individualTimeout) $ wrapTest
+   (fmap $ deleteLongDescOnSuccess . relabelExpectedFail . showExceptionsWithInfo) $
     testGroup "Tests"
       [ testGroup "Golden tests" default_goldens
       ,
@@ -108,6 +110,37 @@ unitTests =
   , selfDebugTests
   , threadsTests
   ]
+
+
+showExceptionsWithInfo :: Tasty.Result -> Tasty.Result
+showExceptionsWithInfo x@Tasty.Result{..} =
+  case resultOutcome of
+    Tasty.Failure (Tasty.TestThrewException e) ->
+      x { Tasty.resultDescription = "Exception: " ++ displayExceptionWithInfo e
+        }
+    _ -> x
+
+
+-- | No reason to see lots of output for a Success (e.g. an expected failure)
+deleteLongDescOnSuccess :: Tasty.Result -> Tasty.Result
+deleteLongDescOnSuccess = silenceDiff
+  where
+      silenceDiff x@Tasty.Result{..} =
+        case resultOutcome of
+          Tasty.Success -> Tasty.Result{Tasty.resultDescription = (if null resultShortDescription then id else const "") resultDescription, ..}
+          Tasty.Failure{} -> x
+
+-- | Replaces "FAIL" with "ExpectedFail" at the start of the short description of a Success.
+--
+-- This way only a Failure's short description will start with "FAIL", and will
+-- be easier to tell apart in logs.
+relabelExpectedFail :: Tasty.Result -> Tasty.Result
+relabelExpectedFail r@Tasty.Result{..} =
+  case resultOutcome of
+    Tasty.Failure{} -> r
+    Tasty.Success -> case stripPrefix "FAIL" resultShortDescription of
+      Nothing -> r
+      Just rest -> Tasty.Result{resultShortDescription = "ExpectedFail" ++ rest, ..}
 
 -- | Receives as an argument the path to the @*.hdb-test@ which contains the
 -- shell invocation for running

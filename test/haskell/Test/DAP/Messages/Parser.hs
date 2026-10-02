@@ -52,6 +52,13 @@ reverseRequestMatch commandExpected =
       pure ((typ :: String) == "request" && (command :: String) == commandExpected)
       ) v
 
+stdoutMatch :: String -> MessageMatch
+stdoutMatch outputExpected = subsetMatch
+  [ "type" .= ("event" :: String)
+  , "event" .= ("output" :: String)
+  , "body" .= object [ "output" .= outputExpected
+                     , "category" .= ("stdout" :: String) ]
+  ]
 --------------------------------------------------------------------------------
 -- * Message parsers
 --------------------------------------------------------------------------------

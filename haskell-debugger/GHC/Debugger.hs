@@ -80,3 +80,14 @@ execute = \case
 
   DebugExecution { entryPoint, entryFile, runArgs } -> DidExec <$>
     Run.debugExecution entryFile entryPoint runArgs
+
+  -----------------------------------------------------------------------------
+  -- GHC.Debugger.Monad
+  -----------------------------------------------------------------------------
+
+  -- TODO: will only work on a running debuggee once the GHC.Debugger.Run
+  -- operations are made non-blocking. Until then, the only way to terminate a
+  -- running debugee is to kill the main debugger thread.
+  --
+  -- This Command can already be used to fully terminate a stopped debuggee though.
+  TerminateDebuggee -> DidTerminate <$> terminateDebuggee

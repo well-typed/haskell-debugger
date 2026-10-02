@@ -125,6 +125,11 @@ data Command
   -- Haskell function arguments.
   | DebugExecution { entryPoint :: EntryPoint, entryFile :: AbsFilePath, runArgs :: [String] }
 
+  -- | Request the debuggee to stop.
+  --
+  -- Does not forcibly kill the debuggee, reports whether it actually stopped instead.
+  | TerminateDebuggee
+
 -- | The type of stepping to do when resuming a thread.
 data ResumeStep
   = ResumeNoStep     -- ^ No stepping, i.e. just resume/continue the thread.
@@ -303,6 +308,7 @@ data Response
   | DidClearBreakpoints
   | DidResume EvalResult
   | DidExec EvalResult
+  | DidTerminate Bool
   | GotThreads [DebuggeeThread]
   | GotStacktrace [DbgStackFrame]
   | GotScopes [ScopeInfo]

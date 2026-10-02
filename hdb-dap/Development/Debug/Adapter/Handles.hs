@@ -19,6 +19,7 @@ import GHC.IO.Handle
 import System.Process
 import Control.Exception
 import Control.Concurrent.Async
+import GHC.Debugger.Utils (forwardHandleToLogger)
 
 handleLogger :: Handle -> IO (LogAction IO T.Text)
 handleLogger out_handle = do
@@ -51,27 +52,29 @@ withInterceptedStderr k = do
 
 -- | Intercept stderr, and spawn a thread which forwards the input
 -- onwards using the supplied IO action.
-withInterceptedStderrForwarding :: (T.Text -> IO ())
+withInterceptedStderrForwarding :: LogAction IO T.Text
+                                -> (T.Text -> IO ())
                                 -- ^ All stderr input that is intercepted is forwarded to this thread
                                 -> (Handle -> IO ())
                                 -- ^ The continuation receives the REAL STDERR
                                 -> IO ()
-withInterceptedStderrForwarding write_stderr k = do
+withInterceptedStderrForwarding l write_stderr k = do
   withInterceptedStderr $ \realStderr interceptedStderr -> do
-      withAsync (forwardingThread write_stderr interceptedStderr) $ \_ -> do
+      withAsync (forwardHandleToLogger l interceptedStderr (LogAction write_stderr)) $ \_ -> do
         k realStderr
 
 -- | Intercept stdout, and spawn a thread which forwards the input
 -- onwards using the supplied IO action.
 withInterceptedStdoutForwarding :: (T.Text -> IO ())
                                 -- ^ All stdout input that is intercepted is forwarded to this thread
-                                -> (Handle -> IO ())
+                                -> (Handle -> IO (LogAction IO T.Text, IO ()))
                                 -- ^ The continuation receives the REAL STDOUT
                                 -> IO ()
-withInterceptedStdoutForwarding write_stdout k = do
+withInterceptedStdoutForwarding write_stdout mkC = do
   withInterceptedStdout $ \realStdout interceptedStdout -> do
-    withAsync (forwardingThread write_stdout interceptedStdout) $ \_ ->
-        k realStdout
+    (l,cont) <- mkC realStdout
+    withAsync (forwardHandleToLogger l interceptedStdout (LogAction write_stdout)) $ \_ ->
+      cont
 
 --------------------------------------------------------------------------------
 -- Auxiliary
@@ -113,19 +116,6 @@ withHandleBypass originalHandle interceptWriteHandle action =
       hFlush originalHandle
       hDuplicateTo realHandle originalHandle
       hClose realHandle
-
--- | Thread to read from the intercepted stdout pipe and forward onwards
-forwardingThread :: (T.Text -> IO ()) -> Handle -> IO ()
-forwardingThread write_action fromPipe = loop
-  where
-    loop = do
-      eof <- hIsEOF fromPipe
-      if eof
-        then return ()
-        else do
-          line <- T.hGetLine fromPipe
-          write_action line
-          loop
 
 withPipe :: (Handle -> Handle -> IO r) -> IO r
 withPipe action = bracket createPipe closeBoth (uncurry action)

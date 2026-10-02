@@ -405,6 +405,14 @@ disconnect = do
   liftIO $ assertBool "disconnect response should indicate success" responseSuccess
   return ()
 
+terminate :: TestDAP ()
+terminate = do
+  Response{responseSuccess} <- sync $ terminateRequest @_ @Value $ Just
+    TerminateArguments
+      {DAP.terminateArgumentsRestart = False}
+  liftIO $ assertBool "disconnect response should indicate success" responseSuccess
+  return ()
+
 --------------------------------------------------------------------------------
 -- ** Convenience methods (based on vscode-debugadapter-node/testSupport)
 --------------------------------------------------------------------------------
@@ -461,36 +469,34 @@ assertFullOutputWith assertStr test = do
 -- * Waiting for messages
 --------------------------------------------------------------------------------
 
-data MsgType = EventTy | ResponseTy | ReverseRequestTy
-  deriving Show
-
-msgChan :: MsgType -> TestDAPClientContext -> TChan Value
-msgChan ty TestDAPClientContext{..} = case ty of
-  EventTy          -> clientEvents
-  ResponseTy       -> clientResponses
-  ReverseRequestTy -> clientReverseRequests
-
 msgMatch :: MsgType -> String -> MessageMatch
 msgMatch ty s = case ty of
   EventTy         -> eventMatch s
   ResponseTy      -> responseMatch s
   ReverseRequestTy -> reverseRequestMatch s
 
-waitFiltering_ :: MsgType -> String -> TestDAP ()
+waitFiltering_ :: HasCallStack => MsgType -> String -> TestDAP ()
 waitFiltering_ ty s = void $ waitFiltering @Value ty s
 
 -- | Drop messages of the given type until a message with the given
 -- eventType/command is found. The matching message is returned.
 -- FIXME: Timeouts on waiting, to avoid hanging forever in the testsuite!!
-waitFiltering :: forall a. FromJSON a => MsgType -> String -> TestDAP a
-waitFiltering ty s = do
-  ch <- asks (msgChan ty)
-  let mm = msgMatch ty s
+waitFiltering :: forall a. (HasCallStack, FromJSON a) => MsgType -> String -> TestDAP a
+waitFiltering ty s = waitFiltering' ty (msgMatch ty s)
+
+waitFiltering' :: forall a. (HasCallStack, FromJSON a) => MsgType -> MessageMatch -> TestDAP a
+waitFiltering' ty mm = do
+  ctx <- ask
   let loop = do
-        v <- atomically $ readTChan ch -- block waiting for input
+        v <- atomically $ readMessage ctx ty -- block waiting for input
         if messageMatchMatches mm v
           then case fromJSON @a v of
-            Error e -> error $ "waitFiltering: Failed to parse message MATCHING " ++ s ++ ":" ++ show ty ++ " with error: " ++ e ++ "\nFull message was: " ++ show v
+            Error e -> error $ unwords
+              [ "waitFiltering: Failed to parse message of type", show ty
+              , "MATCHING", messageMatchDescription mm
+              , "with error:", e
+              , "\nFull message was: ", show v
+              ]
             Success x -> return x
           else loop
   liftIO loop
@@ -500,13 +506,14 @@ waitFiltering ty s = do
 --
 -- The non-matching message is not consumed, nor returned, and will be kept in
 -- the messages buffer.
-waitAccumulating :: forall a. FromJSON a => MsgType -> String -> TestDAP [a]
+waitAccumulating :: forall a. (HasCallStack, FromJSON a) => MsgType -> String -> TestDAP [a]
 waitAccumulating ty s = do
+  ctx <- ask
   ch <- asks (msgChan ty)
   let mm = msgMatch ty s
   let loop acc = do
         r <- atomically $ do
-          v <- readTChan ch
+          v <- readMessage ctx ty
           if messageMatchMatches mm v
             then case fromJSON @a v of
               Error e -> error $ "waitAccumulating: Failed to parse MATCHING message body with error: " ++ e ++ "\nFull message was: " ++ show v
