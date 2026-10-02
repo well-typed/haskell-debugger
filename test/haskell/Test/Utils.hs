@@ -1,6 +1,6 @@
 module Test.Utils where
 
-import Control.Monad (when)
+import Control.Monad (when, unless)
 import Data.List (isInfixOf)
 import System.Directory (doesFileExist,doesDirectoryExist)
 import System.FilePath
@@ -13,10 +13,15 @@ withHermeticDir :: Bool               -- ^ Whether to keep the temp dir around f
                 -> FilePath           -- ^ Test dir
                 -> (FilePath -> IO r) -- ^ Continuation receives hermetic test dir (in temporary dir)
                 -> IO r
+withHermeticDir _keep src _k
+  | hasTrailingPathSeparator src
+  = fail $ "src dir ends with a path separator, won't work the same on macOS: " ++ src
 withHermeticDir keep src k = do
   withTestTmpDir keep $ \dest -> do
     P.callCommand $ "cp -r " ++ src ++ " " ++ dest
     let destTestDir = dest </> takeBaseName src
+    b <- doesDirectoryExist destTestDir
+    unless b $ fail $ "destTestDir does not exist " ++ show destTestDir
     -- Some test projects reference @./haskell-debugger-view@ in their
     -- @cabal.project@. If such a dir is expected, copy the in-tree
     -- @haskell-debugger-view@ there so that cabal can resolve it when
