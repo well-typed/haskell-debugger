@@ -9,7 +9,6 @@ module Test.DAP.Init where
 
 ----------------------------------------------------------------------------
 import Data.Maybe
-import Data.List (isInfixOf)
 import           Control.Exception hiding (handle)
 import           Network.Run.TCP
 import           Network.Socket             (Family(AF_INET), SockAddr(SockAddrInet, SockAddrInet6), SocketOption(ReuseAddr), SocketType(Stream), bind, close, defaultProtocol, getSocketName, setSocketOption, socket, socketToHandle, tupleToHostAddress)
@@ -35,6 +34,8 @@ import DAP.Types (OutputEvent (..), StoppedEvent (..))
 import Test.DAP.Messages.Parser
 import DAP.Log (LogAction(..))
 import qualified Data.Text.IO as T
+import System.IO.Error (ioeGetLocation)
+import Data.List (isPrefixOf)
 
 --------------------------------------------------------------------------------
 -- * Launch the DAP server process (what we're testing)
@@ -158,7 +159,7 @@ withNewClient port continue = do
   where
     retry_handlers =
       skipAsyncExceptions ++
-      [const $ Control.Monad.Catch.Handler $ \ (e :: IOException) -> return $ "Network.Socket.connect" `isInfixOf` show e]
+      [const $ Control.Monad.Catch.Handler $ \ (e :: IOException) -> return $ "Network.Socket.connect" `isPrefixOf` ioeGetLocation e ]
 
 --------------------------------------------------------------------------------
 -- ** Handle server responses, events, and reverse requests
