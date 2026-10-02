@@ -60,6 +60,12 @@ safeDestroyDebugSession :: Adaptor app request ()
 safeDestroyDebugSession = do
   destroyDebugSession `catchError` \ e -> liftIO $ putStrLn ("safeDestroyDebugSession: ignoring missing session: " ++ show e)
 
+-- | Thrown from commandDisconnect so the DAP lib disconnects from client.
+data DisconnectDAPClientCleanly = DisconnectDAPClientCleanly
+  deriving Show
+
+instance Exception DisconnectDAPClientCleanly
+
 --------------------------------------------------------------------------------
 -- * Utilities
 --------------------------------------------------------------------------------
