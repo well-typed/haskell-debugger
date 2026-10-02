@@ -136,9 +136,10 @@ getConfig port = do
 
 respondWithErrorOnException :: Adaptor app request a -> Adaptor app request a
 respondWithErrorOnException m = m `Control.Monad.Catch.catch` \ e -> do
-  sendError (fromString (displayExceptionWithInfo e)) Nothing
+  unless (isJust $ fromException @DisconnectDAPClientCleanly e) $ do
+    sendError (fromString (displayExceptionWithInfo e)) Nothing
   safeDestroyDebugSession
-  throw e
+  throwM e
 
 --------------------------------------------------------------------------------
 -- * Talk

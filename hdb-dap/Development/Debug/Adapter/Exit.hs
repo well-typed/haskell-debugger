@@ -27,6 +27,7 @@ import Development.Debug.Adapter
 import Development.Debug.Adapter.Interface (sendSync)
 import GHC.Debugger.Interface.Messages (Command(TerminateDebuggee), Response (DidTerminate))
 import Control.Monad (when)
+import Control.Monad.Catch
 
 -- | Command terminate (1a)
 --
@@ -50,3 +51,4 @@ commandDisconnect = do
   -- ignore error if session has already been destroyed (e.g. client sends disconnect after terminate)
   safeDestroyDebugSession
   sendDisconnectResponse
+  throwM DisconnectDAPClientCleanly
