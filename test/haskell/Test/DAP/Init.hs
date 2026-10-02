@@ -149,15 +149,16 @@ withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess se
         clientResponses            <- newTChanIO
         clientEvents               <- newTChanIO
         clientFullOutput           <- newTVarIO []
+        clientConnectionClosed     <- newTVarIO False
         let ctx = TestDAPClientContext{..}
-        r <- race
-          (runTestDAP continue ctx)
-          (runTestDAP handleServerTestDAP ctx)
-        case r of
-          Left x -> do
-            pure x
-          Right () -> do
-            throwIO (userError "handleServerTestDAP unexpectedly returned")
+        -- The drainer thread can correctly return early if the connection is
+        -- closed.
+        --
+        -- `continue` could still be working on what we drained so far, or
+        -- whatever else, so we don't want to kill it yet.
+        withAsync (runTestDAP handleServerTestDAP ctx) $ \ drainer -> do
+          link drainer
+          runTestDAP continue ctx
 
 -- | Spawns a new mock client that connects to the mock server.
 withNewClient :: forall a. Int -- ^ Port
@@ -182,7 +183,12 @@ withNewClient port continue = do
 handleServerTestDAP :: TestDAP ()
 handleServerTestDAP = do
   TestDAPClientContext{..} <- ask
-  silenceEOFTextDAP clientHandle $ forever $ do
+  -- we do not set clientConnectionClosed to True on an exception so we don't
+  -- create a race between reporting the exception originated here and the one
+  -- the TChan consumers might throw when the connections closes.
+  -- The actual Handle is closed upstream.
+  (>> liftIO (atomically $ writeTVar clientConnectionClosed True)) $
+      silenceEOFTextDAP clientHandle $ forever $ do
     payload <- nextPayload
     liftIO $ case parseMaybe parseType payload of
       Just "event"    -> do

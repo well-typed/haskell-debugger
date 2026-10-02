@@ -469,22 +469,13 @@ assertFullOutputWith assertStr test = do
 -- * Waiting for messages
 --------------------------------------------------------------------------------
 
-data MsgType = EventTy | ResponseTy | ReverseRequestTy
-  deriving Show
-
-msgChan :: MsgType -> TestDAPClientContext -> TChan Value
-msgChan ty TestDAPClientContext{..} = case ty of
-  EventTy          -> clientEvents
-  ResponseTy       -> clientResponses
-  ReverseRequestTy -> clientReverseRequests
-
 msgMatch :: MsgType -> String -> MessageMatch
 msgMatch ty s = case ty of
   EventTy         -> eventMatch s
   ResponseTy      -> responseMatch s
   ReverseRequestTy -> reverseRequestMatch s
 
-waitFiltering_ :: MsgType -> String -> TestDAP ()
+waitFiltering_ :: HasCallStack => MsgType -> String -> TestDAP ()
 waitFiltering_ ty s = void $ waitFiltering @Value ty s
 
 -- | Drop messages of the given type until a message with the given
@@ -495,9 +486,9 @@ waitFiltering ty s = waitFiltering' ty (msgMatch ty s)
 
 waitFiltering' :: forall a. (HasCallStack, FromJSON a) => MsgType -> MessageMatch -> TestDAP a
 waitFiltering' ty mm = do
-  ch <- asks (msgChan ty)
+  ctx <- ask
   let loop = do
-        v <- atomically $ readTChan ch -- block waiting for input
+        v <- atomically $ readMessage ctx ty -- block waiting for input
         if messageMatchMatches mm v
           then case fromJSON @a v of
             Error e -> error $ unwords
@@ -515,13 +506,14 @@ waitFiltering' ty mm = do
 --
 -- The non-matching message is not consumed, nor returned, and will be kept in
 -- the messages buffer.
-waitAccumulating :: forall a. FromJSON a => MsgType -> String -> TestDAP [a]
+waitAccumulating :: forall a. (HasCallStack, FromJSON a) => MsgType -> String -> TestDAP [a]
 waitAccumulating ty s = do
+  ctx <- ask
   ch <- asks (msgChan ty)
   let mm = msgMatch ty s
   let loop acc = do
         r <- atomically $ do
-          v <- readTChan ch
+          v <- readMessage ctx ty
           if messageMatchMatches mm v
             then case fromJSON @a v of
               Error e -> error $ "waitAccumulating: Failed to parse MATCHING message body with error: " ++ e ++ "\nFull message was: " ++ show v
