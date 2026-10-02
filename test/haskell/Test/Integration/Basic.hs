@@ -5,9 +5,11 @@
 {-# LANGUAGE RecordWildCards #-}
 module Test.Integration.Basic (basicTests) where
 
+import qualified Control.Monad.Catch as MC
 import Control.Monad.Reader
 import qualified Data.List as List
 import Data.Aeson (Value)
+import Data.Either (isLeft)
 import System.FilePath
 import System.Timeout
 import Test.DAP
@@ -45,6 +47,7 @@ basicTests =
         , testCase "debuggee idle testcase loads" debuggeeIdleTestSetupTest
         ]
     , testCase "report error when projectRoot does not exist" reportErrorForMissingDirectory
+    , testCase "throws exception when no more messages" throwsExceptionWhenNoMoreMessages
     ]
 
 basicForConfig :: TestName -> FilePath -> FilePath -> TestTree
@@ -195,3 +198,11 @@ reportErrorForMissingDirectory = do
       assertBool ("unexpected error msg: " ++ errMsg)
                ("Couldn't execute ghc --numeric-version" `List.isInfixOf` errMsg)
       return (Just v)
+
+throwsExceptionWhenNoMoreMessages :: IO ()
+throwsExceptionWhenNoMoreMessages = do
+  withTestDAPServer "test/integration/T44" [] $ \_test_dir server ->
+    withTestDAPServerClient server $ do
+      disconnect
+      e <- MC.try @_ @TestDAPClientConnectionClosed $ waitFiltering_ EventTy "stopped"
+      liftIO $ assertBool "got () instead of exception" $ isLeft e
