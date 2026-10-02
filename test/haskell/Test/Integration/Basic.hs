@@ -6,7 +6,9 @@
 module Test.Integration.Basic (basicTests) where
 
 import Control.Monad.Reader
+import qualified Data.List as List
 import Data.Aeson (Value)
+import System.FilePath
 import System.Timeout
 import Test.DAP
 import Test.DAP.Messages.Parser
@@ -42,6 +44,7 @@ basicTests =
              ]
         , testCase "debuggee idle testcase loads" debuggeeIdleTestSetupTest
         ]
+    , testCase "report error when projectRoot does not exist" reportErrorForMissingDirectory
     ]
 
 basicForConfig :: TestName -> FilePath -> FilePath -> TestTree
@@ -176,3 +179,19 @@ debuggeeIdleTestSetup test = do
       case x of
         Just a -> pure a
         Nothing -> assertFailure "Timeout after 5s"
+
+reportErrorForMissingDirectory :: IO ()
+reportErrorForMissingDirectory = do
+  withTestDAPServer "test/integration/T44" [] $ \test_dir server ->
+    withTestDAPServerClientWith False checkErrorResponse server $ do
+      let cfg = mkLaunchConfig (test_dir </> "missing") "Main.hs"
+      Response{responseSuccess} <- sync $ launchWith cfg
+      liftIO $ assertBool
+        "Expected launch to fail because of a not existing directory, but got success: true"
+        (not responseSuccess)
+
+  where
+    checkErrorResponse errMsg v = do
+      assertBool ("unexpected error msg: " ++ errMsg)
+               ("Couldn't execute ghc --numeric-version" `List.isInfixOf` errMsg)
+      return (Just v)
