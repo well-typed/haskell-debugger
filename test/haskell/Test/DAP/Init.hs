@@ -37,6 +37,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import System.IO.Error (ioeGetLocation)
 import Data.List (isPrefixOf)
+import Control.Exception.Annotation
+import Control.Exception.Context
 
 --------------------------------------------------------------------------------
 -- * Launch the DAP server process (what we're testing)
@@ -122,6 +124,12 @@ getAvailablePort =
 withTestDAPServerClient :: TestDAPServer -> TestDAP a -> IO a
 withTestDAPServerClient = withTestDAPServerClientWith False (\_ _ -> pure Nothing)
 
+data ServerMessages = ServerMessages { server_output :: String, server_err :: String }
+  deriving Show
+instance ExceptionAnnotation ServerMessages where
+  displayExceptionAnnotation ServerMessages{..} =
+    unlines $ [server_output, server_err]
+
 --- | Connect a test client to a running 'TestDAPServer', with retry semantics
 --- and server log flushing on failure.
 withTestDAPServerClientWith :: forall a. Bool {-^ Announce support for runInTerminal? -} -> (String -> Value -> IO (Maybe Value))
@@ -130,18 +138,27 @@ withTestDAPServerClientWith clientSupportsRunInTerminal clientHandleNoSuccess se
   where
     addServerOutput m = catchNoPropagate m $ (rethrowIO =<<) . annotate
     annotate = \case
-      (ExceptionWithContext ctx e) | Just (HUnitFailure srcpos msg) <- fromException e ->
-        pure $ ExceptionWithContext ctx $ toException $ HUnitFailure srcpos (msg ++ testDAPServerOutput server)
-      e -> do
-        putStrLn $ testDAPServerOutput server
-        let (out,err) = testDAPServerPaths server
-        putStrLn =<< readFile out
-        hFlush stdout
-        putStrLn "ERR"
-        hFlush stdout
-        putStrLn =<< readFile err
-        hFlush stdout
-        pure e
+      (ExceptionWithContext ctx e) -> do
+        ann <- lookupEnv "PRINT_FULL_SERVER_OUTPUT" >>= \case
+          Nothing -> do
+            let server_output = testDAPServerOutput server
+            let server_err = ""
+            pure ServerMessages{..}
+          Just{} -> do
+            let (out,err) = testDAPServerPaths server
+            let bracketWithPath path s =
+                  concat ["--- ", path, " ---\n", s, "--- END ", path, " ---\n"]
+            server_output <- (testDAPServerOutput server ++) . bracketWithPath out <$> readFile out
+            server_err <- bracketWithPath err <$> readFile err
+            pure ServerMessages{..}
+
+        -- HUnitFailure is special cased by `testCase` which disregards the
+        -- exception context, so we embed the output in the message.
+        let e' | Just (HUnitFailure srcpos msg) <- fromException e
+              = toException $ HUnitFailure srcpos (msg ++ "\n" ++ displayExceptionAnnotation ann)
+               | otherwise
+              = e
+        pure $ ExceptionWithContext (addExceptionAnnotation ann ctx) e'
 
     runClient :: IO a
     runClient = do

@@ -89,7 +89,8 @@ main = do
   let intinterp_goldens = map (mkTest ("--internal-interpreter " ++ baseFlags)) testsForInternal
   let individualTimeout = 5*60*1_000_000
 
-  defaultMain $ localOption (mkTimeout individualTimeout) $ wrapTest (fmap $ deleteLongDescOnSuccess . relabelExpectedFail) $
+  defaultMain $ localOption (mkTimeout individualTimeout) $ wrapTest
+   (fmap $ deleteLongDescOnSuccess . relabelExpectedFail . showExceptionsWithInfo) $
     testGroup "Tests"
       [ testGroup "Golden tests" default_goldens
       ,
@@ -119,6 +120,16 @@ unitTests =
   , selfDebugTests
   , threadsTests
   ]
+
+
+showExceptionsWithInfo :: Tasty.Result -> Tasty.Result
+showExceptionsWithInfo x@Tasty.Result{..} =
+  case resultOutcome of
+    Tasty.Failure (Tasty.TestThrewException e) ->
+      x { Tasty.resultDescription = "Exception: " ++ displayExceptionWithInfo e
+        }
+    _ -> x
+
 
 -- | No reason to see lots of output for a Success (e.g. an expected failure)
 deleteLongDescOnSuccess :: Tasty.Result -> Tasty.Result
