@@ -7,16 +7,18 @@
 module Test.DAP.Messages where
 ----------------------------------------------------------------------------
 import           Control.Concurrent.Async
+import           Control.Concurrent.STM
 import           Control.Monad.IO.Class
+import           Control.Monad.Catch
 import           Data.Aeson
 import           Data.Aeson.Types
 import           Control.Monad.Reader
 import qualified Data.ByteString            as BS
 import           System.IO
 import           Data.IORef
+import           GHC.Stack
 ----------------------------------------------------------------------------
 import           DAP.Utils
-import Control.Concurrent.STM
 import qualified Data.Text as T
 import Test.DAP.Messages.Parser
 ----------------------------------------------------------------------------
@@ -36,6 +38,8 @@ data TestDAPClientContext = TestDAPClientContext
     -- ^ Collect event messages sent by server
   , clientReverseRequests :: TChan Value
     -- ^ Collect reverse requests messages sent by server
+  , clientConnectionClosed :: TVar Bool
+    -- ^ Is the connection with the server closed? If so, no more messages will be added to the TChans.
   , clientFullOutput :: TVar [T.Text]
     -- ^ The full output is available here in reverse order (from most recent to oldest output strings).
     --
@@ -66,7 +70,7 @@ data TestDAPClientContext = TestDAPClientContext
   }
 
 newtype TestDAP a = TestDAP { runTestDAP :: TestDAPClientContext -> IO a }
-  deriving (Functor, Applicative, Monad, MonadIO, MonadFail, MonadReader TestDAPClientContext) via (ReaderT TestDAPClientContext IO)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadFail, MonadReader TestDAPClientContext, MonadThrow, MonadCatch, MonadMask) via (ReaderT TestDAPClientContext IO)
 
 --------------------------------------------------------------------------------
 -- * Message primitives
@@ -104,20 +108,44 @@ reply revReqSeqNum message = do
     BS.hPutStr clientHandle $
       encodeBaseProtocolMessage (object ("seq" .= (revReqSeqNum + 1) : filter ((/= "seq") . fst) message))
 
-waitForResponse :: TestDAP Value
+data TestDAPClientConnectionClosed = TestDAPClientConnectionClosed
+  deriving Show
+instance Exception TestDAPClientConnectionClosed
+
+data MsgType = EventTy | ResponseTy | ReverseRequestTy
+  deriving Show
+
+msgChan :: MsgType -> TestDAPClientContext -> TChan Value
+msgChan ty TestDAPClientContext{..} = case ty of
+  EventTy          -> clientEvents
+  ResponseTy       -> clientResponses
+  ReverseRequestTy -> clientReverseRequests
+
+readMessage :: HasCallStack => TestDAPClientContext -> MsgType -> STM Value
+readMessage ctx@TestDAPClientContext{..} ty = do
+  let c = msgChan ty ctx
+  m <- tryReadTChan c
+  case m of
+    Nothing -> do
+      readTVar clientConnectionClosed >>= \case
+        True -> throwSTM TestDAPClientConnectionClosed
+        False -> retry
+    Just msg -> pure msg
+
+waitForResponse :: HasCallStack => TestDAP Value
 waitForResponse = do
-  TestDAPClientContext{..} <- ask
-  liftIO $ atomically $ readTChan clientResponses
+  ctx <- ask
+  liftIO $ atomically $ readMessage ctx ResponseTy
 
-waitForReverseRequest :: TestDAP Value
+waitForReverseRequest :: HasCallStack => TestDAP Value
 waitForReverseRequest = do
-  TestDAPClientContext{..} <- ask
-  liftIO $ atomically $ readTChan clientReverseRequests
+  ctx <- ask
+  liftIO $ atomically $ readMessage ctx ReverseRequestTy
 
-waitForEvent :: TestDAP Value
+waitForEvent :: HasCallStack => TestDAP Value
 waitForEvent = do
-  TestDAPClientContext{..} <- ask
-  liftIO $ atomically $ readTChan clientEvents
+  ctx <- ask
+  liftIO $ atomically $ readMessage ctx EventTy
 
 -- | See 'clientCurrentActiveThread'
 getCurrentActiveThread :: TestDAP Int
