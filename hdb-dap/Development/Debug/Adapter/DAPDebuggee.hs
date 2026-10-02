@@ -27,7 +27,6 @@ import System.IO.Temp
 import Control.Monad.Catch
 import Control.Exception (throwIO, IOException)
 import Control.Concurrent
-import Control.Concurrent.Async (concurrently_)
 import Control.Monad
 import Data.Functor.Contravariant
 
@@ -81,20 +80,23 @@ externalNoInTerminalDAPD l hdbProg extraInterpArgs = do
         { interpreterFlags = mkExternalInterpreterFlags hdbProg extraInterpArgs
         , interpreterSetup = mkExternalInterpreterSubProcessSetup CreatePipe CreatePipe CreatePipe (putMVar iserv_handles)
         }
+      ld = contramap (ForwardingThreadLog . flip WithSeverity Debug) l
   pure $
     DAPDebuggee
       interpSettings
       (pure ())
-      [\ withAdaptor -> fwdThread iserv_handles (LogAction $ withAdaptor . Output.stdout) (LogAction $ withAdaptor . Output.stderr)
+      [ \ withAdaptor -> annotateStackStringIO "External interpreter stdout forwarding" $ do
+           (_,Just out,_,_) <- readMVar iserv_handles
+           forwardHandleToLogger ld out (LogAction $ withAdaptor . Output.stdout)
+      , \ withAdaptor -> annotateStackStringIO "External interpreter stderr forwarding" $ do
+           (_,_,Just err,_) <- readMVar iserv_handles
+           forwardHandleToLogger ld err (LogAction $ withAdaptor . Output.stderr)
+      , \ _withAdaptor -> annotateStackStringIO "External interpreter waiting for process termination" $ do
+           (_,_,_,p) <- readMVar iserv_handles
+           code <- waitForProcess p
+           ld <& "External interpreter process exit code: " <> T.show code
       ]
       (pure ())
-  where
-    fwdThread iserv_handles logOut logErr = annotateStackStringIO "External interpreter forwarding parent thread" $ do
-      (_, Just serv_out, Just serv_err, _) <- takeMVar iserv_handles
-      let ld = contramap (ForwardingThreadLog . flip WithSeverity Debug) l
-      concurrently_
-        (annotateStackStringIO "External interpreter stderr forwarding" $ forwardHandleToLogger ld serv_err logErr)
-        (annotateStackStringIO "External interpreter stdout forwarding" $ forwardHandleToLogger ld serv_out logOut)
 
 externalInTerminalDAPD :: MonadIO m => LogAction IO DAPSessionLog -> FilePath -> [String] -> m DAPDebuggee
 externalInTerminalDAPD _l hdbProg extraInterpArgs
