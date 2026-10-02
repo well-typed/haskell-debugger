@@ -436,11 +436,11 @@ cleanupInterp l mode = do
                killProcess' i.instProcess.interpHandle
                success
              | otherwise = pure (InterpRunning i,False)
-           success = pure (InterpPending,True)
+           success = do
+             pure (InterpPending,True)
            tryStoppingExtInterp i keepGoing = MC.mask_ $ do
             -- Can't use  `getProcessExitCode` because the interp process is
             -- not necessarily a child of this process (runInTerminal case).
-            -- TODO: let runGhc handle this when interp process is a child?
 
             -- This hopefully interrupts the debuggee.
             interruptProcessGroupOf i.instProcess.interpHandle
