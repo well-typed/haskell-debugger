@@ -97,6 +97,7 @@ getThreads = do
         , case t_info.threadInfoLabel of
             Just "TimerManager"            -> False
             Just "Ext. Interpreter Server" -> False
+            Just "main of Ext. Interpreter Server" -> False
             Just (take 9 -> "IOManager")   -> False
             _ -> True
         ]

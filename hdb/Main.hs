@@ -36,10 +36,12 @@ import qualified GHCi.Utils as GHCi
 import qualified GHCi.Message as GHCi
 
 import GHC.Debugger.Monad (RunDebuggerSettings(..))
+import Development.Debug.Adapter.DAPDebuggee (sessionFileEnvVar)
 import Development.Debug.Options (HdbOptions(..))
 import Development.Debug.Options.Parser (parseHdbOptions)
 import Development.Debug.Adapter.Proxy
 import Development.Debug.Interactive
+
 import GHC.Stack.Annotation (annotateCallStackIO)
 import GHC.Utils.Logger (defaultLogActionWithHandles)
 import Development.Debug.Session.Setup (hieDebugRunner)
@@ -47,13 +49,17 @@ import GHC.Debugger.Debuggee (mkCliInterpreterSettings)
 import GHC.Debugger.Session (initUniqSupplyIO)
 import GHC.Conc (labelThread)
 import Control.Concurrent
-import System.IO.Error
-import qualified Colog.Core as Logger
+import Control.Concurrent.Async
 import Control.Exception
+import Control.Monad (when, join, void)
+import qualified Colog.Core as Logger
 import Data.List (isPrefixOf)
 import System.Directory (doesFileExist)
-import Control.Monad (when, join)
-import Development.Debug.Adapter.DAPDebuggee (sessionFileEnvVar)
+import System.IO.Error
+#ifdef MIN_VERSION_unix
+import System.Posix.Signals
+#endif
+import System.Timeout (timeout)
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -62,7 +68,7 @@ import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
 --------------------------------------------------------------------------------
 
 main :: IO ()
-main = do
+main = handleSigTermTopLevel $ do
   setBacktraceMechanismState CostCentreBacktrace False
   setBacktraceMechanismState HasCallStackBacktrace True
 
@@ -107,11 +113,11 @@ main = do
         setBacktraceMechanismState IPEBacktrace True
         l <- mainLogger hdbOpts.verbosity stdout
         runInTerminalHdbProxy (contramap RunProxyClientLog l) port `onConnectionError` throwIO NoHostServer
-    HdbExternalInterpreter{writeFd, readFd} -> do
+    HdbExternalInterpreter{writeFd, readFd} -> labelEIMain $ flip withStubbornAsync wait $ do
       inh  <- GHCi.readGhcHandle (show readFd)
       outh <- GHCi.readGhcHandle (show writeFd)
       runExternalInterpreterServer inh outh hdbOpts.verbosity
-    HdbExternalInterpreterPort{port} -> handleNoHostServer $ do
+    HdbExternalInterpreterPort{port} -> labelEIMain $ flip withStubbornAsync wait $ handleNoHostServer $ do
       pid <- getCurrentPid
       let l = externalLogger hdbOpts.verbosity
       withExternalInterpreterPort l (fromIntegral port) $ \h -> do
@@ -119,6 +125,10 @@ main = do
         hFlush h
         runExternalInterpreterServer h h hdbOpts.verbosity
   where
+    labelEIMain m = do
+      mid <- myThreadId
+      labelThread mid "main of Ext. Interpreter Server"
+      m
     externalLogger verbosity =
       filterBySeverity verbosity getSeverity
       $ getMsg Logger.>$< Logger.logStringStderr
@@ -184,6 +194,35 @@ main = do
           (\interceptedOut -> T.hPutStrLn stderr ("[INTERCEPTED STDOUT] " <> interceptedOut))
           (\realStdout -> k realStdout)
       | otherwise = join $ snd <$> k stdout
+
+handleSigTermTopLevel :: IO () -> IO ()
+handleSigTermTopLevel m = flip catch (\ SigTerm -> return ()) $ do
+  mainTid <- myThreadId
+#ifdef MIN_VERSION_unix
+  _ <- installHandler sigTERM (Catch $ throwTo mainTid SigTerm) Nothing
+#endif
+  m
+
+data SigTerm = SigTerm
+  deriving Show
+
+instance Exception SigTerm where
+  toException = asyncExceptionToException
+  fromException = asyncExceptionFromException
+
+-- | Like @withAsync@ but using `timeout 1s cancel/cancelWith` to cleanup the
+-- Async than cancelUninterruptible.
+withStubbornAsync :: IO a -> (Async a -> IO b) -> IO b
+withStubbornAsync m k =
+  mask $ \restore -> do
+    a <- async m
+    x <- restore (k a) `catchNoPropagate` \ (e :: ExceptionWithContext SomeException) -> do
+      -- might shutdown an evaluation more gently than just exiting
+      -- restore is needed for the timeout to work properly.
+      void $ timeout 1_000_000 (restore $ cancelWith a e)
+      rethrowIO e
+    void $ timeout 1_000_000 (restore $ cancel a)
+    return x
 
 handleNoHostServer :: IO () -> IO ()
 handleNoHostServer m =

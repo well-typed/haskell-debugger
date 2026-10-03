@@ -39,7 +39,7 @@ import System.IO.Error (isEOFError, isResourceVanishedError)
 import Control.Exception
 
 import qualified GHC.Conc.Sync as C
-import GHC
+import GHC hiding (runGhc)
 import GHC.Runtime.Interpreter.Types
 import GHC.Driver.Config.Diagnostic
 import GHC.Driver.Config.Logger
@@ -76,6 +76,10 @@ import GHC.Debugger.Monad.Load
 import GHCi.Message
 import Data.Binary.Get
 import qualified Data.Text as T
+import Data.IORef
+import GHC.Utils.Panic (panic)
+import System.IO
+import Control.Concurrent.Async
 
 --------------------------------------------------------------------------------
 -- Operations
@@ -94,6 +98,16 @@ runDebugger :: LogAction IO DebuggerLog -> DebugRunner Ghc a -> RunDebuggerSetti
 runDebugger l debugRunner conf action = annotateCallStackIO $ do
   debugRunner $ \ rootDir extraGhcArgs loadHomeUnit -> runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit action
 
+runGhc :: Maybe FilePath  -- ^ See argument to 'initGhcMonad'.
+       -> Ghc a           -- ^ The action to perform.
+       -> IO a
+runGhc mb_top_dir ghc = do
+  ref <- newIORef (panic "empty session")
+  let session = Session ref
+  flip unGhc session $ do -- withSignalHandlers $ do -- catch ^C
+    initGhcMonad mb_top_dir
+    withCleanupSession ghc
+
 -- | Construct a session from paths and flags inferred from the debugee's project.
 withProjectDebugSession
   :: GhcMonad m
@@ -101,15 +115,7 @@ withProjectDebugSession
   -> DebugRunner m a
 withProjectDebugSession ProjectDebugSpec{ghcInvocation = ghcI, ..} k = do
   let ghcInvocation = filter (\case ('-':'B':_) -> False; _ -> True) ghcI
-  GHC.runGhc (Just libdir) $ do
-#ifdef MIN_VERSION_unix
-  -- Workaround #4162
-  -- FIXME: setup reasonable handlers to run cleanupSession for every debugger thread, because runGhc's `withSignalHandlers` is not it.
-    _ <- liftIO $ installHandler sigINT Default Nothing
-    _ <- liftIO $ installHandler sigQUIT Default Nothing
-    _ <- liftIO $ installHandler sigTERM Default Nothing
-    _ <- liftIO $ installHandler sigHUP Default Nothing
-#endif
+  runGhc (Just libdir) $ do
     k rootDir extraGhcArgs $ do
     dflags2 <- getSessionDynFlags
 
