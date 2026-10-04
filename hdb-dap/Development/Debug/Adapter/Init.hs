@@ -250,8 +250,9 @@ debuggerThread l debugRunner runConf requests replies = do
       labelThread tid "Main Debugger Thread"
     let loop = do
           req <- takeMVar requests & liftIO
-          -- TODO: this will no longer be serial if we want to support async resume
-          resp <- try (Debugger.execute req)
+          -- TODO: remove once interpCmd stops calling `uninterruptibleMask`
+          -- while waiting for a reply.
+          resp <- interruptible $ try (Debugger.execute req)
           case resp of
             Right x -> do
               liftIO (putMVar replies x)
