@@ -60,6 +60,7 @@ import System.IO.Error
 import System.Posix.Signals
 #endif
 import System.Timeout (timeout)
+import GHC.Debugger.Data.Supervisor
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -74,7 +75,8 @@ main = handleSigTermTopLevel $ do
 
   hdbOpts <- parseHdbOptions
   case hdbOpts of
-    HdbDAPServer{port, internalInterpreter, disableIpeBacktraces} -> do
+    HdbDAPServer{port, internalInterpreter, disableIpeBacktraces} -> withSupervisor Nothing $ \ scope -> do
+
       setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
       config <- getConfig port
       -- the same program invoked with `external-interpreter` serves as the external interpreter
@@ -93,7 +95,7 @@ main = handleSigTermTopLevel $ do
         l <- contramap DAPLog <$> mainLogger hdbOpts.verbosity realStdout
         let ld = contramap (DAPStdoutForwardingLog . flip WithSeverity Debug) l
         pure . (ld,) $ runDAPServerWithLogger (contramap DAPLibraryLog l) config
-          (respondWithErrorOnException . talk l servConf internalInterpreter)
+          (respondWithErrorOnException . talk l scope servConf internalInterpreter)
           (ack l )
     HdbCLI{..} -> do
         setBacktraceMechanismState IPEBacktrace (not disableIpeBacktraces)
