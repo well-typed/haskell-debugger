@@ -78,8 +78,8 @@ import Data.Binary.Get
 import qualified Data.Text as T
 import Data.IORef
 import GHC.Utils.Panic (panic)
-import System.IO
 import Control.Concurrent.Async
+import Data.Coerce
 
 --------------------------------------------------------------------------------
 -- Operations
@@ -298,6 +298,20 @@ preservingThreadLabel m = do
         x <- m
         liftIO $ C.labelThread thId lbl
         pure x
+
+
+-- | Runs action in a separate thread so current thread is interruptible even if
+-- the action uses `uninterruptibleMask`.
+interruptible :: Debugger a -> Debugger a
+interruptible m = Debugger $ ReaderT $ \ st -> Ghc $ \ioref -> do
+  -- Cannot use `withAsync` because it calls uninterruptibleCancel
+  MC.mask $ \ restore -> do
+    a <- async (restore $ coerce m st ioref)
+    restore (wait a) `MC.catchNoPropagate` \e -> do
+      -- we forkIO the cancel to avoid getting stuck trying to interrupt
+      -- uninterruptable code.
+      _ <- forkIO $ cancelWith a (e :: ExceptionWithContext SomeException)
+      rethrowIO e
 
 {-
 Note [Shutting down the external interpreter]
