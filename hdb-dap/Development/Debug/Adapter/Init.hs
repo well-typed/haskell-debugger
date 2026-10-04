@@ -56,6 +56,8 @@ import Development.Debug.Adapter.Handles
 import Development.Debug.Session.Setup
 import GHC.Debugger.Debuggee as Debugger
 import Development.Debug.Adapter.DAPDebuggee
+import GHC.Debugger.Monad
+import GHC.Debugger.Data.Supervisor
 
 --------------------------------------------------------------------------------
 -- * Client
@@ -102,9 +104,9 @@ data InterpreterChoice = InterpreterChoice { runInTerminal :: Bool, internal :: 
 -- | Initialize debugger
 --
 -- Returns @()@ if successful, throws @InitFailed@ otherwise
-initDebugger :: LogAction IO (T.Text,DAPSessionLog) -> DAPServerConf -> InterpreterChoice
+initDebugger :: LogAction IO (T.Text,DAPSessionLog) -> Supervisor -> DAPServerConf -> InterpreterChoice
              -> LaunchArgs -> DebugAdaptor ()
-initDebugger l0 servConf interpChoice
+initDebugger l0 mainScope servConf interpChoice
                LaunchArgs{ __sessionId
                          , projectRoot = givenRoot
                          , entryFile = entryFileMaybe
@@ -171,9 +173,7 @@ initDebugger l0 servConf interpChoice
         absEntryFile = projectRoot /> entryFile
         daState = DAS{entryFile=absEntryFile,waitForDebuggee = dapdWaitForDebuggee dapd,..}
         ld = contramap (ForwardingThreadLog . flip WithSeverity Debug) l
-
-      registerNewDebugSession sessionId daState $ map (destroyDebugSessionOnException l) $
-        [ \withAdaptor -> do
+        thrds = [ \withAdaptor -> do
             -- The info here is already taken into account in debugRunner.
             let GhcInvocation libdir units args = ghcInvocation
             withAdaptor $
@@ -183,12 +183,16 @@ initDebugger l0 servConf interpChoice
                 , "args: " <> unwords args
                 ]
             debuggerThread dbgLog debugRunner defaultRunConf syncRequests syncResponses
-        , \withAdaptor -> forwardHandleToLogger ld readDAPOutput $
+            , \withAdaptor -> forwardHandleToLogger ld readDAPOutput $
             LogAction (\msg -> withAdaptor (Output.neutral msg))
-        ]
-        ++
-        dapdThreads dapd
-
+            ]
+            ++
+            dapdThreads dapd
+      registerNewDebugSession sessionId daState $ (:[]) $ destroyDebugSessionOnException l $ \withAdaptor -> do
+        registerForShutdown mainScope $ do
+          withSupervisor Nothing $ \sessionScope -> do
+            mapM_ (spawn sessionScope Propagate) $ map ($ withAdaptor) thrds
+            awaitAll sessionScope Nothing
       dapdAfterRegister dapd
 
 destroyDebugSessionOnException :: LogAction IO DAPSessionLog

@@ -46,6 +46,7 @@ import qualified GHC.Plugins as GHC
 import Control.Monad.Catch
 import Control.Exception
 import Data.String
+import GHC.Debugger.Data.Supervisor
 
 
 -------------------------------------------------------------------------
@@ -149,12 +150,13 @@ respondWithErrorOnException m = m `Control.Monad.Catch.catch` \ e -> do
 -- The core logic of communicating between the client <-> adaptor <-> debugger
 -- is implemented in this function.
 talk :: LogAction IO DAPLog
+     -> Supervisor
      -> DAPServerConf
      -> Bool
      -- ^ Prefer internal interpreter
      -> Command -> DebugAdaptor ()
 --------------------------------------------------------------------------------
-talk l servConf prefer_internal_interpreter = \ case
+talk l tids servConf prefer_internal_interpreter = \ case
   CommandInitialize -> do
     sendInitializeResponse
 --------------------------------------------------------------------------------
@@ -170,7 +172,7 @@ talk l servConf prefer_internal_interpreter = \ case
     let runInTerminal = fromMaybe False $ supportsRunInTerminalRequest =<< clientCaps
 #endif
 
-    initDebugger (cmapM (\ (sId,x) -> DAPSessionLog sId <$> myThreadId <*> pure x) l) servConf
+    initDebugger (cmapM (\ (sId,x) -> DAPSessionLog sId <$> myThreadId <*> pure x) l) tids servConf
       InterpreterChoice {runInTerminal, internal = prefer_internal_interpreter}
       launch_args
 
@@ -261,9 +263,9 @@ ack l rrr = case rrr.reverseRequestCommand of
 --
 --  See Note [UniqueSupply is process global].
 runHDBServer :: LogAction IO DAPLog -> DAPServerConf -> IO ()
-runHDBServer l servConf@DAPServerConf{ dapServerConfig = config } = do
+runHDBServer l servConf@DAPServerConf{ dapServerConfig = config } = withSupervisor Nothing $ \ scope -> do
   runDAPServerWithLogger (contramap DAPLibraryLog l) config
-    (talk l servConf False)
+    (talk l scope servConf False)
     (ack l )
 
 --------------------------------------------------------------------------------
