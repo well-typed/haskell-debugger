@@ -422,14 +422,14 @@ cleanupInterp l mode = do
       pure True
     ExternalInterp ext -> do
      liftIO $ withExtInterpStatus ext $ \mstate -> do
-      MC.mask $ \_restore -> modifyMVar mstate $ \state -> do
+      MC.mask $ \restore -> modifyMVar mstate $ \state -> do
         case state of
           InterpPending    -> pure (state,True) -- already stopped
           InterpRunning i  -> (`MC.onException` finalTry i) $ do
-            tryStoppingExtInterp i $
+            tryStoppingExtInterp restore i $
              -- a second interrupt has a chance to reset main loop even with stubborn debuggee,
              -- c.f. redirectInterrupts.
-             tryStoppingExtInterp i $ finalTry i
+             tryStoppingExtInterp restore i $ finalTry i
          where
            finalTry i
              | KillMode <- mode = do
@@ -438,7 +438,7 @@ cleanupInterp l mode = do
              | otherwise = pure (InterpRunning i,False)
            success = do
              pure (InterpPending,True)
-           tryStoppingExtInterp i keepGoing = MC.mask_ $ do
+           tryStoppingExtInterp restore i keepGoing = do
             -- Can't use  `getProcessExitCode` because the interp process is
             -- not necessarily a child of this process (runInTerminal case).
 
@@ -480,7 +480,7 @@ cleanupInterp l mode = do
             -- interpreter closed the socket and is shutting down.
             --
             -- We give the interpreter 1s to close the socket, otherwise we escalate.
-            handlePipeException (timeout 1_000_000 (readPipe pipe getRemainingLazyByteString)) $ \case
+            handlePipeException (timeout 1_000_000 (restore $ readPipe pipe getRemainingLazyByteString)) $ \case
              Nothing -> do
                 keepGoing
              (Just bs) -> do
