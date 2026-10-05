@@ -143,6 +143,7 @@ library
                       -- Data structures
                       GHC.Debugger.Data.BreakpointMap,
                       GHC.Debugger.Data.ThreadMap,
+                      GHC.Debugger.Data.Supervisor,
 
     if impl(ghc >= 9.14.2)
       exposed-modules:
@@ -186,6 +187,7 @@ library
                       haskell-debugger-view >= 0.2 && < 1,
                       ghc-stack-annotations >=0.1 && <0.2,
                       rts >= 1 && < 2,
+                      stm >= 2 && < 3,
 
     if !os(windows)
         build-depends: unix >= 2.8.6 && < 2.9,
