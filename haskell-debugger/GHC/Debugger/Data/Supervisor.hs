@@ -97,7 +97,7 @@ newSupervisor =
 -- | Not exported: runs masked from withSupervisor's bracket.
 shutdown :: Supervisor -> Maybe Int -> IO ()
 shutdown sup graceMicros = do
-  -- uninterruptible: no retry
+  -- uninterruptible atomic block, because it doesn't retry
   tids <- atomically $ do
     writeTVar (stopping sup) True
     Set.toList <$> readTVar (workers sup)
@@ -109,7 +109,7 @@ shutdown sup graceMicros = do
         -- in-flight propagations always complete promptly, so no deadline
         readTVar (inFlight sup) >>= check . (== 0)
         waitDoneWorkers
-      -- interruptible: only resilient to ChildFailed and SupervisorShutdown exceptions
+      -- interruptible atomic block: only resilient to ChildFailed and SupervisorShutdown exceptions
       loop = atomically waitDone `catches`
        [ Handler $ \cf@(ChildFailed u _ _) -> do
          when (u /= supId sup) $
@@ -125,15 +125,13 @@ shutdown sup graceMicros = do
 
 mkWaitDone :: Supervisor -> Maybe Int -> IO (STM ())
 mkWaitDone sup mgraceMicros = do
-  withinDeadline <- mkDeadlineWrapper mgraceMicros
-  pure $ do
-        withinDeadline (readTVar (workers sup) >>= check . Set.null)
+  deadlineDone <- case mgraceMicros of
+    Nothing     -> pure (pure False)
+    Just micros -> registerDelay micros >>= \d -> pure (readTVar d)
 
-mkDeadlineWrapper :: Maybe Int -> IO (STM () -> STM ())
-mkDeadlineWrapper Nothing = pure id
-mkDeadlineWrapper (Just graceMicros) = do
-  deadline <- registerDelay graceMicros
-  pure $ (`orElse` (readTVar deadline >>= check))
+  pure $ do
+    workers <- readTVar (workers sup)
+    check (Set.null workers) `orElse` (check =<< deadlineDone)
 
 throwToParent :: Exception e => Supervisor -> e -> IO ()
 throwToParent sup e = throwTo (parent sup) e
@@ -155,6 +153,7 @@ spawn sup onFail action = mask_ $ do
              propagate sup tid e
            _ -> pure ())
        `finally` atomically (modifyTVar' (workers sup) (Set.delete tid))
+ -- only return after worker is registered
  atomically $ do
    s <- readTVar (stopping sup)
    when (not s) $ readTVar (workers sup) >>= check . Set.member tid
@@ -182,8 +181,7 @@ registerForShutdown sup m = do
             Nothing -> writeTVar armed (Just True) >> pure True
             Just _  -> pure False
           when ok $ forever (threadDelay maxBound))
-        `finallyNoMask` do
-          -- no mask so `m` wins the killThread race
+        `finally` do
           a <- readTVarIO armed
           when (a == Just True) $ do
             deRefWeak wtid >>= mapM_ (`throwTo` SupervisorShutdown (supId sup)) >> takeMVar m_done
@@ -194,11 +192,12 @@ registerForShutdown sup m = do
         writeTVar armed (Just False)
         pure True
     when gaveUp $ throwIO (SupervisorShutdown (supId sup))
-    m `finally` (atomically (writeTVar armed (Just False)) >> killThread watcher)
-  where
-    finallyNoMask (x :: IO ()) f = do
-      x `onException` f
-      f
+    -- We want to stop the watcher before returning, so we disarm it and kill it.
+    -- Disarming is necessary because the watcher could still be sleeping.
+    --
+    -- The `uninterruptibleMask_` is to prevent the watcher from killing us at the very end.
+    -- The watcher is interruptible most of the time, so we will not be blocking for long.
+    m `finally` (atomically (writeTVar armed (Just False)) >> uninterruptibleMask_ (killThread watcher))
 
 -- | Waits for all threads spawned by this supervisor to terminate.
 awaitAll :: Supervisor -> Maybe Int -> IO ()
@@ -207,8 +206,15 @@ awaitAll sup graceMicros = join $ atomically <$> mkWaitDone sup graceMicros
 ------------------------------------------------------------------------
 -- Internals
 
--- Must be called masked. The check of 'stopping' and the 'inFlight'
--- increment are atomic, so shutdown always waits for this delivery.
+-- | Propagates an exception from a child to the parent. Must be called masked.
+--
+-- Ideally this would be `throwTo`, but there's a race with the parent returning
+-- from `withSupervisor`: if the grace period expires, `withSupervisor` could
+-- return before the delivery of the propagated exception, which now would kill
+-- the parent thread, instead of the child having been killed.
+--
+-- To avoid that race we increment the `inFlight` count here, so that `shutdown` can
+-- wait for the delivery.
 propagate :: Supervisor -> ThreadId -> SomeException -> IO ()
 propagate sup tid e = do
   go <- atomically $ do
