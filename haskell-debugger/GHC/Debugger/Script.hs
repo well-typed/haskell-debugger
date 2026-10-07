@@ -21,6 +21,7 @@ import qualified GHC
 import Data.Coerce
 import Control.Monad
 import qualified Data.List as List
+import Control.Monad.Catch
 
 -------------------------------------------
 -- Types
@@ -53,7 +54,7 @@ data ScriptEvalEnv = SEE
   }
 
 newtype Script a = Script (ReaderT ScriptEvalEnv IO a)
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadFail, MonadReader ScriptEvalEnv)
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadFail, MonadReader ScriptEvalEnv, MonadThrow, MonadCatch, MonadMask)
 
 data AbortedDebugSession = AbortedDebugSession T.Text
   deriving Show
