@@ -16,14 +16,18 @@ import Options.Applicative
 import Development.Debug.Session.Setup
 
 import Colog.Core
-import GHC.Debugger.Interface.Messages
+
 import GHC.Debugger.Monad
-import GHC.Debugger
+import GHC.Debugger hiding (Command)
 import Control.Monad
 import Data.List (intercalate)
 import Data.Maybe (fromJust)
 import qualified Data.Maybe as Maybe
 import GHC.Debugger.Debuggee (DebuggerLog)
+import GHC.Debugger.Script
+
+-- TODO: AST
+newtype Command = Command String
 
 data RunOptions = RunOptions
   { runEntryFile :: AbsFilePath
@@ -38,7 +42,7 @@ data RunContext = RunContext
   }
 
 -- | Interactive debugging monad
-type InteractiveDM a = InputT (RWST RunOptions () RunContext Debugger) a
+type InteractiveDM a = InputT (RWST RunOptions () RunContext Script) a
 
 data InteractiveLog
   = IDebuggerLog DebuggerLog
@@ -63,15 +67,21 @@ runIDM logger runEntryPoint entryFile runEntryArgs extraGhcArgs cradleFile runCo
   entryFileExists <- doesFileExist (unAbs runEntryFile)
   when (not entryFileExists) $ do
     exitWithMsg $ "Entry file \"" ++ (unAbs runEntryFile) ++ "\" does not exist or is a directory."
-
-  hieDebugRunner hieBiosLogger (DebugRunnerConf (unAbs runProjectRoot) entryFile extraGhcArgs cradleFile) >>= \case
-    Left e               -> exitWithMsg e
-    Right (_ghcInvocation, debugRunner)
+  let
+    runDbg m = do
+      hieDebugRunner hieBiosLogger (DebugRunnerConf (unAbs runProjectRoot) entryFile extraGhcArgs cradleFile) >>= \case
+        Left e               -> exitWithMsg e
+        Right (_ghcInvocation, debugRunner)
                          -> do
-      let debugRec = contramap IDebuggerLog logger
+          let debugRec = contramap IDebuggerLog logger
 
-      runDebugger debugRec debugRunner runConf $
-        fmap fst $
+          runDebugger debugRec debugRunner runConf $
+            m
+  let
+    runS :: (Debugger b0 -> IO b0) -> Script a -> IO a
+    runS = undefined
+
+  runS runDbg $ fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
                    (RunOptions { runProjectRoot, runEntryFile, runEntryPoint, runEntryArgs })
                    (RunContext { runLastCommand = Nothing, runCurrentThread = Nothing } )
@@ -79,6 +89,7 @@ runIDM logger runEntryPoint entryFile runEntryArgs extraGhcArgs cradleFile runCo
     exitWithMsg txt = do
       hPutStrLn stderr txt
       exitWith (ExitFailure 33)
+
 
   --   completeF = completeWordWithPrev Nothing filenameWordBreakChars $
   --     \(reverse -> previous) word -> do
@@ -103,8 +114,7 @@ debugInteractive = withInterrupt loop
           lift (gets runLastCommand) >>= \case
             Nothing -> return ()
             Just cmd -> do
-              out <- lift . lift $ execute cmd -- repeat last command
-              printResponse out
+              lift . lift $ interpretCmd cmd -- repeat last command
         Just input -> do
           mcmd <- parseCmd input
           case mcmd of
@@ -112,103 +122,105 @@ debugInteractive = withInterrupt loop
             Just Exit -> outputStrLn "Exiting..." >> liftIO (exitWith ExitSuccess)
             Just (Do cmd) -> do
               lift $ modify (\ o -> o { runLastCommand = Just cmd })
-              out <- lift . lift $ execute cmd
-              printResponse out
+              lift . lift $ interpretCmd cmd
       loop
 
-showExceptionDetails :: RemoteThreadId -> InteractiveDM ()
-showExceptionDetails tid = do
-  infoResp <- lift . lift $ execute (GetExceptionInfo tid)
-  case infoResp of
-    GotExceptionInfo exc_info -> outputStrLn $ renderExceptionInfo exc_info
-    _ -> pure ()
-  stackResp <- lift . lift $ execute (GetStacktrace tid)
-  case stackResp of
-    GotStacktrace (frame:_) ->
-      outputStrLn $
-        "Exception location: " ++ renderSourceSpan (frame.sourceSpan)
-    _ -> outputStrLn "Exception location: <unknown>"
+interpretCmd :: Command -> Script ()
+interpretCmd = _
+
+-- showExceptionDetails :: RemoteThreadId -> InteractiveDM ()
+-- showExceptionDetails tid = do
+--   infoResp <- lift . lift $ execute (GetExceptionInfo tid)
+--   case infoResp of
+--     GotExceptionInfo exc_info -> outputStrLn $ renderExceptionInfo exc_info
+--     _ -> pure ()
+--   stackResp <- lift . lift $ execute (GetStacktrace tid)
+--   case stackResp of
+--     GotStacktrace (frame:_) ->
+--       outputStrLn $
+--         "Exception location: " ++ renderSourceSpan (frame.sourceSpan)
+--     _ -> outputStrLn "Exception location: <unknown>"
 
 --------------------------------------------------------------------------------
 -- Printing
 --------------------------------------------------------------------------------
 
-printResponse :: Response -> InteractiveDM ()
-printResponse = \case
-  DidEval er -> outputStrLn (showEvalResult er)
-      -- don't remember thread context for eval requests
-      --
-      -- FIXME: we should track which threads we've started and which have been
-      -- stopped per-thread rather than with a global one, then we could do
-      -- this more uniformly.
-  DidSetBreakpoint bf       -> outputStrLn $ show bf
-  DidRemoveBreakpoint bf    -> outputStrLn $ show bf
-  DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
-  DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
-  DidResume er -> outputEvalResult er
-  DidExec er -> outputEvalResult er
-  DidTerminate b -> outputStrLn $ if b then "Terminated." else "Could not terminate."
-  GotThreads threads -> outputStrLn $ show threads
-  GotStacktrace stackframes -> outputStrLn $ show stackframes
-  GotScopes scopeinfos -> outputStrLn $ show scopeinfos
-  GotVariables vis -> outputVariables vis
-  GotExceptionInfo exc_info -> outputStrLn $ renderExceptionInfo exc_info
-  Aborted err_str -> outputStrLn ("Aborted: " ++ err_str)
-  NonFatalError err_str -> outputStrLn ("Encountered error: " ++ err_str)
-  Initialised -> pure ()
-  where
-    outputEvalResult er = do
-      case er of
-        EvalStopped{breakThread} -> do
-          cmd <- lift $ gets runLastCommand
-          if isStepCmd cmd then do
-             -- Always print the stopped scope if stopped?
-             -- FIXME: Figure out the CLI interface.
-             out <- lift . lift $ execute (GetScopes breakThread 0)
-             printResponse out
-          else do
-             outputStrLn (showEvalResult er)
-        _ -> outputStrLn (showEvalResult er)
-      maybeShowException er
-      rememberThreadContext er
+-- printResponse :: Response -> InteractiveDM ()
+-- printResponse = \case
+--   DidEval er -> outputStrLn (showEvalResult er)
+--       -- don't remember thread context for eval requests
+--       --
+--       -- FIXME: we should track which threads we've started and which have been
+--       -- stopped per-thread rather than with a global one, then we could do
+--       -- this more uniformly.
+--   DidSetBreakpoint bf       -> outputStrLn $ show bf
+--   DidRemoveBreakpoint bf    -> outputStrLn $ show bf
+--   DidGetBreakpoints mb_span -> outputStrLn $ show mb_span
+--   DidClearBreakpoints -> outputStrLn "Cleared all breakpoints."
+--   DidResume er -> outputEvalResult er
+--   DidExec er -> outputEvalResult er
+--   DidTerminate b -> outputStrLn $ if b then "Terminated." else "Could not terminate."
+--   GotThreads threads -> outputStrLn $ show threads
+--   GotStacktrace stackframes -> outputStrLn $ show stackframes
+--   GotScopes scopeinfos -> outputStrLn $ show scopeinfos
+--   GotVariables vis -> outputVariables vis
+--   GotExceptionInfo exc_info -> outputStrLn $ renderExceptionInfo exc_info
+--   Aborted err_str -> outputStrLn ("Aborted: " ++ err_str)
+--   NonFatalError err_str -> outputStrLn ("Encountered error: " ++ err_str)
+--   Initialised -> pure ()
+--   where
+--     outputEvalResult er = do
+--       case er of
+--         EvalStopped{breakThread} -> do
+--           cmd <- lift $ gets runLastCommand
+--           if isStepCmd cmd then do
+--              -- Always print the stopped scope if stopped?
+--              -- FIXME: Figure out the CLI interface.
+--              out <- lift . lift $ execute (GetScopes breakThread 0)
+--              printResponse out
+--           else do
+--              outputStrLn (showEvalResult er)
+--         _ -> outputStrLn (showEvalResult er)
+--       maybeShowException er
+--       rememberThreadContext er
 
-    maybeShowException EvalStopped{breakId = Nothing, breakThread=tid} =
-      showExceptionDetails tid
-    maybeShowException _ = pure ()
+--     maybeShowException EvalStopped{breakId = Nothing, breakThread=tid} =
+--       showExceptionDetails tid
+--     maybeShowException _ = pure ()
 
-    rememberThreadContext er =
-      case er of
-        EvalCompleted{} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Nothing } )
-        EvalException{} -> pure () -- TODO: exceptions are still not signaling per-thread
-        EvalStopped{breakThread} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Just breakThread } )
-        EvalAbortedWith{} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Nothing } )
+--     rememberThreadContext er =
+--       case er of
+--         EvalCompleted{} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Nothing } )
+--         EvalException{} -> pure () -- TODO: exceptions are still not signaling per-thread
+--         EvalStopped{breakThread} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Just breakThread } )
+--         EvalAbortedWith{} -> lift $ modify' (\ ctx -> ctx { runCurrentThread = Nothing } )
 
-    outputVariables (ForcedVariable var) = outputVariables (VariableFields [var])
-    outputVariables (VariableFields vars) = do
-       ctx <- lift get
-       case runCurrentThread ctx of
-         Just threadId ->
-          mapM_ (outputVarWithFields  threadId 0) vars
-         Nothing -> error "no thread id"
+--     outputVariables (ForcedVariable var) = outputVariables (VariableFields [var])
+--     outputVariables (VariableFields vars) = do
+--        ctx <- lift get
+--        case runCurrentThread ctx of
+--          Just threadId ->
+--           mapM_ (outputVarWithFields  threadId 0) vars
+--          Nothing -> error "no thread id"
 
-    outputVarWithFields threadId frameIx var = do
-      outputStrLn (showVarInfo var)
-      fields <- fetchFields threadId frameIx var
-      mapM_ (outputStrLn . ("  " ++) . showVarInfo) fields
+--     outputVarWithFields threadId frameIx var = do
+--       outputStrLn (showVarInfo var)
+--       fields <- fetchFields threadId frameIx var
+--       mapM_ (outputStrLn . ("  " ++) . showVarInfo) fields
 
-    fetchFields _ _ VarInfo{varRef = NoVariables} = pure []
-    fetchFields threadId frameIx VarInfo{varRef = ref@(SpecificVariable _), ..} = do
-      resp <- lift . lift $ execute (GetVariables threadId frameIx ref)
-      case resp of
-        GotVariables res -> pure (variableResultToList res)
-        Aborted err -> outputStrLn ("Failed to fetch fields for " ++ varName ++ ": " ++ err) >> pure []
-        _ -> outputStrLn ("Unexpected response when fetching fields for " ++ varName) >> pure []
-    fetchFields _ _ _ = pure []
+--     fetchFields _ _ VarInfo{varRef = NoVariables} = pure []
+--     fetchFields threadId frameIx VarInfo{varRef = ref@(SpecificVariable _), ..} = do
+--       resp <- lift . lift $ execute (GetVariables threadId frameIx ref)
+--       case resp of
+--         GotVariables res -> pure (variableResultToList res)
+--         Aborted err -> outputStrLn ("Failed to fetch fields for " ++ varName ++ ": " ++ err) >> pure []
+--         _ -> outputStrLn ("Unexpected response when fetching fields for " ++ varName) >> pure []
+--     fetchFields _ _ _ = pure []
 
-    isStepCmd (Just (DoResume _ s _))
-      | ResumeNoStep <- s = False
-      | otherwise         = True
-    isStepCmd _           = False
+--     isStepCmd (Just (DoResume _ s _))
+--       | ResumeNoStep <- s = False
+--       | otherwise         = True
+--     isStepCmd _           = False
 
 showEvalResult :: EvalResult -> String
 showEvalResult (EvalCompleted{..}) = resultVal
@@ -296,105 +308,10 @@ data OrExit a = Do a
               | Exit
   deriving Functor
 
-runParser :: RunOptions -> Parser Command
-runParser opts =
-  -- just some args
-  (DebugExecution (mkEntry (runEntryPoint opts)) (runEntryFile opts) <$> parseSomeArgs)
-  -- just "run"
-  <|> (pure $ DebugExecution (mkEntry (runEntryPoint opts)) (runEntryFile opts) (runEntryArgs opts))
-  where
-    _parseEntry =
-      fmap mkEntry $
-      option str
-        ( long "entry"
-        <> short 'e'
-        <> metavar "FUNCTION_NAME"
-        <> help "Run with this entry point"
-        )
-    parseSomeArgs =
-      some ( argument str
-        ( metavar "ARGS" <> help "Arguments to pass to the entry point. If empty, the arguments given at the debugger invocation are used." ) )
-    mkEntry entry
-      | entry == "main" = MainEntry Nothing
-      | otherwise = FunctionEntry (runEntryPoint opts)
-
--- | Combined parser for 'Command'
-cmdParser :: RunOptions -> RunContext -> Parser (OrExit Command)
-cmdParser opts ctx = hsubparser
-   (
-    Options.Applicative.command "delete"
-    ( info (Do . DelBreakpoint <$> breakpointParser (runProjectRoot opts))
-      ( progDesc "Delete a breakpoint" ) )
-  <>
-    Options.Applicative.command "run"
-    ( info (Do <$> runParser opts)
-      ( progDesc "Run the debuggee" ) )
-  <>
-    Options.Applicative.command "next"
-    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeStepLocal ResumeTheWorld)
-      ( progDesc "Step over to the next line" ) )
-  <>
-    Options.Applicative.command "step"
-    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeSingleStep ResumeTheWorld)
-      ( progDesc "Step-in to the next immediate location" ) )
-  <>
-    Options.Applicative.command "finish"
-    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeStepOut ResumeTheWorld)
-      ( progDesc "Step-out of the current function into the caller/its continuation" ) )
-  <>
-    Options.Applicative.command "continue"
-    ( info (pure $ Do $ DoResume (fromJust ctx.runCurrentThread) ResumeNoStep ResumeTheWorld)
-      ( progDesc "Continue executing from the current breakpoint" ) )
-  <>
-    Options.Applicative.command "print"
-    ( info (Do . DoEval ((,0) <$> ctx.runCurrentThread) . unwords <$> many (argument str ( metavar "EXPRESSION"
-     <> help "Expression to evaluate in the current context" )))
-      ( progDesc "Evaluate an expression in the current context" ) )
-  <>
-    Options.Applicative.command "exit"
-    ( info (pure Exit)
-      ( progDesc "Terminate and exit the debugger session" ) )
-  <>
-    Options.Applicative.command "threads"
-    ( info (pure $ Do GetThreads)
-      ( progDesc "Print all user threads" ) )
-  <>
-    Options.Applicative.command "backtrace"
-    ( info (Do <$> stackTraceParser ctx <**> helper)
-      ( progDesc "Print stack trace" ) )
-  <>
-    Options.Applicative.command "variables"
-    ( info (Do <$> variablesParser ctx <**> helper)
-      ( progDesc "Print local variables" ) )
-  <> Options.Applicative.command "break"
-    ( info (Do <$> (SetBreakpoint <$> breakpointParser (runProjectRoot opts) <*> hitCountBreakParser <*> conditionalBreakParser <*> logMessageParser))
-      ( progDesc "Set a breakpoint" ) )
-  )
-
 -- | TODO: handle this as part of issue #144
 logMessageParser :: Parser (Maybe String)
 logMessageParser = pure Nothing
 
-stackTraceParser :: RunContext -> Parser Command
-stackTraceParser ctx =
-  GetStacktrace <$> threadIdParser ctx "Print backtrace of THREAD_ID. Defaults to current thread at breakpoint."
-
-variablesParser :: RunContext -> Parser Command
-variablesParser ctx =
-  GetVariables
-    <$> threadIdParser ctx "Show variables of THREAD_ID. Defaults to current thread at breakpoint."
-    <*> pure 0
-    <*> pure LocalVariables
-
-threadIdParser :: RunContext -> String -> Parser RemoteThreadId
-threadIdParser ctx helpMsg =
-     RemoteThreadId <$> argument auto (metavar "THREAD_ID" <> help helpMsg)
- <|> Maybe.maybe (empty <**> abortOption (ErrorMsg "Not stopped at a Breakpoint") mempty) pure (runCurrentThread ctx)
-
--- | Main parser info
-cmdParserInfo :: RunOptions -> RunContext -> ParserInfo (OrExit Command)
-cmdParserInfo opts ctx = info (cmdParser opts ctx)
-  ( fullDesc )
 
 -- | Parse command line arguments
 parseCmd :: String -> InteractiveDM (Maybe (OrExit Command))
@@ -402,10 +319,9 @@ parseCmd input = do
   opts <- lift ask
   ctx <- lift get
   let
-    res = execParserPure
-     parserPrefs
-     (cmdParserInfo opts ctx)
-     (words input)
+    res = case input of
+      "exit" -> Success Exit
+      s -> Success (Do $ Command s)
    in case res of
     Success cmd ->
       return (Just cmd)
