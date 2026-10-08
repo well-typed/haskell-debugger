@@ -8,7 +8,6 @@ import GHC.Debugger.Interface.Messages
 
 
 import qualified Data.Text as T
-import Control.Concurrent.MVar
 import Control.Monad.IO.Class
 
 import GHC.Debugger.Interface.Messages as D
@@ -44,10 +43,8 @@ data DebugExecutionArgs = DebugExecutionArgs
   , runArgs    :: [String]
   , projectRoot :: AbsFilePath
   }
-
 data ScriptEvalEnv = SEE
-  { syncRequests       :: MVar D.Command
-  , syncResponses      :: MVar D.Response
+  { dbgBackend :: DbgBackend
   , _output            :: LogAction IO ScriptMsg
   , currentStop        :: IORef LocalState
   , debugExecutionArgs :: DebugExecutionArgs
@@ -152,18 +149,18 @@ reportError = output . ErrorMessage
 -- | Synchronously send a command to the debugger and await a response
 sendSync :: D.Command -> Script Response
 sendSync cmd = do
-  SEE{..} <- ask
-  liftIO $ putMVar syncRequests cmd
-  liftIO (takeMVar syncResponses) >>= handleErrors
+  SEE{dbgBackend = DbgBackend{..}} <- ask
+  liftIO $ syncRequests cmd
+  liftIO syncResponses >>= handleErrors
 
 -- | Sends a command to the debugger, then runs the given action, and only after
 -- running the action it waits for the result of the debugger
 sendInterleaved :: D.Command -> Script () -> Script Response
 sendInterleaved cmd action = do
-  SEE{..} <- ask
-  liftIO $ putMVar syncRequests cmd
+  SEE{dbgBackend = DbgBackend{..}} <- ask
+  liftIO $ syncRequests cmd
   () <- action
-  liftIO (takeMVar syncResponses) >>= handleErrors
+  liftIO syncResponses >>= handleErrors
 
 handleErrors :: Response -> Script Response
 handleErrors r@(NonFatalError e) = do
