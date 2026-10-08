@@ -48,6 +48,18 @@ mkAbsolute fp = assert (null fp || isAbsolute fp) $ MkAbsFilePath fp
 (/>) :: AbsFilePath -> FilePath -> AbsFilePath
 MkAbsFilePath fp /> fp' = MkAbsFilePath $ normalise $ fp </> fp'
 
+
+--------------------------------------------------------------------------------
+-- Debugger (backend)
+--------------------------------------------------------------------------------
+
+-- | Interface to Debugger backend
+--   TODO: change to allow async req/resp.
+data DbgBackend = DbgBackend
+  { syncRequests       :: Command -> IO ()
+  , syncResponses      :: IO Response
+  }
+
 --------------------------------------------------------------------------------
 -- Commands
 --------------------------------------------------------------------------------

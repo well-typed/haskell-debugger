@@ -98,6 +98,8 @@ library
                       GHC.Debugger,
                       GHC.Debugger.Interface.Messages,
 
+                      GHC.Debugger.Backend,
+
                       -- Debugger Script Language
                       GHC.Debugger.Script,
 
