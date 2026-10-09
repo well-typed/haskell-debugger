@@ -51,11 +51,8 @@ resolveResumeStep r = \case
       pure $ enclosingTickSpan ticks loc
 
 -- | Wrap around GHC's "odd behavior"?
-resumeExec :: GhcMonad m => SingleStep -> Maybe Int -> Resume -> m ExecResult
+resumeExec :: SingleStep -> Maybe Int -> Resume -> Debugger ExecResult
 resumeExec a b _resume = do
-  -- IC's ic_imports field is not kept in sync with ic_gre_cache, so we could do
-  -- this call later, but why rely on that.
-  imports <- GHC.getContext
 
 #ifdef GHC_HAS_MULTITHREADED_DBG
   v <- GHC.resumeExec a MultiThreadedBreaks b _resume
@@ -63,25 +60,4 @@ resumeExec a b _resume = do
   v <- GHC.resumeExec a b
 #endif
 
-  -- To have interactive imports persist after a `continue` command we have to
-  -- work around how GHC.resumeExec handles the InteractiveContext (IC).
-  --
-  -- GHC.resumeExec resets the scope of the IC (i.e. ic_gre_cache) to what it
-  -- was before the last ExecBreak.
-  --
-  -- It makes sense for GHC.resumeExec to remove from the IC scope the
-  -- breakpoint locals and anything that could have been defined with them, in
-  -- fact they are also unloaded.
-  --
-  -- The way it's done though also rollbacks any import statements that were
-  -- executed since the last ExecBreak. The only fix is to reimport everything
-  -- again.
-  --
-  -- Note: GHC.setContext recomputes the scope of the interactive imports from
-  -- scratch everytime. Considering `runDebugger` adds the whole home unit to
-  -- the interactive imports this might become a bottleneck. GHC does not keep
-  -- any reference to the scope containing just the imports, so we would have to
-  -- cache it ourselves (and then extend it with the cached scope of
-  -- ic_tythings, i.e. igre_prompt_env (c.f. replaceImportEnv)).
-  GHC.setContext imports
   pure v

@@ -23,15 +23,17 @@ import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.Function
 import Data.IORef
+import Data.IntMap.Strict (IntMap)
+import qualified Data.IntMap.Strict as IM
 import Data.Maybe
 import Data.Version (showVersion)
 import Prelude hiding (mod)
-#ifdef MIN_VERSION_unix
-#endif
 import qualified Data.List as L
 
 import GHC
 import GHC.Driver.DynFlags as GHC
+import GHC.Driver.Env
+import GHC.Runtime.Context
 import GHC.Types.Error
 import GHC.Unit.State
 import GHC.Unit.Types
@@ -63,6 +65,28 @@ data BreakpointInfo = BreakpointInfo
   }
   deriving (Eq,Show)
 
+-- | Identifies a given state of the 'globalIC' imports.
+--
+-- We do not want to call 'setContext' more than necessary, so we tag stored
+-- 'InteractiveContext's with the ImportsEpoch of the global scope they were based on.
+type ImportsEpoch = Int
+
+data StoppedThread = StoppedThread
+  { resume :: !Resume
+  , breakIC :: !InteractiveContext
+    -- ^ InteractiveContext captured at the time of pushResume.
+  , frameICs :: !(IntMap (InteractiveContext,(ImportsEpoch,Maybe Module)))
+    -- ^ Current InteractiveContext per frame index, stored alongside @Resume@
+    -- so they get dropped at the same time. The @Maybe Module@ is the source
+    -- module of the frame breakpoint, if any.
+  }
+
+
+mkStoppedThread :: Resume -> InteractiveContext -> StoppedThread
+mkStoppedThread resume ic = StoppedThread{ frameICs = IM.empty, breakIC = ic{ic_resume = []}
+                                         , .. }
+
+
 -- | State required to run the debugger.
 --
 -- - Keep track of active breakpoints to easily unset them all.
@@ -77,9 +101,15 @@ data DebuggerState = DebuggerState
       , threadMap         :: IORef (TM.ThreadMap (ForeignRef ThreadId))
       -- ^ 'ThreadMap' for threads spawned by the debuggee
 
-      , threadResumeMap   :: IORef (TM.ThreadMap Resume)
+      , threadResumeMap   :: IORef (TM.ThreadMap StoppedThread)
       -- ^ If a thread is currently stopped on a breakpoint, this map will
-      -- contain its resume context (from which we can resume the thread)
+      -- contain its resume context (from which we can resume the thread),
+      -- also contains frame specific 'InteractiveContext's, created as needed.
+
+      , globalIC     :: IORef (InteractiveContext,Int)
+      -- ^ 'InteractiveContext' for DoEval without a specified frame. Its
+      -- `ic_imports` are imported into the frame specific
+      -- 'InteractiveContext's.
 
       , compCache         :: IORef CompCache
       -- ^ Cache loaded and compiled expressions.
@@ -189,11 +219,13 @@ data ProjectDebugSpec = ProjectDebugSpec
 
 -- | Initialize a 'DebuggerState'
 initialDebuggerState :: LogAction IO DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
-initialDebuggerState l hsDbgViewUid =
+initialDebuggerState l hsDbgViewUid = do
+  ic <- hsc_IC <$> getSession
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
                 <*> liftIO (newIORef TM.emptyThreadMap)
                 <*> liftIO (newIORef TM.emptyThreadMap)
+                <*> liftIO (newIORef (ic,0))
                 <*> liftIO (newIORef emptyCompCache)
                 <*> pure hsDbgViewUid
                 <*> pure l

@@ -1,0 +1,32 @@
+cabal-version:      3.0
+name:               T370
+version:            0.1.0.0
+-- synopsis:
+-- description:
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Andrea Vezzosi
+maintainer:         andrea@well-typed.com
+-- copyright:
+build-type:         Simple
+
+-- extra-source-files:
+
+common extensions
+    default-language: GHC2021
+
+common ghc-options
+    ghc-options: -Wall -Widentities
+
+common rts-options
+    ghc-options: -rtsopts -threaded "-with-rtsopts=-N"
+
+library
+    import:           extensions
+    import:           ghc-options
+    exposed-modules:  T370, T370b
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base
+    hs-source-dirs:   .
+    default-language: Haskell2010

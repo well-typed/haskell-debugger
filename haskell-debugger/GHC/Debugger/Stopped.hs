@@ -11,6 +11,7 @@ module GHC.Debugger.Stopped
   , getScopes
   , getVariables
   , getExceptionInfo
+  , getStackFrame
   ) where
 
 import Data.Function
@@ -49,6 +50,9 @@ import qualified GHC.Debugger.Interface.Messages as DbgStackFrame (DbgStackFrame
 import GHC.Debugger.Utils
 import qualified Colog.Core as Logger
 import System.Directory (getCurrentDirectory)
+import Data.List
+import GHC.Debugger.Runtime.Thread.Resume
+import GHC.Runtime.Context (icInScopeTTs)
 
 #if MIN_VERSION_ghc(10,1,0)
 import GHC.Debugger.Runtime.Thread.Resume
@@ -272,6 +276,11 @@ getScopes threadId frameIx = do
 -- (b) ONLY the variable requested
 -- (c) The fields of the variable requested but NOT the original variable
 
+getStackFrame :: RemoteThreadId -> Int{-stack frame index-} -> Debugger (Maybe DbgStackFrame)
+getStackFrame threadId frameIx = do
+  frames <- getStacktrace threadId
+  pure $ frames !? frameIx
+
 -- | Get variables using a variable/variables reference.
 --
 -- When the request forces a variable, return 'ForcedVariable'. Otherwise return
@@ -318,12 +327,11 @@ getVariables threadId frameIx vk = do
 
     -- (VARR)(a) from here onwards
     LocalVariables -> fmap VariableFields $ do
-      vars <- if frameIx == 0
-        then
-          -- top frame vars already bound when stopping
-          GHC.getBindings
-        else
-          map AnId <$> getStackFrameBindings frame
+      st <- if frameIx == 0 then readStoppedThread threadId else pure Nothing
+      vars <- case st of
+        Just StoppedThread{..}
+          -> pure (GHC.Runtime.Context.icInScopeTTs breakIC)
+        _ -> map AnId <$> getStackFrameBindings frame
       mapM (tyThingToVarInfo fam_envs) vars
 
     ModuleVariables
