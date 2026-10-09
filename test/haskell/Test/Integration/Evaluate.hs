@@ -1,10 +1,11 @@
 -- | Evaluate request tests ported from the NodeJS testsuite.
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 module Test.Integration.Evaluate (evaluateTests) where
 
 import Control.Monad.IO.Class (liftIO)
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, nub)
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -12,6 +13,10 @@ import Test.Tasty.HUnit
 import Test.Tasty.ExpectedFailure
 #endif
 import qualified DAP
+import DAP.Types
+import Control.Monad
+import Data.Maybe
+import Test.DAP.Messages.Parser (Event(..))
 
 evaluateTests :: TestTree
 evaluateTests =
@@ -25,7 +30,28 @@ evaluateTests =
         evaluateImportedBindings
     , testCase "Bindings from other modules not available in evaluate context (issue #233)"
           evaluateImportedBindingsNotInOtherModule
+    , testCase "Evaluate from multiple stopped threads"
+         evaluateMultiThreaded
     ]
+
+evaluateMultiThreaded :: Assertion
+evaluateMultiThreaded =
+  withTestDAPServer "test/integration/T370" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg@LaunchConfig{..} = mkLaunchConfig test_dir "T370.hs"
+      _ <- sync $ launchWith cfg
+      waitFiltering_ EventTy "initialized"
+      _ <- sync $ setLineBreakpoints lcProjectRoot (fromMaybe undefined lcEntryFile) [23,29]
+      _ <- sync configurationDone
+      Event{eventBody = Just StoppedEvent{stoppedEventReason, stoppedEventThreadId}} <- waitFiltering EventTy "stopped"
+      ts <- Test.DAP.threads
+      let evalAtTop frs expr = evaluateAt expr (Just (stackFrameId (frs !! 0)))
+      resps <- fmap catMaybes . forM ts $ \ t -> do
+        frs <- stackTrace (threadId t)
+        if null frs then return Nothing else do
+          Just <$> evalAtTop frs "x"
+      liftIO $ assertEqual ("Responses: " ++ show (map DAP.evaluateResponseResult resps)) 3 (length $ nub $ map DAP.evaluateResponseResult resps)
+      disconnect
 
 evaluateStructured :: Assertion
 evaluateStructured =
