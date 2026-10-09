@@ -1,10 +1,11 @@
 -- | Evaluate request tests ported from the NodeJS testsuite.
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 module Test.Integration.Evaluate (evaluateTests) where
 
 import Control.Monad.IO.Class (liftIO)
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, sort)
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -12,6 +13,11 @@ import Test.Tasty.HUnit
 import Test.Tasty.ExpectedFailure
 #endif
 import qualified DAP
+import DAP.Types
+import Control.Monad
+import Data.Maybe
+import Test.Tasty.ExpectedFailure
+import Data.Text (Text)
 
 evaluateTests :: TestTree
 evaluateTests =
@@ -24,8 +30,102 @@ evaluateTests =
     , testCase "Imported module bindings available in evaluate context (issue #233)"
         evaluateImportedBindings
     , testCase "Bindings from other modules not available in evaluate context (issue #233)"
-          evaluateImportedBindingsNotInOtherModule
+        evaluateImportedBindingsNotInOtherModule
+    ,
+#ifndef GHC_HAS_MULTITHREADED_DBG
+      ignoreTestBecause "Multiple stopped threads not fully supported" $
+#endif
+        testCase "Evaluate from multiple stopped threads"
+          evaluateMultiThreaded
+    , testGroup "scope from earlier stack frames (issue #370)"
+      [ testCase "multiple stack frames" stackFramesTest
+      , testCase "RetBCO waiting for unboxed tuple" stackFramesUnboxedTupleTest
+      ]
+    , testGroup "global eval"
+      [ testCase "evaluate after resume" evaluateAfterResume
+      ]
     ]
+
+evaluateAfterResume :: IO ()
+evaluateAfterResume = do
+  withTestDAPServer "test/integration/T370" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "T370b.hs"
+      hitBreakpointIn cfg "T370b.hs" 6
+
+      continueThread =<< getCurrentActiveThread
+
+      -- Evaluating without stackframe: only global scope.
+      res0 <- evaluateAt "x" Nothing
+      assertEqualResult res0 "<interactive>:1:1: error: [GHC-88464] Variable not in scope: x"
+
+      res1 <- evaluateAtBreak "x"
+      assertEqualResult res1 "\"foo\""
+
+      disconnect
+
+evaluateMultiThreaded :: Assertion
+evaluateMultiThreaded =
+  withTestDAPServer "test/integration/T370" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg@LaunchConfig{..} = mkLaunchConfig test_dir "T370.hs"
+      _ <- sync $ launchWith cfg
+      waitFiltering_ EventTy "initialized"
+      _ <- sync $ setLineBreakpoints lcProjectRoot (fromMaybe undefined lcEntryFile) [22,28]
+      _ <- sync configurationDone
+
+      waitFiltering_ EventTy "stopped"
+      ts <- Test.DAP.threads
+      resps <- fmap catMaybes . forM ts $ \ t -> do
+        frs <- stackTrace (threadId t)
+        case frs of
+          []     -> pure Nothing
+          (fr:_) -> Just <$> evaluateAt "x" (Just (stackFrameId fr))
+      let results = sort $ map DAP.evaluateResponseResult resps
+      liftIO $ assertEqual ("Results: " ++ show results) ["0","2"] results
+      disconnect
+
+stackFramesTest :: Assertion
+stackFramesTest = stackFramesTestGen "test/integration/T160"
+
+stackFramesTestGen :: FilePath -> Assertion
+stackFramesTestGen path =
+  withTestDAPServer path [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "Main.hs"
+      hitBreakpointIn cfg "X.hs" 22
+      frames <- stackTrace =<< getCurrentActiveThread
+
+      -- Evaluating without stackframe: only global scope.
+      res0 <- evaluateAt "b" Nothing
+      assertEqualResult res0 "<interactive>:1:1: error: [GHC-88464] Variable not in scope: b"
+
+      res1 <- evaluateAt "head xs" (Just $ stackFrameId (frames !! 1))
+      assertEqualResult res1 "1"
+
+      res2 <- evaluateAt "s" (Just $ stackFrameId (frames !! 2))
+      assertEqualResult res2 "\"hello\""
+
+      res3 <- evaluateAt "x" (Just $ stackFrameId (frames !! 3))
+      assertEqualResult res3 "5"
+
+      disconnect
+
+assertEqualResult :: (HasCallStack, MonadIO m) => EvaluateResponse -> Text -> m ()
+assertEqualResult res x = liftIO $ assertEqual (show res) x (DAP.evaluateResponseResult res)
+
+stackFramesUnboxedTupleTest :: Assertion
+stackFramesUnboxedTupleTest =
+  withTestDAPServer "test/integration/T160" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "Main.hs"
+      hitBreakpointIn cfg "X.hs" 27
+      frames <- stackTrace =<< getCurrentActiveThread
+
+      res <- evaluateAt "x" (Just $ stackFrameId (frames !! 1))
+      assertEqualResult res "1"
+
+      disconnect
 
 evaluateStructured :: Assertion
 evaluateStructured =

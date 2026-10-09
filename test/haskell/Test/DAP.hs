@@ -221,6 +221,7 @@ hitBreakpointIn cfg@LaunchConfig{..} bpFile line = do
 data VarsView = VarsView
   { varsViewDesc :: String
   , varsViewVars :: M.Map T.Text [Variable] }
+  deriving Show
 
 mkVarsView :: String -> [Variable] -> VarsView
 mkVarsView ctxDesc vs = VarsView
@@ -258,6 +259,27 @@ fetchScopeVarsOfFrame frameIx scopeName_ = do
   frames  <- Test.DAP.stackTrace tid
   Just fr <- pure $ frames List.!? frameIx
   scs  <- Test.DAP.scopes (stackFrameId fr)
+  case List.find ((== scopeName_) . scopeName) scs of
+    Nothing -> liftIO $ assertFailure $
+      "fetchScopeVars: scope " ++ show scopeName_
+        ++ " not found (" ++ show (map scopeName scs) ++ ")"
+    Just sc -> do
+      vs <- fetchChildren (scopeVariablesReference sc)
+      pure $ mkVarsView ("scope " ++ show scopeName_) vs
+
+fetchVarsOfFrame :: StackFrame -> T.Text -> TestDAP VarsView
+fetchVarsOfFrame fr scopeName_ = do
+  scs  <- Test.DAP.scopes (stackFrameId fr)
+  case List.find ((== scopeName_) . scopeName) scs of
+    Nothing -> liftIO $ assertFailure $
+      "fetchScopeVars: scope " ++ show scopeName_
+        ++ " not found (" ++ show (map scopeName scs) ++ ")"
+    Just sc -> do
+      vs <- fetchChildren (scopeVariablesReference sc)
+      pure $ mkVarsView ("scope " ++ show scopeName_) vs
+
+varsViewOfScopes :: [Scope] -> T.Text -> TestDAP VarsView
+varsViewOfScopes scs scopeName_ =
   case List.find ((== scopeName_) . scopeName) scs of
     Nothing -> liftIO $ assertFailure $
       "fetchScopeVars: scope " ++ show scopeName_

@@ -67,6 +67,10 @@ source-repository head
 common warnings
     ghc-options: -Wall
 
+common multithreaded_cpp
+    if impl(ghc >= 10.1.20260820)
+        cpp-options: -DGHC_HAS_MULTITHREADED_DBG
+
 -- custom-setup
 --   setup-depends:
 --     base        >= 4.21 && < 5,
@@ -83,7 +87,7 @@ Flag testing
   manual: True
 
 library
-    import:           warnings
+    import:           warnings, multithreaded_cpp
     exposed-modules:
                       -- Entry point to `execute` debugger commands
                       GHC.Debugger,
@@ -196,9 +200,6 @@ library
         -- from 10.1, we have much fewer stg_ctoi_t<N>_info hardcoded frames
         cc-options: -DFEW_TUPLE_FRAMES
 
-    if impl(ghc >= 10.1.20260820)
-        cpp-options: -DGHC_HAS_MULTITHREADED_DBG
-
     if flag(testing)
         cpp-options: -DTESTING
 
@@ -307,7 +308,7 @@ executable hdb
     ghc-options: -fkeep-cafs
 
 test-suite haskell-debugger-test
-    import:           warnings
+    import:           warnings, multithreaded_cpp
     default-language: GHC2021
     -- other-extensions:
     type:             exitcode-stdio-1.0
