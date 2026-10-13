@@ -25,6 +25,8 @@ module GHC.Debugger.Run
 
 import GHC.Utils.Outputable
 import Control.Monad.Catch
+import Control.Monad.Reader
+import Data.IORef
 import Data.Maybe
 
 import GHC qualified
@@ -147,20 +149,28 @@ doResume tid step _stop_world = do
     >>= handleExecResult
 
 -- | Generalized `doEval` that also handles `imports`
-doEvalCommand :: Maybe (RemoteThreadId, Int) -> String -> Debugger EvalResult
-doEvalCommand mtid expr = do
+doEvalCommand :: Maybe (RemoteThreadId, Int)
+              -- ^ If Just, evaluate the expression in a context where the variables
+              -- from the given thread at frame index are available.
+              -> String
+              -> Debugger EvalResult
+doEvalCommand mtid expr = withThreadBreakEnv mtid True $ do
   dflags <- getInteractiveDebuggerDynFlags
   let pflags = GHC.initParserOpts dflags
   if GHC.isStmt pflags expr
-    then doEval handleExecResult mtid expr
+    then doEval handleExecResult expr
     else addImport expr
 
 -- | Parses input as an import declaration and applies it to the interactive context.
 addImport :: String -> Debugger EvalResult
 addImport s = handleError $ do
-  cxt <- GHC.getContext
+  importsRef <- asks globalImports
+  cxt <- liftIO $ readIORef importsRef
   idecl <- parseImportDecl s
-  GHC.setContext $ IIDecl idecl : cxt
+  let new_cxt = IIDecl idecl : cxt
+  GHC.setContext new_cxt
+  -- we write only here so we know setContext with the extra argument works.
+  liftIO $ writeIORef importsRef new_cxt
   pure $ EvalCompleted "" "" Nothing NoVariables
   where
     handleError m = m `catch` \ (e::SourceError) -> do

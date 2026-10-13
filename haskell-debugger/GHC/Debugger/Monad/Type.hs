@@ -23,15 +23,17 @@ import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.Function
 import Data.IORef
+import Data.IntMap.Strict (IntMap)
+import qualified Data.IntMap.Strict as IM
 import Data.Maybe
 import Data.Version (showVersion)
 import Prelude hiding (mod)
-#ifdef MIN_VERSION_unix
-#endif
 import qualified Data.List as L
 
 import GHC
 import GHC.Driver.DynFlags as GHC
+import GHC.Driver.Env
+import GHC.Runtime.Context
 import GHC.Types.Error
 import GHC.Unit.State
 import GHC.Unit.Types
@@ -63,6 +65,17 @@ data BreakpointInfo = BreakpointInfo
   }
   deriving (Eq,Show)
 
+data StoppedThread = StoppedThread
+  { resume :: !Resume
+  , breakNames :: ![Name]
+  , frameICs :: !(IntMap InteractiveContext)
+  }
+
+
+mkStoppedThread :: Resume -> [Name] -> StoppedThread
+mkStoppedThread resume breakNames = StoppedThread{ frameICs = IM.empty, .. }
+
+
 -- | State required to run the debugger.
 --
 -- - Keep track of active breakpoints to easily unset them all.
@@ -77,9 +90,13 @@ data DebuggerState = DebuggerState
       , threadMap         :: IORef (TM.ThreadMap (ForeignRef ThreadId))
       -- ^ 'ThreadMap' for threads spawned by the debuggee
 
-      , threadResumeMap   :: IORef (TM.ThreadMap Resume)
+      , threadResumeMap   :: IORef (TM.ThreadMap StoppedThread)
       -- ^ If a thread is currently stopped on a breakpoint, this map will
       -- contain its resume context (from which we can resume the thread)
+
+      , globalImports     :: IORef [InteractiveImport]
+      -- ^ It's more ergonomic for imports to persist between resumes, so we store them here.
+      -- They are meant to override the imports in the InteractiveContext from StoppedThread.
 
       , compCache         :: IORef CompCache
       -- ^ Cache loaded and compiled expressions.
@@ -189,11 +206,13 @@ data ProjectDebugSpec = ProjectDebugSpec
 
 -- | Initialize a 'DebuggerState'
 initialDebuggerState :: LogAction IO DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
-initialDebuggerState l hsDbgViewUid =
+initialDebuggerState l hsDbgViewUid = do
+  imports <- ic_imports . hsc_IC <$> getSession
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
                 <*> liftIO (newIORef TM.emptyThreadMap)
                 <*> liftIO (newIORef TM.emptyThreadMap)
+                <*> liftIO (newIORef imports)
                 <*> liftIO (newIORef emptyCompCache)
                 <*> pure hsDbgViewUid
                 <*> pure l

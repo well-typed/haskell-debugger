@@ -50,18 +50,18 @@ handleExecResult = \case
           Just VarInfo{varValue, varType, varRef} -> do
             return (EvalCompleted varValue varType Nothing varRef)
           Nothing     -> liftIO $ fail "doEval failed"
-    br@ExecBreak {breakPointId = Nothing} -> do
+    br@ExecBreak {breakNames, breakPointId = Nothing} -> do
       -- Stopped at an exception
       -- TODO: force the exception to display string with Backtrace?
       res   <- execBreakResume br
-      pushResume res
+      pushResume res breakNames
       rt_id <- getResumeThreadId res
       return EvalStopped{ breakId = Nothing
                         , breakThread = rt_id }
-    br@ExecBreak {breakPointId = Just bid} -> do
+    br@ExecBreak {breakNames, breakPointId = Just bid} -> do
 
       res <- execBreakResume br
-      pushResume res
+      pushResume res breakNames
       rt_id <- getResumeThreadId res
 
       let performAction BreakpointStop = do
@@ -101,7 +101,7 @@ handleExecResult = \case
             BreakpointEnabled -> performAction action
   where
     doEval' expr evalFailedMsg rt_id k = do
-      doEval handleExecResult (Just (rt_id, 0)) expr >>= \case
+      withThreadBreakEnv (Just (rt_id, 0)) False (doEval handleExecResult expr) >>= \case
         EvalStopped{} -> error "impossible for doEval"
         EvalCompleted { resultVal, resultType } ->
           k resultVal resultType
