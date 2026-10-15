@@ -11,10 +11,10 @@ data Order = Order { qty :: Int, prices :: [Int] }
 
 validate :: Order -> Order
 validate o = case o of
-  _ | qty o <= 0         = error "bad quantity"
-    | any (< 0) (prices o) = error "negative price"
-    | null (prices o)    = error "empty order"
-    | otherwise          = o
+  _ | qty o <= 0           -> error "bad quantity"
+    | any (< 0) (prices o) -> error "negative price"
+    | null (prices o)      -> error "empty order"
+    | otherwise            -> o
 
 applyDiscount :: Int -> Int -> Int
 applyDiscount q subtotal
