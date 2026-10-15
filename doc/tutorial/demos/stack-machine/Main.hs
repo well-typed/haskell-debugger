@@ -1,8 +1,10 @@
 module Main where
 
+import GHC.Stack
+
 data Instr = Push Int | Add | Mul | Dup | Swap deriving Show
 
-exec :: [Int] -> Instr -> [Int]
+exec :: HasCallStack => [Int] -> Instr -> [Int]
 exec stack instr =
   case (instr, stack) of    -- logpoint: "{instr} on {stack}"
     (Push n, s)         -> n : s
