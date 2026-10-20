@@ -154,11 +154,11 @@ doEvalCommand :: Maybe (RemoteThreadId, Int)
               -- from the given thread at frame index are available.
               -> String
               -> Debugger EvalResult
-doEvalCommand mtid expr = withThreadBreakEnv mtid True $ do
+doEvalCommand mtid expr = do
   dflags <- getInteractiveDebuggerDynFlags
   let pflags = GHC.initParserOpts dflags
   if GHC.isStmt pflags expr
-    then doEval handleExecResult expr
+    then doEval handleExecResult mtid expr
     else addImport expr
 
 -- | Parses input as an import declaration and applies it to the interactive context.

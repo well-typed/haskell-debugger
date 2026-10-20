@@ -9,7 +9,7 @@
 -- expressions in the (external) interpreter for the debugger purposes (rather
 -- than directly the user's).
 module GHC.Debugger.Run.Eval
-  ( doEval, withThreadBreakEnv
+  ( doEval, withThreadBreakEnv, withTempInteractiveContext
   ) where
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Monad
@@ -49,13 +49,14 @@ import GHC.Builtin.Names
 
 -- | Evaluate expression including the interactive context at the breakpoint
 -- the given thread is currently stopped at. If the thread is not stopped, the
--- expression is evaluated without additional context.
+-- expression is evaluated in the global context.
 doEval :: (ExecResult -> Debugger EvalResult)
        -- ^ How to handle a result from evaluation.
        -- Typically this is 'GHC.Debugger.Run.Handler.handleExecResult'.
+       -> Maybe (RemoteThreadId, Int)
        -> String
        -> Debugger EvalResult
-doEval handleExecResult expr = do
+doEval handleExecResult scope expr = withThreadBreakEnv scope True $ do
   excr <- (Right <$> exec expr execOptions) `MC.catch` \(e::SomeException) -> pure (Left (displayException e))
   case excr of
     Left err -> pure $ EvalAbortedWith err
@@ -95,17 +96,19 @@ continueToCompletion r = do
     br@ExecBreak{} -> execBreakResume br >>= continueToCompletion
     ExecComplete{} -> return execr
 
--- | @withThreadBreakEnv mtid m@ executes @m@ with the imports, language, and language
---  extensions of the <tid>'s breakpoint source module.
---
---  If <tid> is Nothing or not stopped at a breakpoint @m@ is executed with no change.
 withThreadBreakEnv :: Maybe (RemoteThreadId, Int) -> Bool -> Debugger a -> Debugger a
-withThreadBreakEnv q@Nothing _                        m = do
+withThreadBreakEnv q@Nothing persist                    m = withTempInteractiveContext $ do
+  gicRef <- asks globalIC
+  ic0 <- liftIO $ readIORef gicRef
+  modifySession $ \ s -> s {hsc_IC = ic0}
   -- global env? TODO: make sure local evals and DebugBreak from DebugExecution don't pollute this.
   setContext =<< liftIO . readIORef =<< asks globalImports
   let debugLog (d :: SDoc) = logSDoc Debug (text $ intercalate " " $ lines $ showPprUnsafe $ text "withThreadBreakEnv:" <+> d)
   debugLog (text (show q) <+> text "_")
-  m
+  x <- m
+  ic <- hsc_IC <$> getSession
+  liftIO $ writeIORef gicRef ic
+  pure x
 withThreadBreakEnv q@(Just (tid, frame_index)) persist m = do
   let debugLog (d :: SDoc) = logSDoc Debug (text $ intercalate " " $ lines $ showPprUnsafe $ text "withThreadBreakEnv:" <+> d)
   debugLog (text (show q) <+> ppr persist)
@@ -116,17 +119,9 @@ withThreadBreakEnv q@(Just (tid, frame_index)) persist m = do
       m
     Just st -> do
       debugLog (text "found st")
-      let
-        withTempInteractiveContext updIC = do
-          let acquire = do
-                ic <- hsc_IC <$> getSession
-                dflags <- getInteractiveDebuggerDynFlags
-                updIC
-                pure $ do
-                  modifySession (\ s -> s {hsc_IC = ic})
-                  setInteractiveDebuggerDynFlags dflags
-          MC.bracket acquire id . const
-      withTempInteractiveContext (setIC tid frame_index st) $ do
+      withTempInteractiveContext $ do
+        setIC tid frame_index st
+
         when persist $ do
           writeIC tid frame_index st
 
@@ -136,6 +131,17 @@ withThreadBreakEnv q@(Just (tid, frame_index)) persist m = do
         when persist $ do
           writeIC tid frame_index st
         pure x
+
+withTempInteractiveContext :: GhcMonad m => m b -> m b
+withTempInteractiveContext m = do
+  let acquire = do
+        ic <- hsc_IC <$> getSession
+        dflags <- getInteractiveDebuggerDynFlags
+        pure (ic,dflags)
+      release (ic,dflags) = do
+          modifySession (\ s -> s {hsc_IC = ic})
+          setInteractiveDebuggerDynFlags dflags
+  MC.bracket acquire release $ const m
 
 writeIC :: (GhcMonad m, MonadReader DebuggerState m) => RemoteThreadId -> IM.Key -> StoppedThread -> m ()
 writeIC tid frame_index StoppedThread{..} = do
@@ -150,7 +156,8 @@ setIC :: RemoteThreadId -> IM.Key -> StoppedThread -> Debugger ()
 setIC tid frame_index st@StoppedThread{..} = do
   case IM.lookup frame_index frameICs of
      Just ic -> modifySession (\ s -> s {hsc_IC = ic})
-     Nothing -> pure ()
+     Nothing | frame_index == 0 -> modifySession (\ s -> s {hsc_IC = breakIC})
+             | otherwise -> pure ()
   let debugLog (d :: SDoc) = logSDoc Debug (text $ intercalate " " $ lines $ showPprUnsafe $ text "withThreadBreakEnv:" <+> d)
   hug  <- hsc_HUG <$> getSession
   (mibi,bindings) <-
@@ -159,8 +166,9 @@ setIC tid frame_index st@StoppedThread{..} = do
       mibi <- case resumeBreakpointId resume of
         Just ibi -> pure (Just ibi)
         Nothing -> ((.breakId) =<<) <$> getStackFrame tid frame_index
-      debugLog (text "breakNames = " <+> (ppr breakNames) <+> (ppr (map getUnique breakNames)))
-      (mibi,) . catMaybes <$> mapM lookupName breakNames
+      let breakTyThings = ic_tythings breakIC
+      debugLog (text "breakTyThings = " <+> (ppr breakTyThings) <+> (ppr (map (getUnique . getName) breakTyThings)))
+      pure (mibi,breakTyThings)
     else do
       getStackFrame tid frame_index >>= \case
         Nothing -> do
@@ -168,7 +176,7 @@ setIC tid frame_index st@StoppedThread{..} = do
           pure (Nothing,[]) -- TODO: warn.
         Just fr -> (fr.breakId,) . map AnId <$> getStackFrameBindings fr
 
-  debugLog (text $ unwords . words . intercalate " " $ lines $ showPprUnsafe $ ppr bindings)
+  debugLog (text "bindings" <+> ppr bindings)
   addBindingsIfNew bindings
   case mibi of
     Nothing -> pure ()
@@ -208,5 +216,5 @@ extendInteractiveContextWithTyThings ictxt new_tythings0
   | otherwise
   = extendInteractiveContext ictxt (Map.elems new_tythings) emptyInstEnv [] emptyDefaultEnv (ic_fix_env ictxt)
   where
-    new_tythings = (namesSet new_tythings0 Map.\\ namesSet (ic_tythings ictxt))
+    new_tythings = namesSet new_tythings0 Map.\\ namesSet (ic_tythings ictxt)
     namesSet xs = Map.fromList $ map (\ x -> (GHC.getName x,x)) xs

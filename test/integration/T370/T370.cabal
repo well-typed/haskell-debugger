@@ -24,7 +24,7 @@ common rts-options
 library
     import:           extensions
     import:           ghc-options
-    exposed-modules:  T370
+    exposed-modules:  T370, T370b
     -- other-modules:
     -- other-extensions:
     build-depends:    base ^>=4.22.0.0

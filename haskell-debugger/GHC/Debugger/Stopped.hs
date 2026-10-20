@@ -52,6 +52,7 @@ import qualified Colog.Core as Logger
 import System.Directory (getCurrentDirectory)
 import Data.List
 import GHC.Debugger.Runtime.Thread.Resume
+import GHC.Runtime.Context (ic_tythings)
 
 #if MIN_VERSION_ghc(10,1,0)
 import GHC.Debugger.Runtime.Thread.Resume
@@ -329,7 +330,9 @@ getVariables threadId frameIx vk = do
       st <- if frameIx == 0 then readStoppedThread threadId else pure Nothing
       vars <- case st of
         Just StoppedThread{..}
-          -> catMaybes <$> mapM lookupName breakNames
+          -- TODO: should we list extra vars that might be in frameIC or only
+          -- those from the program stack itself?
+          -> pure (ic_tythings breakIC)
         _ -> map AnId <$> getStackFrameBindings frame
       mapM (tyThingToVarInfo fam_envs) vars
 

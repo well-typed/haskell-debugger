@@ -67,13 +67,16 @@ data BreakpointInfo = BreakpointInfo
 
 data StoppedThread = StoppedThread
   { resume :: !Resume
-  , breakNames :: ![Name]
+  , breakIC :: !InteractiveContext
+    -- ^ InteractiveContext captured at the time of pushResume
   , frameICs :: !(IntMap InteractiveContext)
+    -- ^ Current eval frame for the thread,
   }
 
 
-mkStoppedThread :: Resume -> [Name] -> StoppedThread
-mkStoppedThread resume breakNames = StoppedThread{ frameICs = IM.empty, .. }
+mkStoppedThread :: Resume -> InteractiveContext -> StoppedThread
+mkStoppedThread resume ic = StoppedThread{ frameICs = IM.empty, breakIC = ic{ic_resume = []}
+                                         , .. }
 
 
 -- | State required to run the debugger.
@@ -97,6 +100,9 @@ data DebuggerState = DebuggerState
       , globalImports     :: IORef [InteractiveImport]
       -- ^ It's more ergonomic for imports to persist between resumes, so we store them here.
       -- They are meant to override the imports in the InteractiveContext from StoppedThread.
+
+      , globalIC     :: IORef InteractiveContext
+      -- ^ InteractiveContext for DoEval without a specified frame.
 
       , compCache         :: IORef CompCache
       -- ^ Cache loaded and compiled expressions.
@@ -207,12 +213,14 @@ data ProjectDebugSpec = ProjectDebugSpec
 -- | Initialize a 'DebuggerState'
 initialDebuggerState :: LogAction IO DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
 initialDebuggerState l hsDbgViewUid = do
+  ic <- hsc_IC <$> getSession
   imports <- ic_imports . hsc_IC <$> getSession
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
                 <*> liftIO (newIORef TM.emptyThreadMap)
                 <*> liftIO (newIORef TM.emptyThreadMap)
                 <*> liftIO (newIORef imports)
+                <*> liftIO (newIORef ic)
                 <*> liftIO (newIORef emptyCompCache)
                 <*> pure hsDbgViewUid
                 <*> pure l

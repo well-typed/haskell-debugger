@@ -41,7 +41,28 @@ evaluateTests =
       [ testCase "multiple stack frames" stackFramesTest
       , testCase "RetBCO waiting for unboxed tuple" stackFramesUnboxedTupleTest
       ]
+    , testGroup "global eval"
+      [ testCase "evaluate after resume" evaluateAfterResume
+      ]
     ]
+
+evaluateAfterResume :: IO ()
+evaluateAfterResume = do
+  withTestDAPServer "test/integration/T370" [] $ \test_dir server ->
+    withTestDAPServerClient server $ do
+      let cfg = mkLaunchConfig test_dir "T370b.hs"
+      hitBreakpointIn cfg "T370b.hs" 6
+
+      continueThread =<< getCurrentActiveThread
+
+      -- Evaluating without stackframe: only global scope.
+      res0 <- evaluateAt "x" Nothing
+      assertEqualResult res0 "<interactive>:1:1: error: [GHC-88464] Variable not in scope: x"
+
+      res1 <- evaluateAtBreak "x"
+      assertEqualResult res1 "\"foo\""
+
+      disconnect
 
 evaluateMultiThreaded :: Assertion
 evaluateMultiThreaded =
@@ -75,19 +96,23 @@ stackFramesTestGen path =
       hitBreakpointIn cfg "X.hs" 22
       frames <- stackTrace =<< getCurrentActiveThread
 
-      res1 <- evaluateAt "head xs" (Just $ stackFrameId (frames !! 1)) 
+      -- Evaluating without stackframe: only global scope.
+      res0 <- evaluateAt "b" Nothing
+      assertEqualResult res0 "<interactive>:1:1: error: [GHC-88464] Variable not in scope: b"
+
+      res1 <- evaluateAt "head xs" (Just $ stackFrameId (frames !! 1))
       assertEqualResult res1 "1"
 
-      res2 <- evaluateAt "s" (Just $ stackFrameId (frames !! 2)) 
+      res2 <- evaluateAt "s" (Just $ stackFrameId (frames !! 2))
       assertEqualResult res2 "\"hello\""
 
-      res3 <- evaluateAt "x" (Just $ stackFrameId (frames !! 3)) 
+      res3 <- evaluateAt "x" (Just $ stackFrameId (frames !! 3))
       assertEqualResult res3 "5"
 
       disconnect
 
-assertEqualResult :: MonadIO m => EvaluateResponse -> Text -> m ()
-assertEqualResult res x = liftIO $ assertEqual (show res) (DAP.evaluateResponseResult res) x
+assertEqualResult :: (HasCallStack, MonadIO m) => EvaluateResponse -> Text -> m ()
+assertEqualResult res x = liftIO $ assertEqual (show res) x (DAP.evaluateResponseResult res)
 
 stackFramesUnboxedTupleTest :: Assertion
 stackFramesUnboxedTupleTest =

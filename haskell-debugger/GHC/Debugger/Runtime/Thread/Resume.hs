@@ -10,12 +10,8 @@ import Control.Monad.Reader
 import Data.Function
 import GHC.Debugger.Runtime.Thread
 import GHC.Debugger.Data.ThreadMap
-import GHC (Name)
-import qualified Data.Map as Map
-import qualified Data.IntMap.Strict as IM
-import GHC.Debugger.Utils
-import Colog.Core (Severity(..))
-import GHC.Builtin.Names
+import GHC (GhcMonad (getSession))
+import GHC.Driver.Env
 
 -- | Pop the resume for this thread off
 popResume :: RemoteThreadId -> Debugger Resume
@@ -29,14 +25,14 @@ popResume rti = do
 
 -- | Push the resume for its thread to the mapping keeps track of which threads
 -- are paused
-pushResume :: Resume -> [Name] -> Debugger ()
-pushResume resume breakNames = do
+pushResume :: Resume -> Debugger ()
+pushResume resume = do
   trm_ref <- asks threadResumeMap
   rti     <- getResumeThreadId resume
-  logSDoc Debug $ text "pushResume" <+> ppr breakNames <+> ppr (map getUnique breakNames) <+> ppr (remoteThreadIntRef rti)
+  breakIC <- hsc_IC <$> getSession
   liftIO $
     modifyIORef' trm_ref $
-      insertThreadMap (remoteThreadIntRef rti) (mkStoppedThread resume breakNames)
+      insertThreadMap (remoteThreadIntRef rti) (mkStoppedThread resume breakIC)
 
 -- | Get the 'Resume' a given stopped thread is currently at.
 -- Returns Nothing if we're no longer stopped at this thread
