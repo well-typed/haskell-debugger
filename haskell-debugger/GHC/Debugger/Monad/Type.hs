@@ -74,9 +74,11 @@ type ImportsEpoch = Int
 data StoppedThread = StoppedThread
   { resume :: !Resume
   , breakIC :: !InteractiveContext
-    -- ^ InteractiveContext captured at the time of pushResume
+    -- ^ InteractiveContext captured at the time of pushResume.
   , frameICs :: !(IntMap (InteractiveContext,(ImportsEpoch,Maybe Module)))
-    -- ^ Current InteractiveContext per frame index.
+    -- ^ Current InteractiveContext per frame index, stored alongside @Resume@
+    -- so they get dropped at the same time.
+    -- The @Maybe Module@ is the source module of the frame breakpoint, if any.
   }
 
 

@@ -58,32 +58,12 @@ addImport :: String -> Debugger EvalResult
 addImport s = handleError $ withGlobalIC $ do
   idecl <- lift $ parseImportDecl s
   imports <- getGlobalImports
+  -- frame evaluation scopes will update their imports to match these when needed.
   setGlobalImports (IIDecl idecl : imports)
   pure $ EvalCompleted "" "" Nothing NoVariables
   where
     handleError m = m `MC.catch` \ (e::SourceError) -> do
       pure $ EvalAbortedWith $ displayException e
-
-newtype ScopeT (s :: Symbol) (m :: Type -> Type) a = ScopeT {unsafeUnScopeT :: Scope s -> m a}
-  deriving (Functor, Applicative, Monad, MonadIO, MonadReader (Scope s)) via ReaderT (Scope s) m
-  deriving MonadTrans via ReaderT (Scope s)
-
-getGlobalImports :: ScopeT "global" Debugger [InteractiveImport]
-getGlobalImports = ic_imports . hsc_IC <$> lift getSession
-
-setGlobalImports :: [InteractiveImport] -> ScopeT "global" Debugger ()
-setGlobalImports imports = lift $ do
-  (gic,gen) <- getGlobalIC
-  GHC.setContext imports
-  -- we write only here so we know setContext with the extra argument works.
-  new_gic <- hsc_IC <$> getSession
-  setGlobalIC (new_gic,gen+1)
-
-withGlobalIC :: ScopeT "global" Debugger a -> Debugger a
-withGlobalIC m = withTempInteractiveContext Global $ do
-  (gic,_) <- lift getGlobalIC
-  lift $ modifySession (\ s -> s {hsc_IC = gic})
-  m
 
 -- | Evaluate expression including the interactive context at the breakpoint
 -- the given thread is currently stopped at. If the thread is not stopped, the
@@ -124,26 +104,6 @@ doEval handleExecResult scope expr = withThreadBreakEnv scope $ do
     addSourceKind k EvalCompleted{..} = EvalCompleted{resultSourceKind = Just k, ..}
     addSourceKind _ r = r
 
--- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
---
--- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
-continueToCompletion :: Resume -> Debugger ExecResult
-continueToCompletion r = do
-  execr <- resumeExec RunToCompletion Nothing r
-  case execr of
-    br@ExecBreak{} -> execBreakResume br >>= continueToCompletion
-    ExecComplete{} -> return execr
-
-getGlobalIC :: Debugger (InteractiveContext, Int)
-getGlobalIC = do
-  gicRef <- asks globalIC
-  liftIO $ readIORef gicRef
-
-setGlobalIC :: (InteractiveContext, Int) -> Debugger ()
-setGlobalIC x = do
-  gicRef <- asks globalIC
-  liftIO $ writeIORef gicRef x
-
 -- | Pre-condition: inner action does not alter imports.
 withThreadBreakEnv :: Maybe (RemoteThreadId, Int) -> Debugger a -> Debugger a
 withThreadBreakEnv Nothing m = withGlobalIC $ lift $ do
@@ -161,71 +121,55 @@ withThreadBreakEnv q@(Just (tid, frame_index)) m = do
     Just st -> do
       debugLog (text "found st")
       withTempInteractiveContext (Frame tid frame_index) $ do
-        storeIC <- setIC tid frame_index st
+        persistThisFrameIC <- setICOfFrame tid frame_index st
 
         x <- lift m
 
         -- persists any additions by `m`, e.g. `it`.
-        storeIC
+        persistThisFrameIC
+
         pure x
 
-refreshImports :: Maybe ImportsEpoch -> Maybe Module -> ScopeT "frame" Debugger (ScopeT "frame" Debugger ())
-refreshImports gen m = do
- (gic,gen') <- lift getGlobalIC
- lclImports <- ic_imports . hsc_IC <$> lift getSession
- let extra = case m of
-       Nothing -> []
-       Just modl -> [IIModule modl]
- let hasImport = case m of
-       Nothing -> True
-       Just modl -> case lclImports of
-         (IIModule mod':_) -> modl == mod'
-         _ -> False
- unless (gen == Just gen' && hasImport) $ do
-   lift $ GHC.setContext (extra ++ ic_imports gic)
- let w = writeIC (gen',m)
- w
- pure w
+--------------------------------------------------------------
+-- * ScopeT
+--------------------------------------------------------------
 
 data Scope :: Symbol -> Type where
   Global :: Scope "global"
   Frame :: RemoteThreadId -> Int -> Scope "frame"
 
-withTempInteractiveContext :: GhcMonad m => Scope s -> ScopeT s m b -> m b
-withTempInteractiveContext scope m = do
-  let acquire = do
-        ic <- hsc_IC <$> getSession
-        dflags <- getInteractiveDebuggerDynFlags
-        pure (ic,dflags)
-      release (ic,dflags) = do
-          modifySession (\ s -> s {hsc_IC = ic})
-          setInteractiveDebuggerDynFlags dflags
-  MC.bracket acquire release $ const (unsafeUnScopeT m scope)
+-- | Keeps track of which "scope" we are evaluating in.
+--
+-- If it's a "frame" scope we assume the thread is stopped.
+newtype ScopeT (s :: Symbol) (m :: Type -> Type) a = ScopeT {unsafeUnScopeT :: Scope s -> m a}
+  deriving (Functor, Applicative, Monad, MonadIO, MonadReader (Scope s)) via ReaderT (Scope s) m
+  deriving MonadTrans via ReaderT (Scope s)
 
-writeIC :: (GhcMonad m, MonadReader DebuggerState m) => (ImportsEpoch,Maybe Module) -> ScopeT "frame" m ()
-writeIC new_gen = do
-  s <- ask
-  let Frame tid frame_index = s
-  ic <- hsc_IC <$> lift getSession
-  trm_ref <- lift $ asks threadResumeMap
-  liftIO $
-    modifyIORef' trm_ref $ \tm -> do
-      let rtid = (remoteThreadIntRef tid)
-      case lookupThreadMap rtid tm of
-        Just StoppedThread{..} ->
-          insertThreadMap rtid
-          (StoppedThread {frameICs = IM.insert frame_index (ic,new_gen) frameICs,..})
-          tm
-        Nothing -> tm
+getGlobalImports :: ScopeT "global" Debugger [InteractiveImport]
+getGlobalImports = ic_imports . hsc_IC <$> lift getSession
 
-setIC :: RemoteThreadId -> IM.Key -> StoppedThread -> ScopeT "frame" Debugger (ScopeT "frame" Debugger ())
-setIC tid frame_index StoppedThread{..}
+setGlobalImports :: [InteractiveImport] -> ScopeT "global" Debugger ()
+setGlobalImports imports = lift $ do
+  (gic,gen) <- getGlobalIC
+  GHC.setContext imports
+  -- we write only here so we know setContext with the extra argument works.
+  new_gic <- hsc_IC <$> getSession
+  setGlobalIC (new_gic,gen+1)
+
+withGlobalIC :: ScopeT "global" Debugger a -> Debugger a
+withGlobalIC m = withTempInteractiveContext Global $ do
+  (gic,_) <- lift getGlobalIC
+  lift $ modifySession (\ s -> s {hsc_IC = gic})
+  m
+
+setICOfFrame :: RemoteThreadId -> Int -> StoppedThread -> ScopeT "frame" Debugger (ScopeT "frame" Debugger ())
+setICOfFrame tid frame_index StoppedThread{..}
   | Just (ic,(gen,extra)) <- IM.lookup frame_index frameICs
    = do
     lift $ modifySession (\ s -> s {hsc_IC = ic})
     refreshImports (Just gen) extra
   | otherwise = do
-  let warn (d :: SDoc) = logSDoc Debug (text "Evaluating in " <+> text (show (tid,frame_index)) <+> text ":" <+> d)
+  let warn (d :: SDoc) = logSDoc Colog.Core.Warning (text "Evaluating in " <+> text (show (tid,frame_index)) <+> text ":" <+> d)
   hug  <- hsc_HUG <$> lift getSession
   mibi <- lift $ do
     if frame_index == 0 then do
@@ -272,8 +216,77 @@ setIC tid frame_index StoppedThread{..}
       , language = language modl
       }
 
+refreshImports :: Maybe ImportsEpoch -> Maybe Module -> ScopeT "frame" Debugger (ScopeT "frame" Debugger ())
+refreshImports gen m = do
+ (gic,gen') <- lift getGlobalIC
+ lclImports <- ic_imports . hsc_IC <$> lift getSession
+ let extra = case m of
+       Nothing -> []
+       Just modl -> [IIModule modl]
+ let hasImport = case m of
+       Nothing -> True
+       Just modl -> case lclImports of
+         (IIModule mod':_) -> modl == mod'
+         _ -> False
+ unless (gen == Just gen' && hasImport) $ do
+   lift $ GHC.setContext (extra ++ ic_imports gic)
+ let w = storeFrameIC (gen',m)
+ w
+ pure w
+
+storeFrameIC :: (GhcMonad m, MonadReader DebuggerState m) => (ImportsEpoch,Maybe Module) -> ScopeT "frame" m ()
+storeFrameIC imports_spec = do
+  s <- ask
+  let Frame tid frame_index = s
+  ic <- hsc_IC <$> lift getSession
+  trm_ref <- lift $ asks threadResumeMap
+  liftIO $
+    modifyIORef' trm_ref $ \tm -> do
+      let rtid = (remoteThreadIntRef tid)
+      case lookupThreadMap rtid tm of
+        Just StoppedThread{..} ->
+          insertThreadMap rtid
+          (StoppedThread {frameICs = IM.insert frame_index (ic,imports_spec) frameICs,..})
+          tm
+        Nothing -> tm
+
+--------------------------------------------------
+--- Utils
+--------------------------------------------------
+
+-- | Resume execution with single step mode 'RunToCompletion', skipping all breakpoints we hit, until we reach 'ExecComplete'.
+--
+-- We use this in 'doEval' because we want to ignore breakpoints in expressions given at the prompt.
+continueToCompletion :: Resume -> Debugger ExecResult
+continueToCompletion r = do
+  execr <- resumeExec RunToCompletion Nothing r
+  case execr of
+    br@ExecBreak{} -> execBreakResume br >>= continueToCompletion
+    ExecComplete{} -> return execr
+
+getGlobalIC :: Debugger (InteractiveContext, ImportsEpoch)
+getGlobalIC = do
+  gicRef <- asks globalIC
+  liftIO $ readIORef gicRef
+
+setGlobalIC :: (InteractiveContext, ImportsEpoch) -> Debugger ()
+setGlobalIC x = do
+  gicRef <- asks globalIC
+  liftIO $ writeIORef gicRef x
+
 extendInteractiveContextWithTyThings :: InteractiveContext -> [TyThing] -> InteractiveContext
 extendInteractiveContextWithTyThings ictxt new_tythings
   | null new_tythings = ictxt
   | otherwise
   = extendInteractiveContext ictxt new_tythings emptyInstEnv [] emptyDefaultEnv (ic_fix_env ictxt)
+
+withTempInteractiveContext :: GhcMonad m => Scope s -> ScopeT s m b -> m b
+withTempInteractiveContext scope m = do
+  let acquire = do
+        ic <- hsc_IC <$> getSession
+        dflags <- getInteractiveDebuggerDynFlags
+        pure (ic,dflags)
+      release (ic,dflags) = do
+          modifySession (\ s -> s {hsc_IC = ic})
+          setInteractiveDebuggerDynFlags dflags
+  MC.bracket acquire release $ const (unsafeUnScopeT m scope)
