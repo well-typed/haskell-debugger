@@ -1,6 +1,11 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE LambdaCase #-}
+{-# OPTIONS_GHC -Wno-unused-matches #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 
 -- | Evaluating string-expressions in the context of the source program.
 -- This is what is used to evaluate expressions at the REPL while stopped.
@@ -9,7 +14,7 @@
 -- expressions in the (external) interpreter for the debugger purposes (rather
 -- than directly the user's).
 module GHC.Debugger.Run.Eval
-  ( doEval, withThreadBreakEnv, withTempInteractiveContext
+  ( doEval, addImport
   ) where
 import GHC.Debugger.Interface.Messages
 import GHC.Debugger.Monad
@@ -32,11 +37,9 @@ import GHC.Types.SrcLoc
 import Control.Monad.Catch as MC
 import Data.Function
 import GHC.Debugger.Utils
-import Data.Maybe
 import GHC.Debugger.Stopped
 import GHC.Debugger.Stopped.Frames
-import qualified Data.Map as Map
-import GHC (lookupName, TyThing (AnId), NamedThing (getName))
+import GHC (TyThing (AnId))
 import GHC.Debugger.Data.ThreadMap
 import Data.IORef
 import Control.Monad.Reader
@@ -45,7 +48,42 @@ import Colog.Core
 import Data.List
 import GHC.Types.DefaultEnv
 import GHC.Core.InstEnv (emptyInstEnv)
-import GHC.Builtin.Names
+import GHC.Types.SourceError
+import GHC.TypeLits (Symbol)
+import Data.Kind (Type)
+import GHC.Unit
+
+-- | Parses input as an import declaration and applies it to the global interactive context.
+addImport :: String -> Debugger EvalResult
+addImport s = handleError $ withGlobalIC $ do
+  idecl <- lift $ parseImportDecl s
+  imports <- getGlobalImports
+  setGlobalImports (IIDecl idecl : imports)
+  pure $ EvalCompleted "" "" Nothing NoVariables
+  where
+    handleError m = m `MC.catch` \ (e::SourceError) -> do
+      pure $ EvalAbortedWith $ displayException e
+
+newtype ScopeT (s :: Symbol) (m :: Type -> Type) a = ScopeT {unsafeUnScopeT :: Scope s -> m a}
+  deriving (Functor, Applicative, Monad, MonadIO, MonadReader (Scope s)) via ReaderT (Scope s) m
+  deriving MonadTrans via ReaderT (Scope s)
+
+getGlobalImports :: ScopeT "global" Debugger [InteractiveImport]
+getGlobalImports = ic_imports . hsc_IC <$> lift getSession
+
+setGlobalImports :: [InteractiveImport] -> ScopeT "global" Debugger ()
+setGlobalImports imports = lift $ do
+  (gic,gen) <- getGlobalIC
+  GHC.setContext imports
+  -- we write only here so we know setContext with the extra argument works.
+  new_gic <- hsc_IC <$> getSession
+  setGlobalIC (new_gic,gen+1)
+
+withGlobalIC :: ScopeT "global" Debugger a -> Debugger a
+withGlobalIC m = withTempInteractiveContext Global $ do
+  (gic,_) <- lift getGlobalIC
+  lift $ modifySession (\ s -> s {hsc_IC = gic})
+  m
 
 -- | Evaluate expression including the interactive context at the breakpoint
 -- the given thread is currently stopped at. If the thread is not stopped, the
@@ -56,7 +94,7 @@ doEval :: (ExecResult -> Debugger EvalResult)
        -> Maybe (RemoteThreadId, Int)
        -> String
        -> Debugger EvalResult
-doEval handleExecResult scope expr = withThreadBreakEnv scope True $ do
+doEval handleExecResult scope expr = withThreadBreakEnv scope $ do
   excr <- (Right <$> exec expr execOptions) `MC.catch` \(e::SomeException) -> pure (Left (displayException e))
   case excr of
     Left err -> pure $ EvalAbortedWith err
@@ -96,44 +134,65 @@ continueToCompletion r = do
     br@ExecBreak{} -> execBreakResume br >>= continueToCompletion
     ExecComplete{} -> return execr
 
-withThreadBreakEnv :: Maybe (RemoteThreadId, Int) -> Bool -> Debugger a -> Debugger a
-withThreadBreakEnv q@Nothing persist                    m = withTempInteractiveContext $ do
+getGlobalIC :: Debugger (InteractiveContext, Int)
+getGlobalIC = do
   gicRef <- asks globalIC
-  ic0 <- liftIO $ readIORef gicRef
-  modifySession $ \ s -> s {hsc_IC = ic0}
-  -- global env? TODO: make sure local evals and DebugBreak from DebugExecution don't pollute this.
-  setContext =<< liftIO . readIORef =<< asks globalImports
-  let debugLog (d :: SDoc) = logSDoc Debug (text $ intercalate " " $ lines $ showPprUnsafe $ text "withThreadBreakEnv:" <+> d)
-  debugLog (text (show q) <+> text "_")
+  liftIO $ readIORef gicRef
+
+setGlobalIC :: (InteractiveContext, Int) -> Debugger ()
+setGlobalIC x = do
+  gicRef <- asks globalIC
+  liftIO $ writeIORef gicRef x
+
+-- | Pre-condition: inner action does not alter imports.
+withThreadBreakEnv :: Maybe (RemoteThreadId, Int) -> Debugger a -> Debugger a
+withThreadBreakEnv Nothing m = withGlobalIC $ lift $ do
   x <- m
   ic <- hsc_IC <$> getSession
-  liftIO $ writeIORef gicRef ic
+  (_,gen) <- getGlobalIC
+  setGlobalIC (ic,gen)
   pure x
-withThreadBreakEnv q@(Just (tid, frame_index)) persist m = do
+withThreadBreakEnv q@(Just (tid, frame_index)) m = do
   let debugLog (d :: SDoc) = logSDoc Debug (text $ intercalate " " $ lines $ showPprUnsafe $ text "withThreadBreakEnv:" <+> d)
-  debugLog (text (show q) <+> ppr persist)
+  debugLog (text (show q))
   readStoppedThread tid >>= \case
     Nothing -> do
-      debugLog (text "no res")
-      -- TODO: thread not stopped error.
-      m
+      throwM $ NonFatalException { userMessage = "Evaluation only supported in stopped threads.", debugMessage = "withThreadBreakEnv: " ++ show q}
     Just st -> do
       debugLog (text "found st")
-      withTempInteractiveContext $ do
-        setIC tid frame_index st
+      withTempInteractiveContext (Frame tid frame_index) $ do
+        storeIC <- setIC tid frame_index st
 
-        when persist $ do
-          writeIC tid frame_index st
-
-        x <- m
+        x <- lift m
 
         -- persists any additions by `m`, e.g. `it`.
-        when persist $ do
-          writeIC tid frame_index st
+        storeIC
         pure x
 
-withTempInteractiveContext :: GhcMonad m => m b -> m b
-withTempInteractiveContext m = do
+refreshImports :: Maybe ImportsEpoch -> Maybe Module -> ScopeT "frame" Debugger (ScopeT "frame" Debugger ())
+refreshImports gen m = do
+ (gic,gen') <- lift getGlobalIC
+ lclImports <- ic_imports . hsc_IC <$> lift getSession
+ let extra = case m of
+       Nothing -> []
+       Just modl -> [IIModule modl]
+ let hasImport = case m of
+       Nothing -> True
+       Just modl -> case lclImports of
+         (IIModule mod':_) -> modl == mod'
+         _ -> False
+ unless (gen == Just gen' && hasImport) $ do
+   lift $ GHC.setContext (extra ++ ic_imports gic)
+ let w = writeIC (gen',m)
+ w
+ pure w
+
+data Scope :: Symbol -> Type where
+  Global :: Scope "global"
+  Frame :: RemoteThreadId -> Int -> Scope "frame"
+
+withTempInteractiveContext :: GhcMonad m => Scope s -> ScopeT s m b -> m b
+withTempInteractiveContext scope m = do
   let acquire = do
         ic <- hsc_IC <$> getSession
         dflags <- getInteractiveDebuggerDynFlags
@@ -141,58 +200,62 @@ withTempInteractiveContext m = do
       release (ic,dflags) = do
           modifySession (\ s -> s {hsc_IC = ic})
           setInteractiveDebuggerDynFlags dflags
-  MC.bracket acquire release $ const m
+  MC.bracket acquire release $ const (unsafeUnScopeT m scope)
 
-writeIC :: (GhcMonad m, MonadReader DebuggerState m) => RemoteThreadId -> IM.Key -> StoppedThread -> m ()
-writeIC tid frame_index StoppedThread{..} = do
-  ic <- hsc_IC <$> getSession
-  trm_ref <- asks threadResumeMap
+writeIC :: (GhcMonad m, MonadReader DebuggerState m) => (ImportsEpoch,Maybe Module) -> ScopeT "frame" m ()
+writeIC new_gen = do
+  s <- ask
+  let Frame tid frame_index = s
+  ic <- hsc_IC <$> lift getSession
+  trm_ref <- lift $ asks threadResumeMap
   liftIO $
-    modifyIORef' trm_ref $
-      insertThreadMap (remoteThreadIntRef tid)
-        (StoppedThread {frameICs = IM.insert frame_index ic frameICs,..})
+    modifyIORef' trm_ref $ \tm -> do
+      let rtid = (remoteThreadIntRef tid)
+      case lookupThreadMap rtid tm of
+        Just StoppedThread{..} ->
+          insertThreadMap rtid
+          (StoppedThread {frameICs = IM.insert frame_index (ic,new_gen) frameICs,..})
+          tm
+        Nothing -> tm
 
-setIC :: RemoteThreadId -> IM.Key -> StoppedThread -> Debugger ()
-setIC tid frame_index st@StoppedThread{..} = do
-  case IM.lookup frame_index frameICs of
-     Just ic -> modifySession (\ s -> s {hsc_IC = ic})
-     Nothing | frame_index == 0 -> modifySession (\ s -> s {hsc_IC = breakIC})
-             | otherwise -> pure ()
-  let debugLog (d :: SDoc) = logSDoc Debug (text $ intercalate " " $ lines $ showPprUnsafe $ text "withThreadBreakEnv:" <+> d)
-  hug  <- hsc_HUG <$> getSession
-  (mibi,bindings) <-
+setIC :: RemoteThreadId -> IM.Key -> StoppedThread -> ScopeT "frame" Debugger (ScopeT "frame" Debugger ())
+setIC tid frame_index StoppedThread{..}
+  | Just (ic,(gen,extra)) <- IM.lookup frame_index frameICs
+   = do
+    lift $ modifySession (\ s -> s {hsc_IC = ic})
+    refreshImports (Just gen) extra
+  | otherwise = do
+  let warn (d :: SDoc) = logSDoc Debug (text "Evaluating in " <+> text (show (tid,frame_index)) <+> text ":" <+> d)
+  hug  <- hsc_HUG <$> lift getSession
+  mibi <- lift $ do
     if frame_index == 0 then do
+      modifySession (\ s -> s {hsc_IC = breakIC})
       -- resume is only relevant for frame_index == 0.
       mibi <- case resumeBreakpointId resume of
         Just ibi -> pure (Just ibi)
         Nothing -> ((.breakId) =<<) <$> getStackFrame tid frame_index
-      let breakTyThings = ic_tythings breakIC
-      debugLog (text "breakTyThings = " <+> (ppr breakTyThings) <+> (ppr (map (getUnique . getName) breakTyThings)))
-      pure (mibi,breakTyThings)
+      pure mibi
     else do
       getStackFrame tid frame_index >>= \case
         Nothing -> do
-          debugLog (text "No bindings because no frame, frame_index:" <+> ppr frame_index)
-          pure (Nothing,[]) -- TODO: warn.
-        Just fr -> (fr.breakId,) . map AnId <$> getStackFrameBindings fr
-
-  debugLog (text "bindings" <+> ppr bindings)
-  addBindingsIfNew bindings
+          warn $ text "Could not retrieve stack frame, no bindings added to the scope."
+          pure Nothing
+        Just fr -> do
+          addBindingsIfNew . map AnId =<< getStackFrameBindings fr
+          pure fr.breakId
   case mibi of
-    Nothing -> pure ()
+    Nothing -> do
+      lift $ warn $ text "Could not retrieve breakpoint id, no break module added to the scope."
+      refreshImports Nothing Nothing
     Just ibi -> do
       breakModule <- getBreakSourceMod ibi <$> readIModBreaks hug ibi & liftIO
-      addModuleDynFlags breakModule
-      addImports (IIModule breakModule:)
+      lift $ addModuleDynFlags breakModule
+      refreshImports Nothing (Just breakModule)
    where
     addBindingsIfNew tythings = do
       s <- getSession
       let ic = hsc_IC s
       setSession $ s{hsc_IC = extendInteractiveContextWithTyThings ic tythings }
-    addImports f = do
-      cxt <- liftIO . readIORef =<< asks globalImports
-      -- TODO: IC interface should allow adding to the context, rather than a full setContext.
-      setContext (f cxt)
     addModuleDynFlags breakModule = do
       ic_dyn_flags <- getInteractiveDebuggerDynFlags
       break_dyn_flags <- ms_hspp_opts <$> GHC.getModSummary breakModule
@@ -210,11 +273,7 @@ setIC tid frame_index st@StoppedThread{..} = do
       }
 
 extendInteractiveContextWithTyThings :: InteractiveContext -> [TyThing] -> InteractiveContext
--- Just a specialised version
-extendInteractiveContextWithTyThings ictxt new_tythings0
-  | Map.null new_tythings = ictxt
+extendInteractiveContextWithTyThings ictxt new_tythings
+  | null new_tythings = ictxt
   | otherwise
-  = extendInteractiveContext ictxt (Map.elems new_tythings) emptyInstEnv [] emptyDefaultEnv (ic_fix_env ictxt)
-  where
-    new_tythings = namesSet new_tythings0 Map.\\ namesSet (ic_tythings ictxt)
-    namesSet xs = Map.fromList $ map (\ x -> (GHC.getName x,x)) xs
+  = extendInteractiveContext ictxt new_tythings emptyInstEnv [] emptyDefaultEnv (ic_fix_env ictxt)

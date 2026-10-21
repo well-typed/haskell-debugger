@@ -65,12 +65,18 @@ data BreakpointInfo = BreakpointInfo
   }
   deriving (Eq,Show)
 
+-- | Identifies a given state of the 'globalImport's.
+--
+-- We do not want to call 'setContext' more than necessary, so we tag stored
+-- 'InteractiveContext's with the ImportsEpoch of the globalImports they were based on.
+type ImportsEpoch = Int
+
 data StoppedThread = StoppedThread
   { resume :: !Resume
   , breakIC :: !InteractiveContext
     -- ^ InteractiveContext captured at the time of pushResume
-  , frameICs :: !(IntMap InteractiveContext)
-    -- ^ Current eval frame for the thread,
+  , frameICs :: !(IntMap (InteractiveContext,(ImportsEpoch,Maybe Module)))
+    -- ^ Current InteractiveContext per frame index.
   }
 
 
@@ -97,11 +103,11 @@ data DebuggerState = DebuggerState
       -- ^ If a thread is currently stopped on a breakpoint, this map will
       -- contain its resume context (from which we can resume the thread)
 
-      , globalImports     :: IORef [InteractiveImport]
-      -- ^ It's more ergonomic for imports to persist between resumes, so we store them here.
-      -- They are meant to override the imports in the InteractiveContext from StoppedThread.
+      -- , globalImports     :: IORef ([InteractiveImport],Int)
+      -- -- ^ It's more ergonomic for imports to persist between resumes, so we store them here.
+      -- -- They are meant to override the imports in the InteractiveContext from StoppedThread.
 
-      , globalIC     :: IORef InteractiveContext
+      , globalIC     :: IORef (InteractiveContext,Int)
       -- ^ InteractiveContext for DoEval without a specified frame.
 
       , compCache         :: IORef CompCache
@@ -214,13 +220,11 @@ data ProjectDebugSpec = ProjectDebugSpec
 initialDebuggerState :: LogAction IO DebuggerLog -> Maybe UnitId -> GHC.Ghc DebuggerState
 initialDebuggerState l hsDbgViewUid = do
   ic <- hsc_IC <$> getSession
-  imports <- ic_imports . hsc_IC <$> getSession
   DebuggerState <$> liftIO (newIORef BM.empty)
                 <*> liftIO (newIORef emptyRuntimeInstancesCache)
                 <*> liftIO (newIORef TM.emptyThreadMap)
                 <*> liftIO (newIORef TM.emptyThreadMap)
-                <*> liftIO (newIORef imports)
-                <*> liftIO (newIORef ic)
+                <*> liftIO (newIORef (ic,0))
                 <*> liftIO (newIORef emptyCompCache)
                 <*> pure hsDbgViewUid
                 <*> pure l
