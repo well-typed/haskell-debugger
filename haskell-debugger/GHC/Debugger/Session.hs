@@ -110,6 +110,7 @@ import Data.Foldable (for_)
 import GHC.Plugins (SourceError, try, RawPkgQual (..), HasCallStack, FastString, mkFastString, lookupUnitId)
 #if MIN_VERSION_ghc(10,1,0)
 import GHC.Types.SourceText (SourceText (..))
+import GHC.Driver.CmdLine as GHC
 #else
 import GHC.Types.SourceText (StringLiteral(..), SourceText (..))
 #endif
@@ -129,7 +130,12 @@ parseHomeUnitArguments :: GhcMonad m
     -> FilePath -- ^ root dir, see Note [Root Directory]
     -> m (NonEmpty.NonEmpty (DynFlags, [GHC.Target]))
 parseHomeUnitArguments cfp compRoot units theOpts dflags rootDir = do
-    ((theOpts',_errs,_warns),_units) <- GHC.processCmdLineP [] [] (map noLoc theOpts)
+#if MIN_VERSION_ghc(10,1,0)
+    let noFlags = GHC.mkFlagSpecTrie []
+#else
+    let noFlags = []
+#endif
+    ((theOpts',_errs,_warns),_units) <- GHC.processCmdLineP noFlags [] (map noLoc theOpts)
     case NonEmpty.nonEmpty units of
       Just us -> initMulti us
       Nothing -> do
@@ -420,7 +426,7 @@ fromTargetId :: [FilePath]          -- ^ import paths
              -> IO [TargetDetails]
 -- For a target module we consider all the import paths
 fromTargetId is exts unitId (GHC.TargetModule modName) ctts = do
-    let fps = [i </> moduleNameSlashes modName -<.> ext <> boot
+    let fps = [i </> GHC.moduleNameSlashes modName -<.> ext <> boot
               | ext <- exts
               , i <- is
               , boot <- ["", "-boot"]

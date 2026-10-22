@@ -21,6 +21,9 @@ import Control.Exception
 import GHC.Driver.Env
 import GHC.Driver.Config
 import Control.Monad.IO.Class
+#if MIN_VERSION_ghc(10,1,0)
+import GHC.Runtime.Eval.Types
+#endif
 import qualified GHC.Runtime.Interpreter as Interp
 
 import GHC.Debugger.Monad
