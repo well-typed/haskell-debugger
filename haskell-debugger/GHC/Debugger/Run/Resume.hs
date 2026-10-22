@@ -15,8 +15,6 @@ import Data.Maybe
 import GHC.Types.SrcLoc
 import Data.Function
 import qualified GHC.Runtime.Eval as GHC
-import Colog.Core (Severity(..))
-import GHC.Debugger.Utils (text)
 
 -- | Construct the 'SingleStep' resume option for a paused thread from its
 -- 'Resume' info and the type of step to do.
