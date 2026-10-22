@@ -155,7 +155,7 @@ jobs:
   # architecture we ship a bindist for is tested before the release goes out.
   build-n-more-test-haskell-debugger:
     env:
-      ghcup_channel: ${{ fromJSON('{"9.14.1":"https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml","10.1.20260817":"https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml"}')[matrix.version] }}
+      ghcup_channel: ${{ fromJSON('{"9.14.1":"https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml","10.1.20261018":"https://gitlab.haskell.org/ghc/ghcup-metadata/-/raw/updates/ghcup-nightlies-0.0.7.yaml"}')[matrix.version] }}
     timeout-minutes: 30
     name: Build and Run Tests on checkout (${{ matrix.runner }}, GHC ${{ matrix.version }})
     runs-on: ${{ matrix.runner }}
@@ -163,7 +163,7 @@ jobs:
     continue-on-error: ${{ !inputs.is-release }}
     strategy:
       matrix:
-        version: ["9.14.1", "10.1.20260817"]
+        version: ["9.14.1", "10.1.20261018"]
         runner: [ubuntu-latest, macOS-latest] # windows-latest is broken, see #246
         # the || '[{"runner":"ubuntu-latest"}]' part is there to avoid an empty include, should be noop.
         include: ${{ fromJSON(inputs.is-release && inputs.release-extra-runners || '[{"runner":"ubuntu-latest"}]') }}

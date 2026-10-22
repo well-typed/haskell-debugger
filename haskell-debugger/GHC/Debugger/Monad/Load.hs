@@ -16,7 +16,6 @@
 module GHC.Debugger.Monad.Load
 where
 
-import Control.Exception
 import Control.Monad
 import Control.Monad.Catch as MC
 import Control.Monad.IO.Class
@@ -107,7 +106,7 @@ loadFFIInspect l buildWays = do
     (Failed,(modName,_)) -> do
       ghcLog <& DebuggerLog Logger.Debug
         (LogFailedToCompileBuiltinModule modName)
-      liftIO $ throwIO FailedToLoadFFIInspectModule
+      throwM FailedToLoadFFIInspectModule
     (Succeeded,_) ->
       return ()
   where

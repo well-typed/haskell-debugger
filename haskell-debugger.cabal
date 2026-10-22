@@ -68,7 +68,7 @@ common warnings
     ghc-options: -Wall
 
 common multithreaded_cpp
-    if impl(ghc >= 10.1.20260820)
+    if flag(multithreaded)
         cpp-options: -DGHC_HAS_MULTITHREADED_DBG
 
 -- custom-setup
@@ -83,6 +83,11 @@ Flag hdb-dep
 
 Flag testing
   description: Includes extra checks useful when running tests.
+  default: False
+  manual: True
+
+Flag multithreaded
+  description: Compile against ghc with multithreaded debugging support
   default: False
   manual: True
 

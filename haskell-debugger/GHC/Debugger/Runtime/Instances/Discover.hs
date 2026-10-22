@@ -20,6 +20,7 @@ import Control.Monad.Reader
 import GHC
 #if MIN_VERSION_ghc(10,1,0)
 import GHC.Builtin.KnownKeys (ioTyConKey)
+import GHC.Runtime.Eval.Types
 #else
 import GHC.Builtin.Names
 #endif
