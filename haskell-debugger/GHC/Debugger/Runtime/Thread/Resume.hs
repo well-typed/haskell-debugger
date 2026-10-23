@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase, ViewPatterns, CPP #-}
+{-# LANGUAGE RecordWildCards #-}
 module GHC.Debugger.Runtime.Thread.Resume where
 
 import GHC.Debugger.Interface.Messages
@@ -9,6 +10,8 @@ import Control.Monad.Reader
 import Data.Function
 import GHC.Debugger.Runtime.Thread
 import GHC.Debugger.Data.ThreadMap
+import GHC (GhcMonad (getSession))
+import GHC.Driver.Env
 
 -- | Pop the resume for this thread off
 popResume :: RemoteThreadId -> Debugger Resume
@@ -23,12 +26,13 @@ popResume rti = do
 -- | Push the resume for its thread to the mapping keeps track of which threads
 -- are paused
 pushResume :: Resume -> Debugger ()
-pushResume res = do
+pushResume resume = do
   trm_ref <- asks threadResumeMap
-  rti     <- getResumeThreadId res
+  rti     <- getResumeThreadId resume
+  breakIC <- hsc_IC <$> getSession
   liftIO $
     modifyIORef' trm_ref $
-      insertThreadMap (remoteThreadIntRef rti) res
+      insertThreadMap (remoteThreadIntRef rti) (mkStoppedThread resume breakIC)
 
 -- | Get the 'Resume' a given stopped thread is currently at.
 -- Returns Nothing if we're no longer stopped at this thread
@@ -36,7 +40,10 @@ pushResume res = do
 -- See Note [Don't crash if not stopped] for why we may try to get the resume
 -- of a thread we're no longer stopped at.
 readResume :: RemoteThreadId -> Debugger (Maybe Resume)
-readResume (remoteThreadIntRef -> rti) = do
+readResume tid = fmap resume <$> readStoppedThread tid
+
+readStoppedThread :: RemoteThreadId -> Debugger (Maybe StoppedThread)
+readStoppedThread (remoteThreadIntRef -> rti) = do
   trm_ref <- asks threadResumeMap
   trm     <- readIORef trm_ref & liftIO
   case lookupThreadMap rti trm of

@@ -24,23 +24,19 @@ module GHC.Debugger.Run
   ) where
 
 import GHC.Utils.Outputable
-import Control.Monad.Catch
 import Data.Maybe
 
 import GHC qualified
 import GHC (
   ForeignHValue,
   InteractiveImport (..),
-  parseImportDecl,
   mkHsString,
   nlList,
   nlHsLit,
   )
-import GHC.Plugins (SourceError)
 import qualified GHC.Plugins as GHC
 import GHC.Unit.Types
 import GHC.Driver.Monad as GHC
-import qualified GHC.Driver.Config.Parser as GHC
 import qualified GHCi.Message as GHCi
 
 import GHC.Debugger.Monad
@@ -55,6 +51,7 @@ import GHC.Runtime.Eval.Types
 
 import GHC.Debugger.Run.Resume
 import GHC.Debugger.Run.Handler
+import GHC.Driver.Config.Parser
 import GHC.Debugger.Run.Eval
 
 --------------------------------------------------------------------------------
@@ -147,21 +144,15 @@ doResume tid step _stop_world = do
     >>= handleExecResult
 
 -- | Generalized `doEval` that also handles `imports`
-doEvalCommand :: Maybe (RemoteThreadId, Int) -> String -> Debugger EvalResult
+doEvalCommand :: Maybe (RemoteThreadId, Int)
+              -- ^ If Just, evaluate the expression in a context where the variables
+              -- from the given thread at frame index are available.
+              -- If Nothing, it evaluates in the stored globalIC.
+              -> String
+              -> Debugger EvalResult
 doEvalCommand mtid expr = do
   dflags <- getInteractiveDebuggerDynFlags
-  let pflags = GHC.initParserOpts dflags
+  let pflags = initParserOpts dflags
   if GHC.isStmt pflags expr
     then doEval handleExecResult mtid expr
     else addImport expr
-
--- | Parses input as an import declaration and applies it to the interactive context.
-addImport :: String -> Debugger EvalResult
-addImport s = handleError $ do
-  cxt <- GHC.getContext
-  idecl <- parseImportDecl s
-  GHC.setContext $ IIDecl idecl : cxt
-  pure $ EvalCompleted "" "" Nothing NoVariables
-  where
-    handleError m = m `catch` \ (e::SourceError) -> do
-      pure $ EvalAbortedWith $ displayException e
