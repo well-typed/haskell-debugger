@@ -1,0 +1,80 @@
+cabal-version:      3.0
+name:               demos
+version:            0.1.0.0
+-- synopsis:
+-- description:
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Andrea Vezzosi
+maintainer:         andrea@well-typed.com
+-- copyright:
+build-type:         Simple
+extra-doc-files:
+    CHANGELOG.md
+    README.md
+
+-- extra-source-files:
+
+common extensions
+    default-language: GHC2021
+
+common ghc-options
+    ghc-options: -Wall -Widentities
+
+common rts-options
+    ghc-options: -rtsopts -threaded "-with-rtsopts=-N"
+
+executable average
+    import:           extensions
+    import:           ghc-options
+    import:           rts-options
+    main-is:          Main.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base
+    hs-source-dirs:   average
+    default-language: GHC2024
+
+executable newton
+    import:           extensions
+    import:           ghc-options
+    import:           rts-options
+    main-is:          Main.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base
+    hs-source-dirs:   newton
+    default-language: GHC2024
+
+executable parser
+    import:           extensions
+    import:           ghc-options
+    import:           rts-options
+    main-is:          Main.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base
+    hs-source-dirs:   parser
+    default-language: GHC2024
+
+executable stack-machine
+    import:           extensions
+    import:           ghc-options
+    import:           rts-options
+    main-is:          Main.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base
+    hs-source-dirs:   stack-machine
+    default-language: GHC2024
+
+executable stepout
+    import:           extensions
+    import:           ghc-options
+    import:           rts-options
+    main-is:          Main.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base
+    hs-source-dirs:   stepout
+    default-language: GHC2024
