@@ -42,6 +42,16 @@ jobs:
         with:
           submodules: recursive
 
+      # The macOS runner image has Command Line Tools 27 (SDK 27.0) next to
+      # Xcode 26.6, whose linker cannot read the SDK 27 .tbd stubs ("tapi error:
+      # malformed file ... unknown architecture arm64e.x1"). Use the Command
+      # Line Tools toolchain so the linker and the SDK match. Same workaround
+      # as in debugger.yaml; remove it together with that one once
+      # https://github.com/actions/runner-images/issues/14940 is fixed.
+      - name: Use Command Line Tools toolchain on macOS
+        if: runner.os == 'macOS'
+        run: sudo xcode-select -s /Library/Developer/CommandLineTools
+
       - uses: haskell-actions/setup@v2
         with:
           ghc-version: 9.14.1
