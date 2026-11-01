@@ -69,7 +69,7 @@ case "${MODE}" in
 	extract)
 		mkdir -p "${WORK_DIR}/unpacked" "${WORK_DIR}/path"
 		tar -xzf "${TARBALL}" -C "${WORK_DIR}/unpacked"
-		TOP_DIR="$(find "${WORK_DIR}/unpacked" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+		TOP_DIR="$(find "${WORK_DIR}/unpacked" -mindepth 1 -maxdepth 1 -type d | sed -n 1p)"
 		# Check 1: run the wrapper in place. This checks the tarball itself
 		# (hdb, bin/hdb and lib/ are all present and a matching GHC is found).
 		smoke_test "${TOP_DIR}/hdb"
@@ -94,7 +94,9 @@ case "${MODE}" in
 			*) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 		esac
 
-		TOP_DIR_NAME="$(tar -tzf "${TARBALL}" | head -n1 | cut -d/ -f1)"
+		# The tarball's single top-level directory. (`sed -n 1p`, not `head -n1`:
+		# GNU tar fails with "write error" when head closes the pipe early.)
+		TOP_DIR_NAME="$(tar -tzf "${TARBALL}" | sed -n 1p | cut -d/ -f1)"
 		CHANNEL="${WORK_DIR}/channel.yaml"
 
 		# Write the temporary channel file. It has a single entry for just this
