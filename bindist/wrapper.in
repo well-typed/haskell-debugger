@@ -4,7 +4,23 @@
 # Adapted from haskell-language-server's bindist/wrapper.in:
 # https://github.com/haskell/haskell-language-server/blob/master/bindist/wrapper.in
 
-script_dir="$(cd "$(dirname "$0")" && pwd)"
+# Find the directory this script really lives in, which contains bin/ and lib/.
+# $0 may be a symlink (ghcup installs ~/.ghcup/bin/hdb as a symlink to this
+# script), and then dirname "$0" would be the directory holding the symlink, not
+# the bindist. So follow the symlink chain until $self is the real file.
+# (readlink without -f is used because it is not available on all platforms.)
+self="$0"
+while [ -h "$self" ]; do
+	self_dir="$(cd "$(dirname "$self")" && pwd)"
+	self="$(readlink "$self")"
+	# A relative link target is relative to the directory of the symlink.
+	case "$self" in
+		/*) ;;
+		*) self="${self_dir}/${self}" ;;
+	esac
+done
+script_dir="$(cd "$(dirname "$self")" && pwd)"
+unset self self_dir
 exedir="${script_dir}/@@EXE_DIR@@"
 executablename="@@EXE_NAME@@"
 GHC_VERSION="@@GHC_VERSION@@"
