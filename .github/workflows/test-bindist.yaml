@@ -1,0 +1,122 @@
+# Check on pull requests that the hdb bindist can be installed and run, both
+# unpacked by hand and with ghcup (see bindist/test-install.sh).
+#
+# The release pipeline (bindists.yaml) builds a bindist for every supported
+# Linux distribution, which is too slow for every PR. This workflow instead
+# builds one bindist natively per OS and only runs when something that goes
+# into the bindist (or this test) changes.
+#
+# Two stages:
+#   build-bindist  builds the bindist tarball once per platform
+#   test-bindist   installs that tarball and runs `hdb`, as one job per
+#                  (platform, install mode), so each combination passes or
+#                  fails on its own
+
+name: Test bindist
+
+on:
+  pull_request:
+    paths:
+      - bindist/**
+      - scripts/mk-bindist.sh
+      - .github/workflows/test-bindist.yaml
+  workflow_dispatch: {}
+
+env:
+  haskellDebuggerVersion: 0.14.0.0
+
+jobs:
+  build-bindist:
+    name: Build bindist (${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # `arch` is the suffix of the bindist tarball name; it matches the
+        # names used by the release pipeline for the same platform.
+        platform:
+          - { arch: x86_64-linux-unknown, runner: ubuntu-latest }
+          - { arch: aarch64-apple-darwin, runner: macOS-latest }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: 9.14.1
+          cabal-version: 3.16
+          ghcup-release-channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
+
+      # mk-bindist.sh uses patchelf to point the executable at the bundled lib/.
+      - name: Install patchelf
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y patchelf
+
+      # Same build as the "native" bindist job of the release pipeline
+      # (bindists.yaml). This leaves hdb-<version>-ghcup-<arch>.tar.gz in the
+      # working directory.
+      - name: Build the bindist
+        env:
+          HDB_VERSION: ${{ env.haskellDebuggerVersion }}-ghcup
+          ARCH: ${{ matrix.platform.arch }}
+          OUT_DIR: dist-bin
+        run: |
+          cabal build hdb --enable-executable-dynamic
+          ./scripts/mk-bindist.sh
+
+      - name: Upload the bindist
+        uses: actions/upload-artifact@v4
+        with:
+          name: bindist-${{ matrix.platform.arch }}
+          path: hdb-*.tar.gz
+
+  test-bindist:
+    name: Test bindist (${{ matrix.platform.arch }}, ${{ matrix.mode }})
+    needs: build-bindist
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every platform is tested with every install mode (see
+        # bindist/test-install.sh):
+        #   extract  unpack the tarball by hand, symlink `hdb` onto PATH
+        #   ghcup    `ghcup install haskell-debugger` from a temporary release
+        #            channel that points at the tarball
+        mode: [extract, ghcup]
+        platform:
+          - { arch: x86_64-linux-unknown, runner: ubuntu-latest }
+          - { arch: aarch64-apple-darwin, runner: macOS-latest }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the bindist
+        uses: actions/download-artifact@v4
+        with:
+          name: bindist-${{ matrix.platform.arch }}
+          path: bindist-under-test
+
+      # The hdb wrapper looks for the GHC it was built with (9.14.1) when it
+      # starts, so that GHC must be on PATH. This also installs ghcup if the
+      # runner image does not have it.
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: 9.14.1
+          cabal-version: 3.16
+          ghcup-release-channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
+
+      # `ghcup` mode needs the ghcup executable on PATH. The bootstrap script
+      # is only run if it is missing; minimal mode installs just ghcup.
+      - name: Ensure ghcup is installed
+        if: matrix.mode == 'ghcup'
+        run: |
+          if ! command -v ghcup >/dev/null 2>&1 && [ ! -x "$HOME/.ghcup/bin/ghcup" ]; then
+            curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org \
+              | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 BOOTSTRAP_HASKELL_MINIMAL=1 sh
+          fi
+          echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
+
+      - name: Test the bindist (${{ matrix.mode }})
+        run: |
+          set -- bindist-under-test/hdb-*.tar.gz
+          ./bindist/test-install.sh ${{ matrix.mode }} "$1" "${{ env.haskellDebuggerVersion }}"
