@@ -50,8 +50,19 @@ Namely:
 | `entryPoint`   | the name of the function that is called to start execution                                                                                                                            |
 | `entryArgs`    | the arguments passed to the `entryPoint`. If the `entryPoint` is `main`, these arguments are passed as environment arguments (as in `getArgs`) rather than direct function arguments. |
 | `extraGhcArgs` | additional flags to pass to the ghc invocation that loads the program for debugging.                                                                                                  |
+| `cradleFile`   | path to a hie-bios cradle file (`hie.yaml`) to use instead of inferring it from `entryFile`, relative to the project root.                                                             |
+| `cwd`          | working directory of the debuggee, relative to the project root. By default the debuggee runs in the working directory of the `hdb` process. Not supported with `internalInterpreter`. |
+| `env`          | extra environment variables for the debuggee, merged over the inherited environment, e.g. `{"PATH": "/tmp/stub:${env:PATH}"}` (VSCode substitutes `${env:...}` before launching).      |
+| `internalInterpreter` | run the debuggee inside the debugger process instead of in a separate external interpreter process (default `false`).                                                          |
+| `externalInterpreterArgs` | additional flags for the external interpreter process (e.g. `["-v3"]`). No effect with `internalInterpreter`.                                                               |
 
 Change them accordingly.
+
+`cwd` and `env` are applied inside the debuggee right before the entry point
+runs, so loading the program is unaffected and they work the same whether the
+debuggee is started in a terminal or not, and with any DAP client. With
+`internalInterpreter` the debuggee shares the debugger process, so `cwd` is
+rejected and `env` also becomes visible to the debugger.
 
 To run the debugger, simply hit the green run button.
 See the Features section below for what is currently supported.

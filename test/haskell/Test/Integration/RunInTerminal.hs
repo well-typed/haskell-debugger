@@ -31,6 +31,12 @@ runInTerminalTests =
         [ testCase "(default)" (runInTerminal1 [])
         , testCase "(--internal-interpreter)" (runInTerminal1 ["--internal-interpreter"])
         ]
+    ,
+#ifdef mingw32_HOST_OS
+      ignoreTestBecause "Needs to be fixed for Windows (#199)" $
+#endif
+      -- External interpreter only: "cwd" is rejected with --internal-interpreter.
+      testCase "runInTerminal: honours cwd and env" runInTerminalCwdEnv
     ]
 
 runInTerminal1 :: [String] -> IO ()
@@ -47,24 +53,7 @@ runInTerminal1 flags = do
         concurrently
           (runTestDAP (hitBreakpointWith (mkLaunchConfig test_dir "Main.hs") 6) ctx)
           (flip runTestDAP ctx $
-            handleRunInTerminal $ \args -> do
-              (ritEnv, ritArgs) <- liftIO $ wait args
-              let invocation = T.unpack $ "/usr/bin/env " <> addRITEnv ritEnv <> " " <> T.unwords ritArgs
-              -- Redirect the child's stdout/stderr to files so logs are
-              -- persisted incrementally and survive test failures.
-              out_h <- liftIO $ openFile out_path WriteMode
-              err_h <- liftIO $ openFile err_path WriteMode
-              liftIO $ hPutStrLn out_h ("Invocation: " ++ invocation)
-              liftIO $ hPutStrLn err_h ("Invocation: " ++ invocation)
-              liftIO $ hFlush out_h
-              liftIO $ hFlush err_h
-              (Just rit_in, Nothing, Nothing, rit_p)
-                <- liftIO $ P.createProcess (P.shell invocation)
-                    {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.UseHandle out_h, P.std_err = P.UseHandle err_h
-                    -- cleanupInterp sends sigINT to whole group.
-                    , P.create_group = True}
-              Just rit_pid <- liftIO $ P.getPid rit_p
-              pure ((rit_in, rit_p), fromIntegral rit_pid))
+            handleRunInTerminal $ spawnRunInTerminal test_dir out_path err_path)
 
       -- Continue from "getLine" which will block waiting for input
       next
@@ -108,6 +97,64 @@ runInTerminal1 flags = do
           (not ("GHCi.Message.readPipe:" `isInfixOf` err_str) && not ("Uncaught exception" `isInfixOf` err_str))
 
 
+-- | The @cwd@ and @env@ launch fields are applied inside the debuggee, so they
+-- must work when the debuggee is started by the client through runInTerminal.
+-- See Note [Debuggee working directory and environment] in GHC.Debugger.Run.
+runInTerminalCwdEnv :: IO ()
+runInTerminalCwdEnv = do
+  withTestDAPServer "test/integration/cwd-env" [] $ \ test_dir server -> do
+
+    let out_path = test_dir </> ("runInTerm" <.> "out")
+        err_path = test_dir </> ("runInTerm" <.> "err")
+        cfg = (mkLaunchConfig test_dir "Main.hs")
+                { lcCwd = Just "sub"
+                , lcEnv = Just [("HDB_TEST_VAR", "from-launch")] }
+
+    withTestDAPServerClientWith True (\_ _ -> pure Nothing) server $ do
+
+      ctx <- ask
+      (_rit_in, rit_p) <- liftIO $ snd <$>
+        concurrently
+          -- Line 18 is the last line of the program, after everything was printed.
+          (runTestDAP (hitBreakpointWith cfg 18) ctx)
+          (flip runTestDAP ctx $
+            handleRunInTerminal $ spawnRunInTerminal test_dir out_path err_path)
+
+      disconnect
+
+      liftIO $ do
+        _ <- P.waitForProcess rit_p
+        out_str <- readFile out_path
+        let expect s = assertBool
+              ("Expected output to contain " ++ show s ++ ", got: " ++ out_str)
+              (s `isInfixOf` out_str)
+        expect "cwd: sub"
+        expect "marker: True"
+        expect "HDB_TEST_VAR: Just \"from-launch\""
+
+-- | Reply to a runInTerminal reverse request by spawning the requested command
+-- with the requested environment in the test directory. The child's stdout and
+-- stderr are redirected to the given files so logs are persisted incrementally
+-- and survive test failures. Returns the child's stdin and process handle.
+spawnRunInTerminal :: FilePath -> FilePath -> FilePath
+                   -> Async (Maybe (H.HashMap T.Text T.Text), [T.Text])
+                   -> TestDAP ((Handle, P.ProcessHandle), Int)
+spawnRunInTerminal test_dir out_path err_path args = do
+  (ritEnv, ritArgs) <- liftIO $ wait args
+  let invocation = T.unpack $ "/usr/bin/env " <> addRITEnv ritEnv <> " " <> T.unwords ritArgs
+  out_h <- liftIO $ openFile out_path WriteMode
+  err_h <- liftIO $ openFile err_path WriteMode
+  liftIO $ hPutStrLn out_h ("Invocation: " ++ invocation)
+  liftIO $ hPutStrLn err_h ("Invocation: " ++ invocation)
+  liftIO $ hFlush out_h
+  liftIO $ hFlush err_h
+  (Just rit_in, Nothing, Nothing, rit_p)
+    <- liftIO $ P.createProcess (P.shell invocation)
+        {P.cwd = Just test_dir, P.std_in = P.CreatePipe, P.std_out = P.UseHandle out_h, P.std_err = P.UseHandle err_h
+        -- cleanupInterp sends sigINT to whole group.
+        , P.create_group = True}
+  Just rit_pid <- liftIO $ P.getPid rit_p
+  pure ((rit_in, rit_p), fromIntegral rit_pid)
   where
     addRITEnv :: Maybe (H.HashMap T.Text T.Text) -> T.Text
     addRITEnv env =

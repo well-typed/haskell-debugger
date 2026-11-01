@@ -41,6 +41,10 @@ data DebugAdaptorState = DAS
       , entryFile     :: AbsFilePath
       , entryPoint    :: String
       , entryArgs     :: [String]
+      , entryCwd      :: Maybe AbsFilePath
+        -- ^ Working directory of the debuggee (absolute). @Nothing@ inherits the debugger's.
+      , entryEnv      :: [(String, String)]
+        -- ^ Extra environment variables for the debuggee.
       , projectRoot   :: AbsFilePath
       , waitForDebuggee :: IO ()
         -- ^ Blocks until the debuggee is ready for @startExecution@.

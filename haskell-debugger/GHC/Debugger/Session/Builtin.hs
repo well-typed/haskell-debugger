@@ -177,7 +177,7 @@ debuggerInternalUnitId = stringToUnitId "haskell-debugger-internal"
 addInMemoryDebuggerInternalUnit :: (MonadFail m, GhcMonad m) => DynFlags -> m ()
 addInMemoryDebuggerInternalUnit dflags = do
   us <- hsc_units <$> getSession
-  Just deps' <- pure $ mapM (lookupPackageName us . PackageName) ["ghc-heap","ghci"]
+  Just deps' <- pure $ mapM (lookupPackageName us . PackageName) ["ghc-heap","ghci","directory"]
 
   let deps = baseUnitId dflags
 #if !MIN_VERSION_ghc(9,14,2)
