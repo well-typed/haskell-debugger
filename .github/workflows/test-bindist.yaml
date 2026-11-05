@@ -10,7 +10,8 @@
 #   build-bindist  builds the bindist tarball once per platform
 #   test-bindist   installs that tarball and runs `hdb`, as one job per
 #                  (platform, install mode), so each combination passes or
-#                  fails on its own
+#                  fails on its own. The steps live in test-install.yaml,
+#                  which release.yaml also uses to test the release artifacts.
 
 name: Test bindist
 
@@ -38,7 +39,7 @@ jobs:
           - { arch: x86_64-linux-unknown, runner: ubuntu-latest }
           - { arch: aarch64-apple-darwin, runner: macOS-latest }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -76,15 +77,16 @@ jobs:
           ./scripts/mk-bindist.sh
 
       - name: Upload the bindist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bindist-${{ matrix.platform.arch }}
           path: hdb-*.tar.gz
 
+  # One call of the reusable workflow per (platform, install mode), so each
+  # combination passes or fails on its own.
   test-bindist:
     name: Test bindist (${{ matrix.platform.arch }}, ${{ matrix.mode }})
     needs: build-bindist
-    runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -97,36 +99,8 @@ jobs:
         platform:
           - { arch: x86_64-linux-unknown, runner: ubuntu-latest }
           - { arch: aarch64-apple-darwin, runner: macOS-latest }
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download the bindist
-        uses: actions/download-artifact@v4
-        with:
-          name: bindist-${{ matrix.platform.arch }}
-          path: bindist-under-test
-
-      # The hdb wrapper looks for the GHC it was built with (9.14.1) when it
-      # starts, so that GHC must be on PATH. This also installs ghcup if the
-      # runner image does not have it.
-      - uses: haskell-actions/setup@v2
-        with:
-          ghc-version: 9.14.1
-          cabal-version: 3.16
-          ghcup-release-channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
-
-      # `ghcup` mode needs the ghcup executable on PATH. The bootstrap script
-      # is only run if it is missing; minimal mode installs just ghcup.
-      - name: Ensure ghcup is installed
-        if: matrix.mode == 'ghcup'
-        run: |
-          if ! command -v ghcup >/dev/null 2>&1 && [ ! -x "$HOME/.ghcup/bin/ghcup" ]; then
-            curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org \
-              | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 BOOTSTRAP_HASKELL_MINIMAL=1 sh
-          fi
-          echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
-
-      - name: Test the bindist (${{ matrix.mode }})
-        run: |
-          set -- bindist-under-test/hdb-*.tar.gz
-          ./bindist/test-install.sh ${{ matrix.mode }} "$1" "${{ env.haskellDebuggerVersion }}"
+    uses: ./.github/workflows/test-install.yaml
+    with:
+      artifact: bindist-${{ matrix.platform.arch }}
+      runner: ${{ matrix.platform.runner }}
+      mode: ${{ matrix.mode }}

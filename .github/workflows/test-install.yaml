@@ -1,0 +1,62 @@
+# Reusable workflow: install one hdb bindist artifact one way, and check that
+# `hdb` starts (see bindist/test-install.sh). Called once per (artifact, mode)
+# from test-bindist.yaml (pull requests) and release.yaml (release artifacts).
+
+name: Test bindist installation
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: "Name of the workflow artifact that contains the hdb-*.tar.gz bindist."
+        required: true
+        type: string
+      runner:
+        description: "Runner to test on; it must be able to execute the bindist."
+        required: true
+        type: string
+      mode:
+        description: "How to install the bindist: `extract` (by hand) or `ghcup`."
+        required: true
+        type: string
+
+jobs:
+  test:
+    name: Test ${{ inputs.artifact }} (${{ inputs.mode }})
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download the bindist
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact }}
+          path: bindist-under-test
+
+      # The hdb wrapper looks for the GHC it was built with (9.14.1) when it
+      # starts, so that GHC must be on PATH. This also installs ghcup if the
+      # runner image does not have it.
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: 9.14.1
+          cabal-version: 3.16
+          ghcup-release-channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
+
+      # `ghcup` mode needs the ghcup executable on PATH. The bootstrap script
+      # is only run if it is missing; minimal mode installs just ghcup.
+      - name: Ensure ghcup is installed
+        if: inputs.mode == 'ghcup'
+        run: |
+          if ! command -v ghcup >/dev/null 2>&1 && [ ! -x "$HOME/.ghcup/bin/ghcup" ]; then
+            curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org \
+              | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 BOOTSTRAP_HASKELL_MINIMAL=1 sh
+          fi
+          echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
+
+      # The expected hdb version is taken from the tarball name.
+      - name: Test the bindist (${{ inputs.mode }})
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -- bindist-under-test/hdb-*.tar.gz
+          ./bindist/test-install.sh "$MODE" "$1"

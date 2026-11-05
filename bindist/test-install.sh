@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Check that an hdb bindist tarball can be installed and that `hdb` starts.
 #
-# Usage: test-install.sh <extract|ghcup> <bindist.tar.gz> <hdb-version>
+# Usage: test-install.sh <extract|ghcup> <bindist.tar.gz> [<hdb-version>]
+#
+# <hdb-version> is the version `hdb --version` must report. If omitted it is
+# taken from the tarball name (hdb-<version>[-ghcup]-<platform>.tar.gz).
 #
 # What "works" means: `hdb --version` exits successfully and prints the version.
 # That requires the `hdb` wrapper script to find the real binary (bin/hdb) and
@@ -26,14 +29,24 @@
 
 set -euo pipefail
 
-if [ "$#" -ne 3 ]; then
-	echo "usage: $0 <extract|ghcup> <bindist.tar.gz> <hdb-version>" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+	echo "usage: $0 <extract|ghcup> <bindist.tar.gz> [<hdb-version>]" >&2
 	exit 2
 fi
 
 MODE="$1"
 TARBALL="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
-HDB_VERSION="$3"
+
+if [ "$#" -eq 3 ]; then
+	HDB_VERSION="$3"
+else
+	# hdb-0.14.0.0-ghcup-aarch64-apple-darwin.tar.gz -> 0.14.0.0
+	HDB_VERSION="$(basename "${TARBALL}" | sed -En 's/^hdb-([0-9]+(\.[0-9]+)*)-.*/\1/p')"
+	if [ -z "${HDB_VERSION}" ]; then
+		echo "cannot work out the hdb version from '$(basename "${TARBALL}")'; pass it as the third argument" >&2
+		exit 2
+	fi
+fi
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
