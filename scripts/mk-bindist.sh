@@ -29,7 +29,9 @@ esac
 # GHC installation's own libdir (matched at runtime by the wrapper), while
 # hdb's project/Hackage dependencies live in the cabal store -- copy those.
 STORE_DIR="$(cabal path --store-dir)"
-GHC_STORE_DIR="$(find "${STORE_DIR}" -maxdepth 1 -type d -name "ghc-${GHC_VERSION}*" | head -n1)"
+# (`sed -n 1p`, not `head -n1`: head closes the pipe after one line, which makes
+# find fail with a broken pipe under `set -o pipefail`.)
+GHC_STORE_DIR="$(find "${STORE_DIR}" -maxdepth 1 -type d -name "ghc-${GHC_VERSION}*" | sed -n 1p)"
 if [ -z "${GHC_STORE_DIR}" ]; then
 	echo "mk-bindist.sh: could not find cabal store dir for GHC ${GHC_VERSION} under ${STORE_DIR}" >&2
 	exit 1
@@ -40,8 +42,10 @@ case "$(uname -s)" in
 	*)      DLL_GLOB="*.so" ;;
 esac
 find "${GHC_STORE_DIR}" -type f -name "${DLL_GLOB}" -exec cp {} "${BINDIST_DIR}/lib/" \;
-## Also include DLLs for sublibraries.
-find . -type f -name "${DLL_GLOB}" -exec cp {} "${BINDIST_DIR}/lib/" \;
+## Also include DLLs for sublibraries. Do not search OUT_DIR, which holds the
+## libraries that the line above copied: cp finds them again and reports that the
+## source and the target are the same file.
+find . -path "./${OUT_DIR}" -prune -o -type f -name "${DLL_GLOB}" -exec cp {} "${BINDIST_DIR}/lib/" \;
 
 # Rewrite the executable's rpath to find the bundled lib/ dir relative to
 # itself, instead of the CI runner's (ephemeral) absolute store path.
