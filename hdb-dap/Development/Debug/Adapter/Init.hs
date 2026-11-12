@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultilineStrings #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -23,7 +24,7 @@ import GHC.IO.Handle
 import qualified Data.Text as T
 import qualified System.Process as P
 import Control.Exception (displayExceptionWithInfo, ExceptionWithContext (ExceptionWithContext), AsyncException (..))
-import Control.Monad (when, void)
+import Control.Monad (when, unless, void, forM)
 import Control.Monad.Except
 import Control.Monad.Trans
 import Control.Monad.Trans.Control (liftBaseDiscard)
@@ -35,6 +36,7 @@ import GHC.IO.Encoding
 import Control.Monad.Catch
 import Control.Concurrent
 import Data.Aeson as Aeson
+import qualified Data.Map as M
 import GHC.Generics
 import System.Directory
 import Data.Functor.Contravariant
@@ -84,6 +86,15 @@ data LaunchArgs
   , externalInterpreterArgs :: Maybe [String]
     -- ^ Extra arguments to append to the external interpreter invocation. No
     -- effect when using the internal interpreter.
+  , cwd :: Maybe FilePath
+    -- ^ Working directory of the debuggee. Relative paths are resolved against
+    -- @projectRoot@. Defaults to the working directory of the debugger process.
+    -- Not supported with @--internal-interpreter@.
+    -- See Note [Debuggee working directory and environment] in "GHC.Debugger.Run".
+  , env :: Maybe (M.Map String String)
+    -- ^ Environment variables set in the debuggee process on top of the
+    -- inherited environment, e.g. @{"PATH": "/tmp/stub:${env:PATH}"}@ (the
+    -- editor substitutes variables before sending the request).
   } deriving stock (Show, Eq, Generic)
     deriving anyclass FromJSON
 
@@ -115,6 +126,8 @@ initDebugger l0 mainScope servConf interpChoice
                          , extraGhcArgs = fromMaybe [] -> extraGhcArgs
                          , cradleFile
                          , externalInterpreterArgs = fromMaybe [] -> externalInterpreterArgs
+                         , cwd = givenCwd
+                         , env = givenEnv
                          } = do
   syncRequests  <- liftIO newEmptyMVar
   syncResponses <- liftIO newEmptyMVar
@@ -124,6 +137,31 @@ initDebugger l0 mainScope servConf interpChoice
     Just ef -> pure ef
 
   projectRoot <- liftIO $ mkAbsolute <$> maybe getCurrentDirectory makeAbsolute givenRoot
+
+  -- See Note [Debuggee working directory and environment] in GHC.Debugger.Run
+  entryCwd <- case givenCwd of
+    Nothing -> pure Nothing
+    Just dir
+      | internal interpChoice -> throwError
+          ( ErrorMessage
+              """
+              "cwd" is not supported when hdb runs with --internal-interpreter:
+              the debuggee shares the debugger process and changing its working
+              directory would break source locations (see #263)
+              """
+          , Nothing )
+      | otherwise -> do
+          let absDir = projectRoot /> dir
+          exists <- liftIO $ doesDirectoryExist (unAbs absDir)
+          unless exists $ throwError
+            (ErrorMessage $ "\"cwd\" directory does not exist: " <> T.pack (unAbs absDir), Nothing)
+          pure (Just absDir)
+
+  entryEnv <- forM (maybe [] M.toList givenEnv) $ \(k, v) -> do
+    -- System.Environment.setEnv would throw on these in the debuggee; fail at launch instead.
+    when (null k || '=' `elem` k) $ throwError
+      (ErrorMessage $ "Invalid \"env\" variable name: " <> T.pack (show k), Nothing)
+    pure (k, v)
 
   sessionId <- liftIO $ maybe (T.show <$> UUID.nextRandom) (pure . T.pack) __sessionId
   let l = contramap (sessionId,) l0

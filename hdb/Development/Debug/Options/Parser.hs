@@ -85,6 +85,33 @@ cliParser = HdbCLI
           This flag does not do anything when using --internal-interpreter
         """
       ))
+  <*> (optional $ strOption
+      ( long "cwd"
+     <> metavar "DIR"
+     <> help """
+          Working directory for the debuggee, relative to the project root (the
+          current directory). It is applied in the debuggee process right before
+          the entry point runs, so loading the program is unaffected.
+
+          Not supported with --internal-interpreter, where the debuggee shares
+          the debugger process.
+        """
+      ))
+  <*> many (option (eitherReader parseEnvAssignment)
+      ( long "env"
+     <> metavar "NAME=VALUE"
+     <> help """
+          Set an environment variable in the debuggee process, on top of the
+          inherited environment (e.g. --env PATH=/tmp/stub:$PATH). May be given
+          multiple times.
+        """
+      ))
+
+-- | Parse a @NAME=VALUE@ environment variable assignment.
+parseEnvAssignment :: String -> Either String (String, String)
+parseEnvAssignment s = case break (== '=') s of
+  (name@(_:_), '=':val) -> Right (name, val)
+  _ -> Left ("Expected NAME=VALUE with a non-empty NAME, got: " ++ show s)
 
 -- | Parser for 'HdbProxy' options
 proxyParser :: Parser HdbOptions

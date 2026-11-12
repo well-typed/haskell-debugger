@@ -78,8 +78,8 @@ execute = \case
   DoResume tid step world -> DidResume <$>
     Run.doResume tid step world
 
-  DebugExecution { entryPoint, entryFile, runArgs } -> DidExec <$>
-    Run.debugExecution entryFile entryPoint runArgs
+  DebugExecution { entryPoint, entryFile, runArgs, runCwd, runEnv } -> DidExec <$>
+    Run.debugExecution entryFile entryPoint runArgs runCwd runEnv
 
   -----------------------------------------------------------------------------
   -- GHC.Debugger.Monad

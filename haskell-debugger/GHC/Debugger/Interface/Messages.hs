@@ -123,7 +123,21 @@ data Command
   -- When the @'EntryPoint'@ is @'Main'@, @'runArgs'@ are set as process
   -- invocation arguments (as in @argv@) rather than passed directly as a
   -- Haskell function arguments.
-  | DebugExecution { entryPoint :: EntryPoint, entryFile :: AbsFilePath, runArgs :: [String] }
+  --
+  -- @'runCwd'@ and @'runEnv'@ are applied in the debuggee process right before
+  -- the entry point runs. See Note [Debuggee working directory and environment]
+  -- in "GHC.Debugger.Run".
+  | DebugExecution
+      { entryPoint :: EntryPoint
+      , entryFile  :: AbsFilePath
+      , runArgs    :: [String]
+      , runCwd     :: Maybe AbsFilePath
+        -- ^ Working directory for the debuggee process. @Nothing@ keeps the
+        -- directory the debuggee was started in.
+      , runEnv     :: [(String, String)]
+        -- ^ Environment variables set in the debuggee process on top of the
+        -- inherited environment.
+      }
 
   -- | Request the debuggee to stop.
   --

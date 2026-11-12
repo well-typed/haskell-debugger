@@ -23,11 +23,12 @@ import qualified Development.Debug.Adapter.Output as Output
 --  [ ] Consider using Output events for debuggee evaluation.
 startExecution :: DebugAdaptor EvalResult
 startExecution = do
-  DAS{entryFile, entryPoint, entryArgs} <- getDebugSession
+  DAS{entryFile, entryPoint, entryArgs, entryCwd, entryEnv} <- getDebugSession
   let entry
         | entryPoint == "main" = MainEntry Nothing
         | otherwise            = FunctionEntry entryPoint
-  DidExec er <- sendSync DebugExecution{entryPoint = entry, entryFile, runArgs = entryArgs}
+  DidExec er <- sendSync DebugExecution
+    { entryPoint = entry, entryFile, runArgs = entryArgs, runCwd = entryCwd, runEnv = entryEnv }
   return er
 
 --------------------------------------------------------------------------------

@@ -19,6 +19,8 @@ import Data.List
 import GHC.Base (returnIO)
 import qualified System.IO
 import GHC.Conc
+import System.Directory (setCurrentDirectory)
+import System.Environment (setEnv)
 
 -- | Some extensions can mess with [] and (:) syntax, so we setup these plain
 -- function aliases.
@@ -61,3 +63,15 @@ setLineBuffering :: IO ()
 setLineBuffering = do
  System.IO.hSetBuffering System.IO.stdout System.IO.LineBuffering
  System.IO.hSetBuffering System.IO.stderr System.IO.LineBuffering
+
+-- | Prepare the debuggee process right before its entry point is run: extend
+-- its environment and change its working directory.
+--
+-- This runs /in the debuggee process/ (the external interpreter, or the
+-- debugger itself when using the internal interpreter).
+--
+-- See Note [Debuggee working directory and environment] in "GHC.Debugger.Run".
+prepareDebuggee :: Maybe FilePath -> [(String, String)] -> IO ()
+prepareDebuggee mcwd env = do
+  mapM_ (uncurry setEnv) env
+  mapM_ setCurrentDirectory mcwd

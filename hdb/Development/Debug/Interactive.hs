@@ -30,6 +30,10 @@ data RunOptions = RunOptions
   , runEntryPoint :: String
   , runEntryArgs :: [String]
   , runProjectRoot :: AbsFilePath
+  , runDebuggeeCwd :: Maybe AbsFilePath
+    -- ^ Working directory of the debuggee (absolute)
+  , runDebuggeeEnv :: [(String, String)]
+    -- ^ Extra environment variables for the debuggee
   }
 
 data RunContext = RunContext
@@ -50,11 +54,13 @@ runIDM :: LogAction IO InteractiveLog
        -> FilePath -- ^ entryFile
        -> [String] -- ^ entryArgs
        -> [String] -- ^ extraGhcArgs
-       -> Maybe FilePath
+       -> Maybe FilePath -- ^ cradleFile
+       -> Maybe FilePath -- ^ debuggee working directory, relative to the project root
+       -> [(String, String)] -- ^ debuggee environment variables
        -> RunDebuggerSettings
        -> InteractiveDM a
        -> IO a
-runIDM logger runEntryPoint entryFile runEntryArgs extraGhcArgs cradleFile runConf act = do
+runIDM logger runEntryPoint entryFile runEntryArgs extraGhcArgs cradleFile debuggeeCwd runDebuggeeEnv runConf act = do
   runProjectRoot <- mkAbsolute <$> getCurrentDirectory
 
   let hieBiosLogger = contramap ISessionSetupLog logger
@@ -63,6 +69,14 @@ runIDM logger runEntryPoint entryFile runEntryArgs extraGhcArgs cradleFile runCo
   entryFileExists <- doesFileExist (unAbs runEntryFile)
   when (not entryFileExists) $ do
     exitWithMsg $ "Entry file \"" ++ (unAbs runEntryFile) ++ "\" does not exist or is a directory."
+
+  -- See Note [Debuggee working directory and environment] in GHC.Debugger.Run
+  runDebuggeeCwd <- traverse (\dir -> do
+    let absDir = runProjectRoot /> dir
+    exists <- doesDirectoryExist (unAbs absDir)
+    when (not exists) $ do
+      exitWithMsg $ "Working directory \"" ++ unAbs absDir ++ "\" does not exist or is not a directory."
+    pure absDir) debuggeeCwd
 
   hieDebugRunner hieBiosLogger (DebugRunnerConf (unAbs runProjectRoot) entryFile extraGhcArgs cradleFile) >>= \case
     Left e               -> exitWithMsg e
@@ -73,7 +87,7 @@ runIDM logger runEntryPoint entryFile runEntryArgs extraGhcArgs cradleFile runCo
       runDebugger debugRec debugRunner runConf $
         fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
-                   (RunOptions { runProjectRoot, runEntryFile, runEntryPoint, runEntryArgs })
+                   (RunOptions { runProjectRoot, runEntryFile, runEntryPoint, runEntryArgs, runDebuggeeCwd, runDebuggeeEnv })
                    (RunContext { runLastCommand = Nothing, runCurrentThread = Nothing } )
   where
     exitWithMsg txt = do
@@ -299,9 +313,9 @@ data OrExit a = Do a
 runParser :: RunOptions -> Parser Command
 runParser opts =
   -- just some args
-  (DebugExecution (mkEntry (runEntryPoint opts)) (runEntryFile opts) <$> parseSomeArgs)
+  (mkExec <$> parseSomeArgs)
   -- just "run"
-  <|> (pure $ DebugExecution (mkEntry (runEntryPoint opts)) (runEntryFile opts) (runEntryArgs opts))
+  <|> (pure $ mkExec (runEntryArgs opts))
   where
     _parseEntry =
       fmap mkEntry $
@@ -317,6 +331,13 @@ runParser opts =
     mkEntry entry
       | entry == "main" = MainEntry Nothing
       | otherwise = FunctionEntry (runEntryPoint opts)
+    mkExec args = DebugExecution
+      { entryPoint = mkEntry (runEntryPoint opts)
+      , entryFile = runEntryFile opts
+      , runArgs = args
+      , runCwd = runDebuggeeCwd opts
+      , runEnv = runDebuggeeEnv opts
+      }
 
 -- | Combined parser for 'Command'
 cmdParser :: RunOptions -> RunContext -> Parser (OrExit Command)
