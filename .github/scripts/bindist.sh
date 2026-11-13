@@ -8,7 +8,7 @@
 #   ARTIFACT    - ghcup-style arch/distro tag, e.g. x86_64-linux-deb10
 #   HDB_VERSION - hdb version being packaged
 #
-# Expects out/${ARTIFACT}/<ghc-version>/hdb-${HDB_VERSION}-${ARTIFACT}.tar.gz
+# Expects out/${ARTIFACT}/<ghc-version>/hdb-${HDB_VERSION}-ghcup-${ARTIFACT}.tar.gz
 # to already be extracted (entrypoint.sh does this for the BINDIST stage).
 
 set -euxo pipefail
@@ -24,5 +24,6 @@ fi
 
 TARGET_NAME="hdb-${HDB_VERSION}-ghcup-${ARTIFACT}.tar.gz"
 
-cp "${versions[0]}hdb-${HDB_VERSION}-${ARTIFACT}.tar.gz" "./$TARGET_NAME"
+# The BUILD stage already made the tarball with this name.
+cp "${versions[0]}${TARGET_NAME}" "./${TARGET_NAME}"
 echo "Bindist for ${ARTIFACT}: $TARGET_NAME"
