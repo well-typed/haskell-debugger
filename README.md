@@ -116,6 +116,22 @@ Cabal, Stack, custom `hie.yaml`) because
 it uses [`hie-bios`](https://github.com/haskell/hie-bios) to figure out the
 right flags to prepare the GHC session with.
 
+# AI Policy
+
+The haskell-debugger uses the [GHC Policy on LLM Contributions](https://gitlab.haskell.org/ghc/ghc/-/wikis/contributing/AI).
+
+Namely, here are the specific policies for LLM contributions to GHC tickets,
+merge requests, and reviews. Each is fleshed out in a section in the original
+document. There are four policy points (P1-P4) and one preference (P5):
+- P1: prioritise people and community
+- P2: write MRs that are easy to review
+- P3: human authorship and full responsibility
+- P4: declare direct use of LLMs
+- P5: strong preference: write the final version yourself
+
+The original document also outlines the vision and principles behind the
+policy. Do take a look!
+
 # Features
 
 Many not listed! Here are a few things:
