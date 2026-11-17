@@ -26,27 +26,17 @@ import qualified Data.Maybe as Maybe
 import GHC.Debugger.Debuggee (DebuggerLog)
 import GHC.Debugger.Script
 
--- TODO: AST
-newtype Command = Command String
-
-data RunOptions = RunOptions
-  { runEntryFile :: AbsFilePath
-  , runEntryPoint :: String
-  , runEntryArgs :: [String]
-  , runProjectRoot :: AbsFilePath
-  }
-
 data RunContext = RunContext
-  { runCurrentThread :: Maybe RemoteThreadId
-  , runLastCommand :: Maybe Command
+  { runLastCommand :: Maybe ScriptCommand
   }
 
 -- | Interactive debugging monad
-type InteractiveDM a = InputT (RWST RunOptions () RunContext Script) a
+type InteractiveDM a = InputT (RWST ScriptRuntime () RunContext IO) a
 
 data InteractiveLog
   = IDebuggerLog DebuggerLog
   | ISessionSetupLog (WithSeverity SessionSetupLog)
+  | IScriptLog ScriptLog
 
 -- | Run it
 runIDM :: LogAction IO InteractiveLog
@@ -61,30 +51,18 @@ runIDM :: LogAction IO InteractiveLog
 runIDM logger runEntryPoint entryFile runEntryArgs extraGhcArgs cradleFile runConf act = do
   runProjectRoot <- mkAbsolute <$> getCurrentDirectory
 
-  let hieBiosLogger = contramap ISessionSetupLog logger
+  let scriptLogger = contramap IScriptLog logger
   let runEntryFile = runProjectRoot /> entryFile
 
   entryFileExists <- doesFileExist (unAbs runEntryFile)
   when (not entryFileExists) $ do
     exitWithMsg $ "Entry file \"" ++ (unAbs runEntryFile) ++ "\" does not exist or is a directory."
-  let
-    runDbg m = do
-      hieDebugRunner hieBiosLogger (DebugRunnerConf (unAbs runProjectRoot) entryFile extraGhcArgs cradleFile) >>= \case
-        Left e               -> exitWithMsg e
-        Right (_ghcInvocation, debugRunner)
-                         -> do
-          let debugRec = contramap IDebuggerLog logger
-
-          runDebugger debugRec debugRunner runConf $
-            m
-  let
-    runS :: (Debugger b0 -> IO b0) -> Script a -> IO a
-    runS = undefined
-
-  runS runDbg $ fmap fst $
+  scriptRuntime <- initScriptRuntime scriptLogger (DebugRunnerConf (unAbs runProjectRoot) entryFile extraGhcArgs cradleFile)
+                    runConf
+  fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
-                   (RunOptions { runProjectRoot, runEntryFile, runEntryPoint, runEntryArgs })
-                   (RunContext { runLastCommand = Nothing, runCurrentThread = Nothing } )
+                   scriptRuntime
+                   (RunContext { runLastCommand = Nothing } )
   where
     exitWithMsg txt = do
       hPutStrLn stderr txt
@@ -114,7 +92,7 @@ debugInteractive = withInterrupt loop
           lift (gets runLastCommand) >>= \case
             Nothing -> return ()
             Just cmd -> do
-              lift . lift $ interpretCmd cmd -- repeat last command
+              interpretCmd cmd -- repeat last command
         Just input -> do
           mcmd <- parseCmd input
           case mcmd of
@@ -122,11 +100,17 @@ debugInteractive = withInterrupt loop
             Just Exit -> outputStrLn "Exiting..." >> liftIO (exitWith ExitSuccess)
             Just (Do cmd) -> do
               lift $ modify (\ o -> o { runLastCommand = Just cmd })
-              lift . lift $ interpretCmd cmd
+              interpretCmd cmd
       loop
 
-interpretCmd :: Command -> Script ()
-interpretCmd = _
+interpretCmd :: ScriptCommand -> InteractiveDM ()
+interpretCmd scmd = do
+  ScriptRuntime{..} <- lift ask
+  liftIO $ sendScriptCommand scmd
+
+{-
+
+-}
 
 -- showExceptionDetails :: RemoteThreadId -> InteractiveDM ()
 -- showExceptionDetails tid = do
@@ -314,14 +298,14 @@ logMessageParser = pure Nothing
 
 
 -- | Parse command line arguments
-parseCmd :: String -> InteractiveDM (Maybe (OrExit Command))
+parseCmd :: String -> InteractiveDM (Maybe (OrExit ScriptCommand))
 parseCmd input = do
   opts <- lift ask
   ctx <- lift get
   let
     res = case input of
       "exit" -> Success Exit
-      s -> Success (Do $ Command s)
+      s -> Success (Do $ ScriptCommand s)
    in case res of
     Success cmd ->
       return (Just cmd)
