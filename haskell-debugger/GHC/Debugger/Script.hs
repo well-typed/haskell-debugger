@@ -21,6 +21,36 @@ import Data.Coerce
 import Control.Monad
 import qualified Data.List as List
 import Control.Monad.Catch
+import GHC.Debugger.Monad.Type
+
+-------------------------------------------
+-- Script Runtime
+-------------------------------------------
+-- TODO: move somewhere else.
+
+data ScriptLog = ScriptLog -- TODO
+-- TODO: AST?
+newtype ScriptCommand = ScriptCommand String
+
+-- TODO: take logger.
+initScriptRuntime :: LogAction IO ScriptLog -> DebugRunnerConf -> RunDebuggerSettings -> IO ScriptRuntime
+initScriptRuntime = undefined
+-- let
+--     runDbg m = do
+--       hieDebugRunner hieBiosLogger (DebugRunnerConf (unAbs runProjectRoot) entryFile extraGhcArgs cradleFile) >>= \case
+--         Left e               -> exitWithMsg e
+--         Right (_ghcInvocation, debugRunner)
+--                          -> do
+--           let debugRec = contramap IDebuggerLog logger
+
+--           runDebugger debugRec debugRunner runConf $
+--             m
+
+data ScriptRuntime = ScriptRuntime
+  { sendScriptCommand :: ScriptCommand -> IO ()
+    -- ^ output is sent back via the logger.
+  }
+-------------------------------------------
 
 -------------------------------------------
 -- Types
