@@ -35,6 +35,8 @@ import Test.DAP.Orphans ()
 import DAP.Types
 
 import qualified Data.List as List
+import Data.String (fromString)
+import System.Timeout (timeout)
 
 --------------------------------------------------------------------------------
 -- * DSL
@@ -142,6 +144,10 @@ data LaunchConfig = LaunchConfig
   , lcExtraGhcArgs :: [String]
   , lcCradleFile :: Maybe FilePath
   , lcInternalInterpreter :: Maybe Bool
+  , lcCwd :: Maybe FilePath
+    -- ^ Working directory of the debuggee ("cwd" launch field)
+  , lcEnv :: Maybe [(String, String)]
+    -- ^ Extra environment variables for the debuggee ("env" launch field)
   }
 
 -- | A launch config with the given project root and entry file. @entryPoint@
@@ -155,6 +161,8 @@ mkLaunchConfig projectRoot entryFile = LaunchConfig
   , lcExtraGhcArgs = []
   , lcCradleFile = Nothing
   , lcInternalInterpreter = Nothing
+  , lcCwd = Nothing
+  , lcEnv = Nothing
   }
 
 -- | Launch the debugger with a 'LaunchConfig'.
@@ -168,7 +176,9 @@ launchWith LaunchConfig{..} = launch $ object $
   [ "entryArgs" .= lcEntryArgs ] ++
   [ "extraGhcArgs" .= lcExtraGhcArgs ] ++
   [ "cradleFile" .= file | Just file <- [lcCradleFile] ] ++
-  [ "internalInterpreter" .= b | Just b <- [lcInternalInterpreter] ]
+  [ "internalInterpreter" .= b | Just b <- [lcInternalInterpreter] ] ++
+  [ "cwd" .= dir | Just dir <- [lcCwd] ] ++
+  [ "env" .= object [ fromString k .= v | (k, v) <- e ] | Just e <- [lcEnv] ]
 
 
 -- | Set breakpoints in a particular source file of a project at the given
@@ -474,6 +484,18 @@ assertOutput expected = do
 
 assertFullOutput :: HasCallStack => T.Text -> TestDAP ()
 assertFullOutput expected = assertFullOutputWith (expected <> " \\in full_output") (T.isInfixOf expected)
+
+-- | Wait (up to a few seconds) until the full output so far contains the given
+-- string, then assert it does. Output events are forwarded asynchronously, so
+-- they may arrive slightly after the "exited"/"stopped" events that are
+-- usually awaited before inspecting the output.
+waitFullOutput :: HasCallStack => T.Text -> TestDAP ()
+waitFullOutput expected = do
+  TestDAPClientContext{..} <- ask
+  _ <- liftIO $ timeout 10_000_000 $ atomically $ do
+    fullOut <- readTVar clientFullOutput
+    unless (any (T.isInfixOf expected) fullOut) retry
+  assertFullOutput expected
 
 assertNotFullOutput :: HasCallStack => T.Text -> TestDAP ()
 assertNotFullOutput expected = assertFullOutputWith (expected <> " \\notin full_output") (not . T.isInfixOf expected)

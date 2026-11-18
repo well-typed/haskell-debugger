@@ -170,6 +170,23 @@
                 "type": "array",
                 "description": "Additional arguments to append to the external interpreter invocation (e.g. [\"-v3\"] to make it more verbose). Has no effect when using the internal interpreter.",
                 "default": []
+              },
+              "cradleFile": {
+                "type": "string",
+                "description": "Path to a hie-bios cradle file (hie.yaml) to use instead of inferring it from entryFile, relative to projectRoot."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory of the debuggee. Relative paths are resolved against projectRoot. Defaults to the working directory of the hdb process. Not supported together with internalInterpreter.",
+                "default": "${workspaceFolder}"
+              },
+              "env": {
+                "type": "object",
+                "description": "Environment variables set for the debuggee on top of the inherited environment. Values support variable substitution, e.g. {\"PATH\": \"/tmp/stub:${env:PATH}\"}.",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "default": {}
               }
             }
           }

@@ -186,11 +186,18 @@ class GHCDebugAdapterServerDescriptorFactory implements vscode.DebugAdapterDescr
 		const serverExecutable = vscode.workspace.getConfiguration('haskell-debugger').get<string>('serverExecutable') || 'hdb';
 		this.logger.appendLine(`[Factory] Using server executable: ${serverExecutable}`);
 
+		// Start hdb in the workspace folder so that the default working directory
+		// of the debuggee (and the fallback for a missing projectRoot) is
+		// predictable rather than wherever VS Code itself was launched from.
+		// The "cwd" launch field changes the debuggee's directory from there.
+		const serverCwd = session.workspaceFolder?.uri.fsPath;
+		this.logger.appendLine(`[Factory] Server working directory: ${serverCwd ?? '(inherited)'}`);
+
 		const debuggerProcess = cp.spawn(serverExecutable, [
 			'server',
 			'--port', port.toString(),
 			...(session.configuration.internalInterpreter ? ['--internal-interpreter'] : [])
-		]);
+		], { cwd: serverCwd });
 
         debuggerProcess.on('spawn', () => {
             this.logger.appendLine('[Factory] haskell-debugger spawned...');

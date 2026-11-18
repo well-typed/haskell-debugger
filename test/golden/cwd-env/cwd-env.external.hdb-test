@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# Checks the --cwd and --env CLI flags. The output is filtered down to the
+# debuggee's own lines so that it is the same for every GHC version.
+# External interpreter only: --cwd is rejected with --internal-interpreter.
+
+$HDB -v0 --cwd sub --env HDB_TEST_VAR=from-cli --env "PATH=/hdb-stub:$PATH" Main.hs < cwd-env.hdb-stdin \
+  | grep -o 'cwd: .*\|marker: .*\|HDB_TEST_VAR: .*\|PATH stub first: .*\|^done'

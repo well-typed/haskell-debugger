@@ -15,7 +15,7 @@ data HdbOptions
     , internalInterpreter :: Bool
     , disableIpeBacktraces :: Bool
     }
-  -- | @cli [--internal-interpreter] [--disable-ipe-backtraces] [--entry-point=<entryPoint>] [--extra-ghc-args="<args>"] [<entryFile>] -- [<entryArgs>]@
+  -- | @cli [--internal-interpreter] [--disable-ipe-backtraces] [--entry-point=<entryPoint>] [--extra-ghc-args="<args>"] [--cwd=<dir>] [--env NAME=VALUE]... [<entryFile>] -- [<entryArgs>]@
   | HdbCLI
     { entryPoint :: String
     , entryFile :: FilePath
@@ -26,6 +26,11 @@ data HdbOptions
     , internalInterpreter :: Bool
     , disableIpeBacktraces :: Bool
     , debuggeeStdin :: Maybe FilePath
+    , debuggeeCwd :: Maybe FilePath
+      -- ^ Working directory of the debuggee, relative to the project root.
+      -- See Note [Debuggee working directory and environment] in "GHC.Debugger.Run".
+    , debuggeeEnv :: [(String, String)]
+      -- ^ Extra environment variables for the debuggee.
     }
 
   -- | @proxy --port <port>@

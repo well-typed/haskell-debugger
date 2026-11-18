@@ -45,6 +45,8 @@ selfDebugDAPTest = do
             , lcExtraGhcArgs = []
             , lcCradleFile = Just hieFileName
             , lcInternalInterpreter = Nothing
+            , lcCwd = Nothing
+            , lcEnv = Nothing
             }
 
       _ <- sync $ launchWith cfg

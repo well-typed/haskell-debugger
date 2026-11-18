@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass,
+{-# LANGUAGE OverloadedStrings, OverloadedRecordDot, CPP, DeriveAnyClass, MultilineStrings,
    DeriveGeneric, DerivingVia, LambdaCase, RecordWildCards, ViewPatterns,
    DataKinds #-}
 module Main where
@@ -55,6 +55,7 @@ import Control.Monad (when, join, void)
 import qualified Colog.Core as Logger
 import Data.List (isPrefixOf)
 import System.Directory (doesFileExist)
+import System.Exit (die)
 import System.IO.Error
 #ifdef MIN_VERSION_unix
 import System.Posix.Signals
@@ -103,6 +104,15 @@ main = handleSigTermTopLevel $ do
         -- See Note [UniqueSupply is process global]
         initUniqSupplyIO
 
+        -- See Note [Debuggee working directory and environment] in GHC.Debugger.Run
+        case debuggeeCwd of
+          Just _ | internalInterpreter -> die
+            """
+            --cwd is not supported with --internal-interpreter: the debuggee shares the
+            debugger process and changing its working directory would break source locations (see #263)
+            """
+          _ -> pure ()
+
         l <- mainLogger hdbOpts.verbosity stdout
         cliInterpSettings <- mkCliInterpreterSettings internalInterpreter debuggeeStdin
         let runConf = RunDebuggerSettings
@@ -110,7 +120,7 @@ main = handleSigTermTopLevel $ do
               , supportsANSIHyperlinks = False
               , interpreterSettings = cliInterpSettings }
         runIDM (contramap InteractiveLog l) entryPoint entryFile entryArgs extraGhcArgs cradleFile
-          runConf debugInteractive
+          debuggeeCwd debuggeeEnv runConf debugInteractive
     HdbProxy{port} -> handleNoHostServer $ do
         setBacktraceMechanismState IPEBacktrace True
         l <- mainLogger hdbOpts.verbosity stdout

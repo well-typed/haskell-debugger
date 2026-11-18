@@ -46,11 +46,13 @@ extra-source-files: haskell-debugger-view/src/GHC/Debugger/View/Class.hs
                     test/golden/**/*.cabal
                     test/golden/**/*.yaml
                     test/golden/**/*.project
+                    test/golden/**/*.txt
 
                     test/integration/**/*.hs
                     test/integration/**/*.cabal
                     test/integration/**/*.yaml
                     test/integration/**/*.project
+                    test/integration/**/*.txt
 
                     test/golden/**/*.hdb-stdin
                     test/golden/**/*.hdb-stdout
@@ -341,7 +343,8 @@ test-suite haskell-debugger-test
                       Test.Integration.Evaluate,
                       Test.Integration.StackTrace,
                       Test.Integration.SelfDebug,
-                      Test.Integration.Threads
+                      Test.Integration.Threads,
+                      Test.Integration.CwdEnv
     build-depends:
         base >=4.14,
         async,

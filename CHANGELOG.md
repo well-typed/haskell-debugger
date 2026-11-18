@@ -1,5 +1,14 @@
 # Revision history for haskell-debugger
 
+## 0.15.0.0 -- unreleased
+
+* Added the `cwd` and `env` launch configuration fields, and the `--cwd` and
+  `--env NAME=VALUE` CLI flags, to set the working directory and extra
+  environment variables of the debuggee. They are applied inside the debuggee
+  right before the entry point runs. `cwd` requires the external interpreter.
+* Documented the `cradleFile`, `internalInterpreter` and
+  `externalInterpreterArgs` launch configuration fields.
+
 ## 0.14.0.0 -- 2026-09-17
 
 * Added binary distributions intended for on Linux and macOS.

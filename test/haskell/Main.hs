@@ -41,6 +41,7 @@ import Test.Integration.Evaluate (evaluateTests)
 import Test.Integration.StackTrace (stackTraceTests)
 import Test.Integration.SelfDebug (selfDebugTests)
 import Test.Integration.Threads (threadsTests)
+import Test.Integration.CwdEnv (cwdEnvTests)
 import Test.Utils
 import qualified Data.Char as C
 import qualified Data.Text as T
@@ -109,6 +110,7 @@ unitTests =
   , stackTraceTests
   , selfDebugTests
   , threadsTests
+  , cwdEnvTests
   ]
 
 

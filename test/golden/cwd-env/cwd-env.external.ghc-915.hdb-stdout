@@ -1,0 +1,5 @@
+cwd: sub
+marker: True
+HDB_TEST_VAR: Just "from-cli"
+PATH stub first: True
+done
