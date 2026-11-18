@@ -21,9 +21,16 @@ on:
       - bindist/**
       - scripts/mk-bindist.sh
       - .github/workflows/test-bindist.yaml
+      - .github/workflows/test-install.yaml
       # mk-bindist.sh takes the version from here.
       - haskell-debugger.cabal
   workflow_dispatch: {}
+
+# A newer push to the same pull request supersedes a run that is still going.
+# Other runs get a group of their own, so they are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build-bindist:
@@ -32,10 +39,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `arch` is the suffix of the bindist tarball name; it matches the
-        # names used by the release pipeline for the same platform.
+        # `arch` is the suffix of the bindist tarball name. For macOS it is the
+        # name used by the release pipeline, which builds it the same way. On
+        # Linux the release pipeline builds in containers, one per distribution
+        # (bindists.yaml), so this native build on the runner gets a name of its
+        # own.
         platform:
-          - { arch: x86_64-linux-unknown, runner: ubuntu-latest }
+          - { arch: x86_64-linux-native, runner: ubuntu-latest }
           - { arch: aarch64-apple-darwin, runner: macOS-latest }
     steps:
       - uses: actions/checkout@v7
@@ -52,7 +62,16 @@ jobs:
         if: runner.os == 'macOS'
         run: sudo xcode-select -s /Library/Developer/CommandLineTools
 
+      - name: "Cache GHC for macOS" # See haskell-actions/setup#139
+        uses: actions/cache@v5
+        if: matrix.platform.runner == 'macOS-latest'
+        with:
+          path: ~/.ghcup
+          key: ${{ runner.os }}-ghc-9.14.1
+          restore-keys: ${{ runner.os }}-ghc-9.14.1
+
       - uses: haskell-actions/setup@v2
+        id: setup
         with:
           ghc-version: 9.14.1
           cabal-version: 3.16
@@ -62,6 +81,31 @@ jobs:
       - name: Install patchelf
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y patchelf
+
+      - name: Configure the build
+        run: cabal build hdb --enable-executable-dynamic --dry-run
+        # This generates dist-newstyle/cache/plan.json for the cache key.
+
+      # Only an exact match is restored (no restore-keys): mk-bindist.sh
+      # bundles every library in the cabal store, so the store must hold only
+      # the packages of this build plan.
+      - name: Restore cached dependencies
+        uses: actions/cache/restore@v4
+        id: cache
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: bindist-${{ runner.os }}-ghc-${{ steps.setup.outputs.ghc-version }}-cabal-${{ steps.setup.outputs.cabal-version }}-plan-${{ hashFiles('**/plan.json') }}
+
+      - name: Install dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cabal build hdb --enable-executable-dynamic --only-dependencies
+
+      - name: Save cached dependencies
+        uses: actions/cache/save@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       # Same build as the "native" bindist job of the release pipeline
       # (bindists.yaml). This leaves hdb-<version>-ghcup-<arch>.tar.gz in the
@@ -95,7 +139,7 @@ jobs:
         #            channel that points at the tarball
         mode: [extract, ghcup]
         platform:
-          - { arch: x86_64-linux-unknown, runner: ubuntu-latest }
+          - { arch: x86_64-linux-native, runner: ubuntu-latest }
           - { arch: aarch64-apple-darwin, runner: macOS-latest }
     uses: ./.github/workflows/test-install.yaml
     with:

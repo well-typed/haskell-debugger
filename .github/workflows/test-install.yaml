@@ -25,6 +25,11 @@ on:
         type: string
         default: ""
 
+# A called workflow gets the caller's permissions unless it sets its own, and
+# release.yaml gives contents: write. These steps only need to read.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test ${{ inputs.artifact }} (${{ inputs.mode }})
@@ -38,41 +43,68 @@ jobs:
           name: ${{ inputs.artifact }}
           path: bindist-under-test
 
-      # The hdb wrapper looks for the GHC it was built with (9.14.1) when it
-      # starts, so that GHC must be on PATH. This also installs ghcup if the
-      # runner image does not have it.
+      # The artifact must hold exactly one bindist. The GHC version that the
+      # bindist needs is the one that mk-bindist.sh wrote into its wrapper.
+      - name: Find the bindist and its GHC version
+        id: bindist
+        env:
+          ARTIFACT: ${{ inputs.artifact }}
+        run: |
+          set -- bindist-under-test/hdb-*.tar.gz
+          if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+            echo "expected exactly one hdb-*.tar.gz in the $ARTIFACT artifact, found: $*" >&2
+            exit 1
+          fi
+          wrapper="$(basename "$1" .tar.gz)/hdb"
+          ghc_version="$(tar -xzOf "$1" "$wrapper" | sed -n 's/^GHC_VERSION="\(.*\)"$/\1/p')"
+          if [ -z "$ghc_version" ]; then
+            echo "cannot find the GHC version in $wrapper in $1" >&2
+            exit 1
+          fi
+          echo "$1 needs GHC $ghc_version"
+          echo "tarball=$1" >> "$GITHUB_OUTPUT"
+          echo "ghc-version=$ghc_version" >> "$GITHUB_OUTPUT"
+
+      # The hdb wrapper looks for the GHC it was built with when it starts, so
+      # that GHC must be on PATH. haskell-actions/setup puts the GHC on PATH,
+      # but not the ghcup that it may download to install it.
       - uses: haskell-actions/setup@v2
         with:
-          ghc-version: 9.14.1
+          ghc-version: ${{ steps.bindist.outputs.ghc-version }}
           cabal-version: 3.16
           ghcup-release-channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
+
+      # `ghcup` mode and the GHC installation below need the ghcup executable
+      # on PATH. The bootstrap script is only run if it is missing; minimal mode
+      # installs just ghcup.
+      - name: Ensure ghcup is installed
+        if: inputs.mode == 'ghcup' || inputs.ghc-platform != ''
+        run: |
+          if ! command -v ghcup >/dev/null 2>&1; then
+            ghcup_bin="${GHCUP_INSTALL_BASE_PREFIX:-$HOME}/.ghcup/bin"
+            if [ ! -x "$ghcup_bin/ghcup" ]; then
+              curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org \
+                | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 BOOTSTRAP_HASKELL_MINIMAL=1 sh
+            fi
+            echo "$ghcup_bin" >> "$GITHUB_PATH"
+          fi
 
       # The wrapper also checks the ABI hashes of GHC's boot libraries, and
       # these differ between GHC's bindists for different distributions (e.g.
       # for 9.14.1, rocky8 and ubuntu24_04 differ in 42 of 47 packages, `base`
       # among them). So a bindist built on another distribution needs that
-      # distribution's GHC, which replaces the runner's 9.14.1 (hence --force).
+      # distribution's GHC, which replaces the runner's GHC of the same version
+      # (hence --force).
       - name: Install the GHC for ${{ inputs.ghc-platform }}
         if: inputs.ghc-platform != ''
         env:
           GHC_PLATFORM: ${{ inputs.ghc-platform }}
-        run: ghcup --platform "$GHC_PLATFORM" install ghc 9.14.1 --force --set
-
-      # `ghcup` mode needs the ghcup executable on PATH. The bootstrap script
-      # is only run if it is missing; minimal mode installs just ghcup.
-      - name: Ensure ghcup is installed
-        if: inputs.mode == 'ghcup'
-        run: |
-          if ! command -v ghcup >/dev/null 2>&1 && [ ! -x "$HOME/.ghcup/bin/ghcup" ]; then
-            curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org \
-              | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 BOOTSTRAP_HASKELL_MINIMAL=1 sh
-          fi
-          echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
+          GHC_VERSION: ${{ steps.bindist.outputs.ghc-version }}
+        run: ghcup --platform "$GHC_PLATFORM" install ghc "$GHC_VERSION" --force --set
 
       # The expected hdb version is taken from the tarball name.
       - name: Test the bindist (${{ inputs.mode }})
         env:
           MODE: ${{ inputs.mode }}
-        run: |
-          set -- bindist-under-test/hdb-*.tar.gz
-          ./bindist/test-install.sh "$MODE" "$1"
+          TARBALL: ${{ steps.bindist.outputs.tarball }}
+        run: ./bindist/test-install.sh "$MODE" "$TARBALL"
