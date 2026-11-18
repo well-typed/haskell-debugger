@@ -1,9 +1,6 @@
 on:
   workflow_call: {}
 
-env:
-  haskellDebuggerVersion: 0.14.0.0
-
 name: Build hdb binary distributions
 jobs:
   build-hdb-linux-deb10:
@@ -28,7 +25,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-deb10
 
       - name: Upload hdb build artifact
@@ -59,7 +55,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-deb11
 
       - name: Upload hdb build artifact
@@ -90,7 +85,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-deb12
 
       - name: Upload hdb build artifact
@@ -121,7 +115,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-deb13
 
       - name: Upload hdb build artifact
@@ -152,7 +145,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-fedora33
 
       - name: Upload hdb build artifact
@@ -183,7 +175,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-fedora40
 
       - name: Upload hdb build artifact
@@ -214,7 +205,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-mint202
 
       - name: Upload hdb build artifact
@@ -245,7 +235,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-mint213
 
       - name: Upload hdb build artifact
@@ -276,7 +265,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-mint222
 
       - name: Upload hdb build artifact
@@ -307,7 +295,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-ubuntu2004
 
       - name: Upload hdb build artifact
@@ -338,7 +325,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-ubuntu2204
 
       - name: Upload hdb build artifact
@@ -369,7 +355,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-ubuntu2404
 
       - name: Upload hdb build artifact
@@ -400,7 +385,6 @@ jobs:
           version: ${{ matrix.version }}
         env:
           GHCUP_CHANNEL: ${{ matrix.channel }}
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-unknown
 
       - name: Upload hdb build artifact
@@ -430,7 +414,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-deb10
 
       - name: Upload hdb binary artifact
@@ -460,7 +443,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-deb11
 
       - name: Upload hdb binary artifact
@@ -490,7 +472,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-deb12
 
       - name: Upload hdb binary artifact
@@ -520,7 +501,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-deb13
 
       - name: Upload hdb binary artifact
@@ -550,7 +530,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-fedora33
 
       - name: Upload hdb binary artifact
@@ -580,7 +559,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-fedora40
 
       - name: Upload hdb binary artifact
@@ -610,7 +588,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-mint202
 
       - name: Upload hdb binary artifact
@@ -640,7 +617,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-mint213
 
       - name: Upload hdb binary artifact
@@ -670,7 +646,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-mint222
 
       - name: Upload hdb binary artifact
@@ -700,7 +675,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-ubuntu2004
 
       - name: Upload hdb binary artifact
@@ -730,7 +704,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-ubuntu2204
 
       - name: Upload hdb binary artifact
@@ -760,7 +733,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-ubuntu2404
 
       - name: Upload hdb binary artifact
@@ -790,7 +762,6 @@ jobs:
         with:
           stage: BINDIST
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}
           ARTIFACT: x86_64-linux-unknown
 
       - name: Upload hdb binary artifact
@@ -840,7 +811,6 @@ jobs:
 
       - name: Build and package hdb (${{ matrix.arch }})
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}-ghcup
           ARCH: ${{ matrix.arch }}
           OUT_DIR: dist-bin
         run: |

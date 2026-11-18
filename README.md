@@ -33,12 +33,12 @@ PATH=/path/to/ghc-dir:$PATH code /path/to/proj
 
 ## Prebuilt release binaries
 
-The `hdb-<version>-<arch>.tar.gz` bindists attached to [GitHub
+The `hdb-<version>-ghcup-<arch>.tar.gz` bindists attached to [GitHub
 Releases](https://github.com/well-typed/haskell-debugger/releases) unpack into
 a self-contained folder:
 
 ```
-hdb-<version>-<arch>/
+hdb-<version>-ghcup-<arch>/
   hdb        # wrapper script -- put THIS on PATH, not bin/hdb
   bin/hdb    # the real executable
   lib/*      # bundled dynamic dependencies
