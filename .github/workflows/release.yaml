@@ -43,8 +43,12 @@ jobs:
       matrix:
         mode: [extract, ghcup]
         # `name` is the artifact uploaded by bindists.yaml.
+        # `ghc-platform` is for bindists built on a different distribution than
+        # the runner's; see test-install.yaml. The unknown bindist is built on
+        # Rocky Linux 8, and is for distributions that ghcup does not recognise.
+        # On both, ghcup installs the rocky8 bindist of GHC.
         artifact:
-          - { name: hdb-x86_64-linux-unknown,     runner: ubuntu-latest }
+          - { name: hdb-x86_64-linux-unknown,     runner: ubuntu-latest, ghc-platform: x86_64-unknown-linux }
           - { name: hdb-aarch64-linux-ubuntu2404, runner: ubuntu-24.04-arm }
           - { name: hdb-aarch64-apple-darwin,     runner: macOS-latest }
           - { name: hdb-x86_64-apple-darwin,      runner: macos-15-intel }
@@ -53,6 +57,7 @@ jobs:
       artifact: ${{ matrix.artifact.name }}
       runner: ${{ matrix.artifact.runner }}
       mode: ${{ matrix.mode }}
+      ghc-platform: ${{ matrix.artifact.ghc-platform || '' }}
 
   docs-haskell-debugger:
     name: Build Documentation
