@@ -7,10 +7,8 @@ import Control.Monad.IO.Class (liftIO)
 import Test.DAP
 import Test.Tasty
 import Test.Tasty.HUnit
-import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
-import DAP (SourceBreakpoint(..), defaultSourceBreakpoint, OutputEvent (..))
-import Test.DAP.Messages.Parser (Event(..))
+import DAP (SourceBreakpoint(..), defaultSourceBreakpoint)
 
 logMessageTests :: TestTree
 logMessageTests =
@@ -46,12 +44,13 @@ simpleTest tmpl expected = do
         { sourceBreakpointLine = 18
         , sourceBreakpointLogMessage = Just (T.pack tmpl) }
   logMessageTestSetup [] [bp] $ do
-    assertOutput (T.pack expected)
+    output <- programOutput
+    liftIO $ assertBool ("expecting " ++ show expected ++ " but got " ++ show output) $
+      T.pack expected `T.isInfixOf` output
 
 conditionTest :: IO ()
 conditionTest = logMessageTestSetup [] bps $ do
-  events <- waitAccumulating EventTy "output"
-  let output = T.concat $ map (outputEventOutput . fromMaybe (error "conditionTest:fromMaybe") . eventBody) events
+  output <- programOutput
 
   liftIO $ assertBool "logged when False" $
     not $ "DO NOT LOG" `T.isInfixOf` output
@@ -69,6 +68,10 @@ conditionTest = logMessageTestSetup [] bps $ do
           , sourceBreakpointCondition = Just "True"
           , sourceBreakpointLogMessage = Just "DO LOG" }
       ]
+
+-- | The output up to the line that T113 prints last.
+programOutput :: TestDAP T.Text
+programOutput = waitForOutput "goodbye"
 
 logMessageTestSetup :: [String] -> [SourceBreakpoint] -> TestDAP a -> IO ()
 logMessageTestSetup flags bps check =

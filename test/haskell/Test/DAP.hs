@@ -472,6 +472,22 @@ assertOutput expected = do
       ("assertOutput: expecting " ++ show expected ++ " but got " ++ show outputs)
       (any (T.isInfixOf expected) outputs)
 
+-- | Wait for an output event that contains the given text, dropping all other
+-- events, and return the output of the output events up to and including it.
+--
+-- Unlike 'assertOutput', this also sees output that arrives after the
+-- terminated event. A thread of its own forwards the debuggee's stdout, so
+-- the debuggee's last lines can come after that event.
+waitForOutput :: HasCallStack => T.Text -> TestDAP T.Text
+waitForOutput expected = go []
+  where
+    go acc = do
+      Event{eventBody} <- waitFiltering EventTy "output"
+      let out = outputEventOutput $ fromMaybe (error "waitForOutput:fromMaybe") eventBody
+      if expected `T.isInfixOf` out
+        then pure $ T.concat $ reverse (out : acc)
+        else go (out : acc)
+
 assertFullOutput :: HasCallStack => T.Text -> TestDAP ()
 assertFullOutput expected = assertFullOutputWith (expected <> " \\in full_output") (T.isInfixOf expected)
 
