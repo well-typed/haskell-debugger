@@ -67,7 +67,11 @@ smoke_test() {
 	local hdb="$1"
 	echo "Running: ${hdb} --version"
 	local out
-	out="$("${hdb}" --version)"
+	# HDB_WRAPPER_DEBUG makes the wrapper say on stderr which GHCs it tried
+	# and why it rejected them (e.g. the expected and found ABI hashes).
+	# Otherwise a GHC found by auto-detection that fails the checks only
+	# gives "All methods exhausted!".
+	out="$(HDB_WRAPPER_DEBUG=1 "${hdb}" --version)"
 	echo "${out}"
 	case "${out}" in
 		*"Haskell Debugger"*"${HDB_VERSION}"*) ;;
