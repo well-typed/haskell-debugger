@@ -82,11 +82,21 @@ smoke_test() {
 	esac
 }
 
+# The tarball must hold a single directory with the tarball's name, as
+# mk-bindist.sh makes it. ghcup relies on this: dlSubdir, in the channel below
+# and in a ghcup metadata entry, names that directory.
+TOP_DIR_NAME="$(basename "${TARBALL}" .tar.gz)"
+TOP_DIRS="$(tar -tzf "${TARBALL}" | cut -d/ -f1 | sort -u)"
+if [ "${TOP_DIRS}" != "${TOP_DIR_NAME}" ]; then
+	printf '%s\n' "expected $(basename "${TARBALL}") to contain only the directory ${TOP_DIR_NAME}/, found:" "${TOP_DIRS}" >&2
+	exit 1
+fi
+
 case "${MODE}" in
 	extract)
 		mkdir -p "${WORK_DIR}/unpacked" "${WORK_DIR}/path"
 		tar -xzf "${TARBALL}" -C "${WORK_DIR}/unpacked"
-		TOP_DIR="$(find "${WORK_DIR}/unpacked" -mindepth 1 -maxdepth 1 -type d | sed -n 1p)"
+		TOP_DIR="${WORK_DIR}/unpacked/${TOP_DIR_NAME}"
 		# Check 1: run the wrapper in place. This checks the tarball itself
 		# (hdb, bin/hdb and lib/ are all present and a matching GHC is found).
 		smoke_test "${TOP_DIR}/hdb"
@@ -99,6 +109,13 @@ case "${MODE}" in
 
 	ghcup)
 		command -v ghcup >/dev/null 2>&1 || { echo "ghcup not found on PATH" >&2; exit 1; }
+		# Before 0.2, `ghcup install` only installs GHC, cabal, HLS and stack.
+		case "$(ghcup --numeric-version)" in
+			0.0.*|0.1.*)
+				echo "ghcup mode needs ghcup 0.2 or later, found $(ghcup --numeric-version)" >&2
+				exit 1
+				;;
+		esac
 
 		case "$(uname -s)" in
 			Darwin) OS_KEY="Darwin" ;;
@@ -111,17 +128,19 @@ case "${MODE}" in
 			*) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 		esac
 
-		# The tarball's single top-level directory. (`sed -n 1p`, not `head -n1`:
-		# GNU tar fails with "write error" when head closes the pipe early.)
-		TOP_DIR_NAME="$(tar -tzf "${TARBALL}" | sed -n 1p | cut -d/ -f1)"
 		CHANNEL="${WORK_DIR}/channel.yaml"
 
 		# Write the temporary channel file. It has a single entry for just this
 		# machine's OS and architecture, pointing at the local tarball.
-		# The tool details and `dlInstallSpec` (which files ghcup installs and
-		# which symlinks it creates) must match the haskell-debugger entry in
+		# The entry is the one proposed for haskell-debugger in
 		# https://github.com/haskell/ghcup-metadata (ghcup-3rdparty-*.yaml),
-		# otherwise this test does not test what users get.
+		# which does not have one yet. Once it does, the tool details and
+		# `dlInstallSpec` (which files ghcup installs and which symlinks it
+		# creates) must match it, otherwise this test does not test what users
+		# get. The other tools there have `installDest: "bin/<tool>"`, but the
+		# hdb wrapper goes at the top of the install directory, next to bin/
+		# and lib/: it runs bin/hdb relative to its own location, and bin/hdb
+		# finds lib/ through its rpath.
 		cat > "${CHANNEL}" <<EOF
 ghcupDownloads:
   haskell-debugger:
@@ -161,8 +180,10 @@ EOF
 		# Use only our temporary channel (-s), install, and make it the default
 		# so that the `hdb` symlink is created. Then run both symlinks that
 		# ghcup creates: `hdb` and the versioned `hdb-<version>`.
-		ghcup -s "file://${CHANNEL}" install haskell-debugger "${HDB_VERSION}" --set
-		GHCUP_BIN="${GHCUP_INSTALL_BASE_PREFIX:-${HOME}}/.ghcup/bin"
+		# --force: if this version is already installed, ghcup would only warn
+		# and keep it, and the test would run the installed copy.
+		ghcup -s "file://${CHANNEL}" install haskell-debugger "${HDB_VERSION}" --set --force
+		GHCUP_BIN="$(ghcup whereis bindir)"
 		smoke_test "${GHCUP_BIN}/hdb"
 		smoke_test "${GHCUP_BIN}/hdb-${HDB_VERSION}"
 		;;

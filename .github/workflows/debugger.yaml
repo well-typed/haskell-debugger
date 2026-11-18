@@ -17,6 +17,14 @@ on:
           ,{"runner":"macos-15-intel"  , "version":"9.14.1"}
           ]
 
+# A newer push to the same pull request supersedes a run that is still going.
+# Other runs get a group of their own, so they are never cancelled. That
+# includes release.yaml's call of this workflow, where github.workflow is the
+# name of release.yaml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 env:
   haskellDebuggerViewVersion: 0.2.1.0
   haskellDebuggerVersion: 0.14.0.0
