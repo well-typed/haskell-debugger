@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 # Build a self-contained "bindist" tarball for the hdb executable:
-# Required env: HDB_VERSION, ARCH (asset arch tag, e.g. linux-x86_64), OUT_DIR.
+# Required env: ARCH (asset arch tag, e.g. x86_64-linux-deb12), OUT_DIR.
+# This makes hdb-<version>-ghcup-${ARCH}.tar.gz in the current directory.
 
 set -euo pipefail
 
-: "${HDB_VERSION:?HDB_VERSION must be set}"
 : "${ARCH:?ARCH must be set}"
 : "${OUT_DIR:?OUT_DIR must be set}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BINDIST_NAME="hdb-${HDB_VERSION}-${ARCH}"
+# The version is the one in haskell-debugger.cabal, which is also what
+# `hdb --version` reports. The tarball and the directory inside it have the
+# same name, because ghcup's dlSubdir names that directory.
+HDB_VERSION="$(sed -n 's/^version:[[:space:]]*\([^[:space:]]*\).*/\1/p' "${ROOT_DIR}/haskell-debugger.cabal")"
+if [ -z "${HDB_VERSION}" ]; then
+	echo "mk-bindist.sh: cannot find the version in ${ROOT_DIR}/haskell-debugger.cabal" >&2
+	exit 1
+fi
+BINDIST_NAME="hdb-${HDB_VERSION}-ghcup-${ARCH}"
 BINDIST_DIR="${OUT_DIR}/${BINDIST_NAME}"
 
 rm -rf "${BINDIST_DIR}"
@@ -70,6 +78,6 @@ sed \
 	"${ROOT_DIR}/bindist/wrapper.in" > "${BINDIST_DIR}/hdb"
 chmod 755 "${BINDIST_DIR}/hdb"
 
-tar -C "${OUT_DIR}" -czf "hdb-${HDB_VERSION}-${ARCH}.tar.gz" "${BINDIST_NAME}"
+tar -C "${OUT_DIR}" -czf "${BINDIST_NAME}.tar.gz" "${BINDIST_NAME}"
 
-echo "Built hdb-${HDB_VERSION}-${ARCH}.tar.gz"
+echo "Built ${BINDIST_NAME}.tar.gz"

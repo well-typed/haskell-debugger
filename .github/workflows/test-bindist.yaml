@@ -21,10 +21,9 @@ on:
       - bindist/**
       - scripts/mk-bindist.sh
       - .github/workflows/test-bindist.yaml
+      # mk-bindist.sh takes the version from here.
+      - haskell-debugger.cabal
   workflow_dispatch: {}
-
-env:
-  haskellDebuggerVersion: 0.14.0.0
 
 jobs:
   build-bindist:
@@ -69,7 +68,6 @@ jobs:
       # working directory.
       - name: Build the bindist
         env:
-          HDB_VERSION: ${{ env.haskellDebuggerVersion }}-ghcup
           ARCH: ${{ matrix.platform.arch }}
           OUT_DIR: dist-bin
         run: |

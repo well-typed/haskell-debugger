@@ -6,7 +6,6 @@ set -euxo pipefail
 
 : "${GHC_VERSION:?GHC_VERSION must be set}"
 : "${GHCUP_CHANNEL:?GHCUP_CHANNEL must be set}"
-: "${HDB_VERSION:?HDB_VERSION must be set}"
 : "${ARTIFACT:?ARTIFACT must be set}"
 
 export BOOTSTRAP_HASKELL_NONINTERACTIVE=1
@@ -33,9 +32,6 @@ cabal build hdb --enable-executable-dynamic
 
 STAGE_DIR="out/${ARTIFACT}/${GHC_VERSION}"
 mkdir -p "${STAGE_DIR}"
-# Add the "-ghcup" infix to the version, as the native jobs in bindists.yaml do.
-# mk-bindist.sh then puts the infix in the directory inside the tarball too, which
-# is the directory that ghcup's dlSubdir points to.
-HDB_VERSION="${HDB_VERSION}-ghcup" ARCH="${ARTIFACT}" OUT_DIR=dist-bin bash scripts/mk-bindist.sh
-mv "hdb-${HDB_VERSION}-ghcup-${ARTIFACT}.tar.gz" "${STAGE_DIR}/"
+ARCH="${ARTIFACT}" OUT_DIR=dist-bin bash scripts/mk-bindist.sh
+mv hdb-*-ghcup-"${ARTIFACT}".tar.gz "${STAGE_DIR}/"
 tar cf "out-${ARTIFACT}-${GHC_VERSION}.tar" out/
