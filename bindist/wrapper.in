@@ -192,14 +192,16 @@ debug_msg "Found GHC libdir at: ${GHC_LIBDIR}"
 # ourselves. Warn (always, not just when verbose) if that differs from
 # whatever `ghc` resolves to on PATH, so we never silently switch away from
 # an unintended version.
+# Compare libdirs rather than paths, because the same GHC is often found by
+# different paths: ghcup's ~/.ghcup/bin/ghc is a symlink into
+# ~/.ghcup/ghc/<version>/bin, which is where the ghcup method finds it.
 if [ -z "${_hdb_orig_ghc_libdir}" ] && [ -z "${_hdb_orig_ghc_bin}" ] ; then
 	path_ghc="$(command -v ghc 2>/dev/null)"
-	resolved_ghc_bin="$(command -v "${GHC_BIN}" 2>/dev/null)"
-	if [ -n "${path_ghc}" ] && [ "${path_ghc}" != "${resolved_ghc_bin}" ] ; then
+	if [ -n "${path_ghc}" ] && [ "$("${path_ghc}" --print-libdir 2>/dev/null)" != "${GHC_LIBDIR}" ] ; then
 		path_ghc_ver="$("${path_ghc}" --numeric-version 2>/dev/null)"
 		warn_msg "hdb: warning: using GHC ${GHC_VERSION} at '${GHC_BIN}', but 'ghc' on PATH is '${path_ghc}' (version ${path_ghc_ver:-unknown}). Set GHC_BIN/GHC_LIBDIR to pin the one hdb should use."
 	fi
-	unset path_ghc resolved_ghc_bin path_ghc_ver
+	unset path_ghc path_ghc_ver
 fi
 unset _hdb_orig_ghc_libdir _hdb_orig_ghc_bin
 
