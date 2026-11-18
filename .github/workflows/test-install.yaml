@@ -19,6 +19,11 @@ on:
         description: "How to install the bindist: `extract` (by hand) or `ghcup`."
         required: true
         type: string
+      ghc-platform:
+        description: "If set, test with the GHC that ghcup installs on this platform (`ghcup --platform`) instead of the runner's own."
+        required: false
+        type: string
+        default: ""
 
 jobs:
   test:
@@ -41,6 +46,17 @@ jobs:
           ghc-version: 9.14.1
           cabal-version: 3.16
           ghcup-release-channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-0.0.9.yaml
+
+      # The wrapper also checks the ABI hashes of GHC's boot libraries, and
+      # these differ between GHC's bindists for different distributions (e.g.
+      # for 9.14.1, rocky8 and ubuntu24_04 differ in 42 of 47 packages, `base`
+      # among them). So a bindist built on another distribution needs that
+      # distribution's GHC, which replaces the runner's 9.14.1 (hence --force).
+      - name: Install the GHC for ${{ inputs.ghc-platform }}
+        if: inputs.ghc-platform != ''
+        env:
+          GHC_PLATFORM: ${{ inputs.ghc-platform }}
+        run: ghcup --platform "$GHC_PLATFORM" install ghc 9.14.1 --force --set
 
       # `ghcup` mode needs the ghcup executable on PATH. The bootstrap script
       # is only run if it is missing; minimal mode installs just ghcup.
