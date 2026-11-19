@@ -1,14 +1,16 @@
 #!/bin/bash
 # Entrypoint for the .github/actions/bindist-actions/action-* Docker containers.
-# Installs the container's toolchain, then dispatches on $STAGE.
+# Dispatches on $STAGE. Only the BUILD stage installs the container's toolchain.
+# The BINDIST stage unpacks the BUILD stage's output and copies a tarball, which
+# only needs bash, tar and cp, and every image has them.
 
 set -exo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
-bash -c "$PKG_INSTALL_CMD $PKG_TOOLS"
 
 case "$STAGE" in
 	BUILD)
+		bash -c "$PKG_INSTALL_CMD $PKG_TOOLS"
 		bash .github/scripts/build.sh
 		;;
 	BINDIST)
