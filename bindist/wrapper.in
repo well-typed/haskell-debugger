@@ -153,6 +153,25 @@ infer_ghc_pkg() {
 	unset infer_ghc_path infer_ghc_bin infer_ghc_ver_suffix path_prefix
 }
 
+# Succeeds if asking stack for a GHC could install one. If the GHC installation
+# hook <stack root>/hooks/ghc-install.sh is executable, stack runs it when it
+# needs a GHC it hasn't installed itself, also with --no-install-ghc, and the
+# hook that ghcup sets up installs that GHC with ghcup. Also succeeds if the
+# stack root can't be found, because then we can't tell.
+stack_may_install_ghc() {
+	stack_root="$(stack path --stack-root 2>/dev/null)" || {
+		debug_msg "Skipping method stack: 'stack path --stack-root' failed"
+		return 0
+	}
+	if [ -x "${stack_root}/hooks/ghc-install.sh" ] ; then
+		debug_msg "Skipping method stack: ${stack_root}/hooks/ghc-install.sh is executable, and stack would run it to install GHC ${GHC_VERSION} if it is missing"
+		unset stack_root
+		return 0
+	fi
+	unset stack_root
+	return 1
+}
+
 # Remember whether the user pinned these before we overwrite them below, so
 # we can tell apart "user asked for this GHC" from "we auto-detected it".
 _hdb_orig_ghc_libdir="${GHC_LIBDIR}"
@@ -195,6 +214,7 @@ then
 	:
 # try stack
 elif command -v stack >/dev/null &&
+	! stack_may_install_ghc &&
 	GHC_BIN="$(cd "$(mktemp -d)" && stack --no-system-ghc --no-install-ghc --resolver "ghc-${GHC_VERSION}" exec sh -- -c 'command -v ghc')" &&
 	GHC_LIBDIR="$("${GHC_BIN}" --print-libdir)" &&
 	{ debug_msg "Trying method: stack" ; check_ghc "${GHC_LIBDIR}" "${GHC_BIN}" "$(infer_ghc_pkg "${GHC_BIN}")" ; }
