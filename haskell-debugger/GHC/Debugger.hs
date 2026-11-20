@@ -19,6 +19,7 @@ import qualified GHC.Debugger.Run        as Run
 import qualified GHC.Debugger.Stopped    as Stopped
 import GHC.Debugger.Monad
 import GHC.Debugger.Interface.Messages
+import qualified GHC.Debugger.Monad.Load as Load
 
 --------------------------------------------------------------------------------
 -- * Executing commands
@@ -60,6 +61,7 @@ execute = \case
   GetExceptionInfo threadId -> GotExceptionInfo <$>
     Stopped.getExceptionInfo threadId
 
+  GetGhcSessionInfo -> GotGhcSessionInfo <$> Load.getGhcSessionInfo
   ------------------------------------------------------------------------------
   -- GHC.Debugger.Run
   ------------------------------------------------------------------------------

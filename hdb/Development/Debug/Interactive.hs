@@ -1,4 +1,5 @@
-{-# LANGUAGE LambdaCase, ViewPatterns, RecordWildCards, OverloadedRecordDot #-}
+{-# LANGUAGE LambdaCase, ViewPatterns, RecordWildCards, OverloadedRecordDot, TemplateHaskell, ScopedTypeVariables #-}
+
 module Development.Debug.Interactive where
 
 import Data.Functor.Contravariant
@@ -21,10 +22,177 @@ import GHC.Debugger.Monad
 import GHC.Debugger hiding (Command)
 import Control.Monad
 import Data.List (intercalate)
-import Data.Maybe (fromJust)
-import qualified Data.Maybe as Maybe
-import GHC.Debugger.Debuggee (DebuggerLog)
-import GHC.Debugger.Script
+import GHC.Debugger.Debuggee (DebuggerLog (..), mkCliInterpreterSettings)
+import GHC.Debugger.Script hiding (sendSync)
+import GHC.Debugger.Backend
+import Control.Concurrent
+import Data.IORef
+import GHC (GhcMonad, compileExpr, Ghc, setContext, InteractiveImport (IIDecl), simpleImportDecl, setGHCiMonad, TcRnExprMode (TM_Default))
+import Unsafe.Coerce (unsafeCoerce)
+
+import Language.Haskell.TH
+import qualified Language.Haskell.TH.Syntax as TH
+import GHC.Debugger.Session (interactiveGhcDebuggerUnitId, addInteractiveGhcDebuggerUnit', modifyInteractiveDebuggerDynFlags)
+import qualified GHC.Driver.Monad as GHC
+import qualified GHC.Plugins as GHC hiding (exprType)
+import qualified GHC.Debugger.Interface.Messages as D
+import qualified GHC
+import System.Environment
+import qualified GHC.Runtime.Context as GHCi
+import GHCi.RemoteTypes (HValue(..))
+import qualified GHCi.RemoteTypes as GHC
+import qualified GHC.Linker.Loader as Loader
+import qualified GHC.Runtime.Interpreter as GHC
+import qualified Data.Text as T
+import qualified Control.Monad.Catch.Pure as MC
+
+haskellDebuggerUnitId :: String
+haskellDebuggerUnitId = $(maybe (fail "no package") TH.lift (namePackage 'Script))
+
+
+
+-------------------------------------------
+-- Script Runtime
+-------------------------------------------
+-- TODO: move somewhere else.
+
+-- | Bind a host value under 'name'. 'tyStr' is the value's type written
+-- as Haskell source, resolved in the current interactive context.
+bindHostValue :: String -> String -> a -> Ghc ()
+bindHostValue name tyStr val = do
+  -- Get the GHC 'Type' by type-checking a dummy expression
+  ty <- GHC.exprType GHC.TM_Default ("undefined :: " ++ tyStr)
+
+  us <- liftIO (GHC.mkSplitUniqSupply 'H')   -- tag char is arbitrary
+  let n  = GHC.mkInternalName (GHC.uniqFromSupply us) (GHC.mkVarOcc name) GHC.noSrcSpan
+      i  = GHC.mkVanillaGlobal n ty
+
+  hsc_env <- GHC.getSession
+  let interp = GHC.hscInterp hsc_env
+
+  -- Wrap the value (internal interpreter: this is just a StablePtr)
+  fhv <- liftIO $ GHC.mkRemoteRef (HValue (unsafeCoerce val))
+                  >>= GHC.mkFinalizedHValue interp
+
+  -- Make the name resolvable at runtime...
+  liftIO $ do
+    Loader.initLoaderState interp hsc_env
+    Loader.extendLoadedEnv interp [(n, fhv)]
+  -- ...and visible to the renamer/typechecker
+  GHC.modifySession $ \env ->
+    env { GHC.hsc_IC = GHCi.extendInteractiveContextWithIds (GHC.hsc_IC env) [i] }
+
+
+
+data ScriptLog
+  = ScriptMsg ScriptMsg  -- outputs/errors from scripts
+  | DbgLog DebuggerLog   -- setting up ghc session
+
+newtype ScriptCommand = ScriptCommand String
+
+initScriptRuntime :: LogAction IO InteractiveLog -> DebugRunnerConf -> RunDebuggerSettings -> DebugExecutionArgs -> IO ScriptRuntime
+initScriptRuntime logger conf runConf dbgExecArgs = do
+  let hieBiosLogger = contramap ISessionSetupLog logger
+  hieDebugRunner hieBiosLogger conf >>= \case
+   Left e               -> do
+     hPutStrLn stderr e
+     exitWith (ExitFailure 33)
+   Right (ghcInvocation, debugRunner) -> do
+     let debugRec = contramap IDebuggerLog logger
+     (backend, backendAct) <- debuggerThreadBackend debugRec debugRunner runConf
+     backendThread <- forkIO backendAct
+     (sendScriptCommand, scriptEvalAct) <-
+       scriptEvalThread (contramap (IScriptLog . ScriptMsg) logger) backend ghcInvocation dbgExecArgs
+     scriptThread <- forkIO scriptEvalAct
+     pure $ ScriptRuntime{..}
+  where
+    scriptEvalThread :: LogAction IO ScriptMsg -> DbgBackend
+                     -> GhcInvocation -> DebugExecutionArgs
+                     -> IO (ScriptCommand -> IO (), IO ())
+    scriptEvalThread _output dbgBackend gi debugExecutionArgs = do
+      cmds <- newChan
+      let sendCmd = writeChan cmds
+      pure (sendCmd, thread $ readChan cmds) where
+      -- TODO: this whole thread should run in a separate process and communicate via pipe.
+      thread getCmd = do
+        GotGhcSessionInfo ghcs <- sendSync dbgBackend GetGhcSessionInfo
+        currentStop <- newIORef NotStopped
+        let
+          scriptEnv = SEE
+            { dbgBackend
+            , _output
+            , currentStop
+            , debugExecutionArgs
+            }
+        setupScriptEvalSession gi ghcs $ do
+          bindHostValue "_script_eval_env" "ScriptEvalEnv" scriptEnv
+
+          _ <- GHC.runDecls "instance GHC.GHCi.GHCiSandboxIO Script where ghciStepIO = runScript _script_eval_env"
+          GHC.setGHCiMonad "Script"
+
+          [replPrintName] <- GHC.runDecls "replPrintDef x = runScript _script_eval_env (replPrint x)"
+
+          GHC.modifySession $ \hsc_env ->
+            hsc_env {GHC.hsc_IC = GHCi.setInteractivePrintName (GHC.hsc_IC hsc_env) replPrintName}
+
+          forever $ liftIO getCmd >>= \(ScriptCommand cmd) -> do
+            MC.try @_ @GHC.SourceError (GHC.execStmt cmd GHC.execOptions) >>= \case
+              Left e -> liftIO $ _output <& ErrorMessage (T.pack $ show e)
+              Right _ -> pure ()
+    getDepsAndDBs GhcSessionInfo{..} = do
+
+      hDB_SCRIPT_PACKAGEDBS <- liftIO $ lookupEnv "HDB_SCRIPT_PACKAGEDBS"
+      let dbs = ghcSessionPackageDBs ++
+            case hDB_SCRIPT_PACKAGEDBS of
+              Nothing -> []
+              Just s  -> map (GHC.PackageDB . GHC.PkgDbPath) (read s)
+      -- TODO debug log dbs
+
+      base <- GHC.baseUnitId <$> GHC.getDynFlags
+      let hdbLibUnitId = GHC.toUnitId . GHC.stringToUnit $ haskellDebuggerUnitId
+      -- Just deps' <- pure $ mapM (GHC.lookupPackageName us . GHC.PackageName) ["ghc-heap","ghci"]
+      let deps = [base, hdbLibUnitId]
+
+      pure (deps,dbs)
+
+    setupScriptEvalSession :: GhcInvocation -> GhcSessionInfo -> Ghc () -> IO ()
+    setupScriptEvalSession GhcInvocation{..} debuggeeSession m = runGhc (Just gi_libdir) $ do
+                                              -- internal, normal stdin.
+      cliIS <- liftIO $ mkCliInterpreterSettings True Nothing
+      let runConf' = runConf {interpreterSettings = cliIS }
+          dbgL = contramap (IScriptLog . DbgLog) logger
+      -- TODO: disable writing .hi and .gbc files or set a dump-dir.
+      runner dbgL runConf' (unAbs $ projectRoot dbgExecArgs) gi_args id $ do
+        (deps,dbs) <- getDepsAndDBs debuggeeSession
+
+        GHC.modifySessionM $ liftIO . addInteractiveGhcDebuggerUnit' dbs deps
+        GHC.modifySession $ GHC.hscSetActiveUnitId interactiveGhcDebuggerUnitId
+
+        modifyInteractiveDebuggerDynFlags $ \ df ->
+          df
+          `GHC.gopt_unset` GHC.Opt_NoIt
+
+        GHC.setContext [ IIDecl $ GHC.simpleImportDecl $ GHC.mkModuleName s
+                       | s <- ["Prelude", "GHC.Debugger.Script", "GHC.GHCi"] ]
+        m
+
+sendSync :: DbgBackend -> D.Command -> IO Response
+sendSync DbgBackend{..} cmd = do
+  syncRequests cmd
+  syncResponses
+
+data ScriptRuntime = ScriptRuntime
+  { sendScriptCommand :: ScriptCommand -> IO ()
+  , backendThread :: ThreadId
+  , scriptThread :: ThreadId
+    -- ^ output is sent back via the logger.
+  }
+
+compileScript :: GhcMonad m => ScriptCommand -> m (Script ())
+compileScript (ScriptCommand cmd) = do
+  fmap unsafeCoerce . compileExpr $ concat ["(",cmd,")"] ++ " :: Script ()"
+
+-------------------------------------------
 
 data RunContext = RunContext
   { runLastCommand :: Maybe ScriptCommand
@@ -48,17 +216,22 @@ runIDM :: LogAction IO InteractiveLog
        -> RunDebuggerSettings
        -> InteractiveDM a
        -> IO a
-runIDM logger runEntryPoint entryFile runEntryArgs extraGhcArgs cradleFile runConf act = do
-  runProjectRoot <- mkAbsolute <$> getCurrentDirectory
+runIDM logger runEntryPoint runEntryFile runArgs extraGhcArgs cradleFile runConf act = do
+  projectRoot <- mkAbsolute <$> getCurrentDirectory
 
-  let scriptLogger = contramap IScriptLog logger
-  let runEntryFile = runProjectRoot /> entryFile
+  let entryFile = projectRoot /> runEntryFile
 
-  entryFileExists <- doesFileExist (unAbs runEntryFile)
+  entryFileExists <- doesFileExist (unAbs entryFile)
   when (not entryFileExists) $ do
-    exitWithMsg $ "Entry file \"" ++ (unAbs runEntryFile) ++ "\" does not exist or is a directory."
-  scriptRuntime <- initScriptRuntime scriptLogger (DebugRunnerConf (unAbs runProjectRoot) entryFile extraGhcArgs cradleFile)
-                    runConf
+    exitWithMsg $ "Entry file \"" ++ (unAbs entryFile) ++ "\" does not exist or is a directory."
+
+  let dbgRunConf = DebugRunnerConf (unAbs projectRoot) (unAbs entryFile) extraGhcArgs cradleFile
+  let entryPoint
+        | runEntryPoint == "main" = MainEntry Nothing
+        | otherwise            = FunctionEntry runEntryPoint
+  let dbgExecArgs = DebugExecutionArgs {..}
+
+  scriptRuntime <- initScriptRuntime logger dbgRunConf runConf dbgExecArgs
   fmap fst $
           evalRWST (runInputT (setComplete noCompletion defaultSettings) act)
                    scriptRuntime
@@ -99,6 +272,7 @@ debugInteractive = withInterrupt loop
             Nothing -> return ()
             Just Exit -> outputStrLn "Exiting..." >> liftIO (exitWith ExitSuccess)
             Just (Do cmd) -> do
+              -- TODO: guard on repeatable commands somehow, e.g. exclude run
               lift $ modify (\ o -> o { runLastCommand = Just cmd })
               interpretCmd cmd
       loop
@@ -300,8 +474,8 @@ logMessageParser = pure Nothing
 -- | Parse command line arguments
 parseCmd :: String -> InteractiveDM (Maybe (OrExit ScriptCommand))
 parseCmd input = do
-  opts <- lift ask
-  ctx <- lift get
+  _opts <- lift ask
+  _ctx <- lift get
   let
     res = case input of
       "exit" -> Success Exit

@@ -287,6 +287,7 @@ executable hdb
         exceptions, aeson, bytestring,
         containers, filepath,
         process, mtl,
+        template-haskell,
         unordered-containers >= 0.2.19 && < 0.3,
 
         haskell-debugger,

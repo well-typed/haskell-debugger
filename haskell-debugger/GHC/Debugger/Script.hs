@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE DefaultSignatures #-}
 module GHC.Debugger.Script where
 
 import GHC.Debugger.Interface.Messages
@@ -21,42 +22,13 @@ import Data.Coerce
 import Control.Monad
 import qualified Data.List as List
 import Control.Monad.Catch
-import GHC.Debugger.Monad.Type
-
--------------------------------------------
--- Script Runtime
--------------------------------------------
--- TODO: move somewhere else.
-
-data ScriptLog = ScriptLog -- TODO
--- TODO: AST?
-newtype ScriptCommand = ScriptCommand String
-
--- TODO: take logger.
-initScriptRuntime :: LogAction IO ScriptLog -> DebugRunnerConf -> RunDebuggerSettings -> IO ScriptRuntime
-initScriptRuntime = undefined
--- let
---     runDbg m = do
---       hieDebugRunner hieBiosLogger (DebugRunnerConf (unAbs runProjectRoot) entryFile extraGhcArgs cradleFile) >>= \case
---         Left e               -> exitWithMsg e
---         Right (_ghcInvocation, debugRunner)
---                          -> do
---           let debugRec = contramap IDebuggerLog logger
-
---           runDebugger debugRec debugRunner runConf $
---             m
-
-data ScriptRuntime = ScriptRuntime
-  { sendScriptCommand :: ScriptCommand -> IO ()
-    -- ^ output is sent back via the logger.
-  }
--------------------------------------------
 
 -------------------------------------------
 -- Types
 -------------------------------------------
-data ScriptMsg = ErrorMessage ErrorMessage
+data ScriptMsg = ErrorMessage ErrorMessage | Stdout Text
   deriving Show
+
 type ErrorMessage = Text
 
 data LocalState
@@ -74,7 +46,7 @@ data DebugExecutionArgs = DebugExecutionArgs
   , projectRoot :: AbsFilePath
   }
 data ScriptEvalEnv = SEE
-  { dbgBackend :: DbgBackend
+  { dbgBackend         :: DbgBackend
   , _output            :: LogAction IO ScriptMsg
   , currentStop        :: IORef LocalState
   , debugExecutionArgs :: DebugExecutionArgs
@@ -82,6 +54,9 @@ data ScriptEvalEnv = SEE
 
 newtype Script a = Script (ReaderT ScriptEvalEnv IO a)
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadFail, MonadReader ScriptEvalEnv, MonadThrow, MonadCatch, MonadMask)
+
+runScript :: ScriptEvalEnv -> Script a -> IO a
+runScript e (Script m) = runReaderT m e
 
 data AbortedDebugSession = AbortedDebugSession T.Text
   deriving Show
@@ -100,17 +75,29 @@ instance Exception DebuggeeEvalAborted
 -- | Result of setting a breakpoint
 -- TODO: unpack into API types.
 newtype BreakResult = BreakResult {unBR :: BreakFound }
+  deriving Show
+
+instance REPLShow BreakResult
 
 -- | Somewhere we stopped at.
 data Break = Break { breakId :: Maybe GHC.InternalBreakpointId, breakThread :: RemoteThreadId }
+  deriving Show
+
+instance REPLShow Break
 
 type LineNo = Int
 type ColNo = Int
 
 -- | Live thread (or thread id?), might be stopped or running.
 newtype Thread = Thread DebuggeeThread -- TODO
+  deriving Show
+
+instance REPLShow Thread
 
 newtype BackTrace = Backtrace [DbgStackFrame] -- TODO
+  deriving Show
+
+instance REPLShow BackTrace
 
 data Value = Value
   { val :: String
@@ -119,12 +106,26 @@ data Value = Value
   , structureRef :: VariableReference
   }
 
+instance Show Value where
+  show v = v.val ++ " :: " ++ v.type_
+
+instance REPLShow Value
+
 data DebuggeeException = DebuggeeException { val :: String, type_ :: String}
+  deriving Show
+
+instance REPLShow DebuggeeException
 
 -- | Result of `run`.
 data Exec = Stopped Break | ExceptionThrown DebuggeeException | Completed Value
+  deriving Show
+
+instance REPLShow Exec
 
 data StackFrame = StackFrame {tId :: RemoteThreadId, ix :: Int, frame :: DbgStackFrame }
+  deriving Show
+
+instance REPLShow StackFrame
 
 -- | Resolved variable in a StackFrame/Scope.
 newtype Var = Var {unVar :: VarInfo}
@@ -132,9 +133,21 @@ newtype Var = Var {unVar :: VarInfo}
 -- | Returned by non-blocking calls, can wait on it.
 data Async a = Async (Script a) -- TODO: not be supported by GHC.Debugger atm, we stash just the "handling of result" part in here.
 
+
 data StackFrameIndexOutOfBound = StackFrameIndexOutOfBound Int
   deriving Show
+
 instance Exception StackFrameIndexOutOfBound
+
+class REPLShow a where
+  replShow :: a -> T.Text
+  default replShow :: Show a => a -> T.Text
+  replShow = Data.Text.show
+
+replPrint :: REPLShow a => a -> Script ()
+replPrint x = do
+  l <- asks _output
+  liftIO $ l <& Stdout (replShow x)
 
 -------------------------------------------------------------
 -- Internals

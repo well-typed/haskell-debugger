@@ -57,9 +57,15 @@ import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything whi
 import GHC.Debugger.Debuggee
 import GHC.Debugger.Monad.Type
 import qualified GHC.Unit.Module.Graph as GHC
-import GHC.Debugger.Interface.Messages (AbsFilePath, mkAbsolute, (/>))
+import GHC.Debugger.Interface.Messages (AbsFilePath, mkAbsolute, (/>), GhcSessionInfo (..))
 import System.Directory (getCurrentDirectory)
 
+
+
+getGhcSessionInfo :: Debugger GhcSessionInfo
+getGhcSessionInfo = do
+  dflags <- liftGhc getInteractiveDebuggerDynFlags
+  pure GhcSessionInfo{ghcSessionPackageDBs = packageDBFlags dflags}
 
 -- | Throws exception when module fails to load.
 loadInternal
