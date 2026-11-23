@@ -2,7 +2,7 @@
 
 pkgs.buildNpmPackage {
     pname = "haskell-debugger-extension";
-    version = "0.14.0";
+    version = "0.15.0";
     src = ./.;
 
     npmDepsHash = "sha256-rvPlvEsFygi/EYh0vcOBDAC4Sf5nzJIfaN8HjdsVXE0=";

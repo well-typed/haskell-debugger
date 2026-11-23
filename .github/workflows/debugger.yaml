@@ -27,7 +27,7 @@ concurrency:
 
 env:
   haskellDebuggerViewVersion: 0.2.1.0
-  haskellDebuggerVersion: 0.14.0.0
+  haskellDebuggerVersion: 0.15.0.0
 
 name: Debugger CI
 jobs:

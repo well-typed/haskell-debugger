@@ -1,5 +1,15 @@
 # Revision history for haskell-debugger
 
+## 0.15.0.0 -- 2026-11-23
+
+* Added AI Policy to README
+* Added support for evaluation in thread and stack frame context.
+* Fixed handling of TERM signals.
+* Minimized error messages when a debug session is canceled.
+* Surfaced exceptions as DAP errors.
+* All debuggee threads are now listed to DAP clients.
+* Added `externalInterpreterArgs` to lauch parameters.
+
 ## 0.14.0.0 -- 2026-09-17
 
 * Added binary distributions intended for on Linux and macOS.
