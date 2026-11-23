@@ -22,7 +22,7 @@ import GHC.Debugger.Monad
 import GHC.Debugger hiding (Command)
 import Control.Monad
 import Data.List (intercalate)
-import GHC.Debugger.Debuggee (DebuggerLog (..), mkCliInterpreterSettings)
+import GHC.Debugger.Debuggee (DebuggerLog (..), mkCliInterpreterSettings, DebuggerMessage (LogSDoc))
 import GHC.Debugger.Script hiding (sendSync)
 import GHC.Debugger.Backend
 import Control.Concurrent
@@ -30,8 +30,6 @@ import Data.IORef
 import GHC (GhcMonad, compileExpr, Ghc, setContext, InteractiveImport (IIDecl), simpleImportDecl, setGHCiMonad, TcRnExprMode (TM_Default))
 import Unsafe.Coerce (unsafeCoerce)
 
-import Language.Haskell.TH
-import qualified Language.Haskell.TH.Syntax as TH
 import GHC.Debugger.Session (interactiveGhcDebuggerUnitId, addInteractiveGhcDebuggerUnit', modifyInteractiveDebuggerDynFlags)
 import qualified GHC.Driver.Monad as GHC
 import qualified GHC.Plugins as GHC hiding (exprType)
@@ -45,9 +43,11 @@ import qualified GHC.Linker.Loader as Loader
 import qualified GHC.Runtime.Interpreter as GHC
 import qualified Data.Text as T
 import qualified Control.Monad.Catch.Pure as MC
+import GHC.Debugger.Session.Builtin (debuggerScriptUnitId)
+import qualified Colog.Core as Logger
 
-haskellDebuggerUnitId :: String
-haskellDebuggerUnitId = $(maybe (fail "no package") TH.lift (namePackage 'Script))
+-- hdsUnitId :: GHC.UnitId
+-- hdsUnitId = GHC.toUnitId . GHC.stringToUnit $ $(maybe (fail "no package") TH.lift (namePackage 'Script))
 
 
 
@@ -109,7 +109,7 @@ initScriptRuntime logger conf runConf dbgExecArgs = do
     scriptEvalThread :: LogAction IO ScriptMsg -> DbgBackend
                      -> GhcInvocation -> DebugExecutionArgs
                      -> IO (ScriptCommand -> IO (), IO ())
-    scriptEvalThread _output dbgBackend gi debugExecutionArgs = do
+    scriptEvalThread (LogAction _output) dbgBackend gi debugExecutionArgs = do
       cmds <- newChan
       let sendCmd = writeChan cmds
       pure (sendCmd, thread $ readChan cmds) where
@@ -118,6 +118,7 @@ initScriptRuntime logger conf runConf dbgExecArgs = do
         GotGhcSessionInfo ghcs <- sendSync dbgBackend GetGhcSessionInfo
         currentStop <- newIORef NotStopped
         let
+          -- TODO: haskell-debugger-script is not the one we are linked against, so compiled code and runtime code should interact via a ghc-boot-libraries-only API.
           scriptEnv = SEE
             { dbgBackend
             , _output
@@ -125,20 +126,26 @@ initScriptRuntime logger conf runConf dbgExecArgs = do
             , debugExecutionArgs
             }
         setupScriptEvalSession gi ghcs $ do
-          bindHostValue "_script_eval_env" "ScriptEvalEnv" scriptEnv
+          withGhcLoggerToDebug (contramap (IScriptLog . DbgLog) logger) $ do
 
-          _ <- GHC.runDecls "instance GHC.GHCi.GHCiSandboxIO Script where ghciStepIO = runScript _script_eval_env"
-          GHC.setGHCiMonad "Script"
+            GHC.setContext [ IIDecl $ GHC.simpleImportDecl $ GHC.mkModuleName s
+                           | s <- ["Prelude", "GHC.Debugger.Script", "GHC.GHCi"] ]
 
-          [replPrintName] <- GHC.runDecls "replPrintDef x = runScript _script_eval_env (replPrint x)"
+            bindHostValue "_script_eval_env" "ScriptEvalEnv" scriptEnv
 
-          GHC.modifySession $ \hsc_env ->
-            hsc_env {GHC.hsc_IC = GHCi.setInteractivePrintName (GHC.hsc_IC hsc_env) replPrintName}
+            _ <- GHC.runDecls "instance GHC.GHCi.GHCiSandboxIO Script where ghciStepIO = runScript _script_eval_env"
+            GHC.setGHCiMonad "Script"
+
+            [replPrintName] <- GHC.runDecls "replPrintDef x = runScript _script_eval_env (replPrint x)"
+
+            GHC.modifySession $ \hsc_env ->
+              hsc_env {GHC.hsc_IC = GHCi.setInteractivePrintName (GHC.hsc_IC hsc_env) replPrintName}
 
           forever $ liftIO getCmd >>= \(ScriptCommand cmd) -> do
             MC.try @_ @GHC.SourceError (GHC.execStmt cmd GHC.execOptions) >>= \case
-              Left e -> liftIO $ _output <& ErrorMessage (T.pack $ show e)
+              Left e -> liftIO $ _output $ ErrorMessage (T.pack $ show e)
               Right _ -> pure ()
+
     getDepsAndDBs GhcSessionInfo{..} = do
 
       hDB_SCRIPT_PACKAGEDBS <- liftIO $ lookupEnv "HDB_SCRIPT_PACKAGEDBS"
@@ -149,9 +156,9 @@ initScriptRuntime logger conf runConf dbgExecArgs = do
       -- TODO debug log dbs
 
       base <- GHC.baseUnitId <$> GHC.getDynFlags
-      let hdbLibUnitId = GHC.toUnitId . GHC.stringToUnit $ haskellDebuggerUnitId
       -- Just deps' <- pure $ mapM (GHC.lookupPackageName us . GHC.PackageName) ["ghc-heap","ghci"]
-      let deps = [base, hdbLibUnitId]
+      -- TODO: discover or compile in memory
+      let deps = [base]
 
       pure (deps,dbs)
 
@@ -167,14 +174,27 @@ initScriptRuntime logger conf runConf dbgExecArgs = do
 
         GHC.modifySessionM $ liftIO . addInteractiveGhcDebuggerUnit' dbs deps
         GHC.modifySession $ GHC.hscSetActiveUnitId interactiveGhcDebuggerUnitId
+        dflags <- GHC.getDynFlags
+        loadScript dbgL (GHC.targetWays_ dflags)
+        GHC.modifySessionM $ liftIO . addInteractiveGhcDebuggerUnit' dbs (debuggerScriptUnitId:deps)
 
         modifyInteractiveDebuggerDynFlags $ \ df ->
           df
           `GHC.gopt_unset` GHC.Opt_NoIt
 
-        GHC.setContext [ IIDecl $ GHC.simpleImportDecl $ GHC.mkModuleName s
-                       | s <- ["Prelude", "GHC.Debugger.Script", "GHC.GHCi"] ]
         m
+
+withGhcLoggerToDebug :: GhcMonad m => LogAction IO DebuggerLog -> m () -> m ()
+withGhcLoggerToDebug l m = do
+  dflags <- GHC.getSessionDynFlags
+  GHC.modifyLogger $
+    -- Emit it all as Debug-level debugger logs
+    GHC.pushLogHook $ const $ \_ _ _ sdoc ->
+      l <& DebuggerLog Logger.Debug (LogSDoc dflags sdoc)
+  m
+  -- Restore logger
+  GHC.modifyLogger $
+    GHC.popLogHook
 
 sendSync :: DbgBackend -> D.Command -> IO Response
 sendSync DbgBackend{..} cmd = do

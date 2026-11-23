@@ -2,6 +2,7 @@ cradle:
   #bios: { "program": "./scripts/debug-with-ghc-bios.sh" }
   cabal:
     cabalProject: "cabal.project.hls"
+    componentsToLoad: ["lib:haskell-debugger","lib:dap-server","lib:haskell-debugger-script","exe:hdb","test:haskell-debugger-test"]
     components:
       - path: "./haskell-debugger/"
         component: "lib:haskell-debugger"

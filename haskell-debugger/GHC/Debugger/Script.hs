@@ -6,22 +6,18 @@
 module GHC.Debugger.Script where
 
 import GHC.Debugger.Interface.Messages
-
-
 import qualified Data.Text as T
 import Control.Monad.IO.Class
 
 import GHC.Debugger.Interface.Messages as D
-import Control.Monad.Reader
 import Data.Text
-import Colog.Core
 import Control.Exception
 import Data.IORef
 import qualified GHC
 import Data.Coerce
 import Control.Monad
 import qualified Data.List as List
-import Control.Monad.Catch
+import Control.Monad.Catch as MC
 
 -------------------------------------------
 -- Types
@@ -36,7 +32,6 @@ data LocalState
     { _break :: Break
     , frameIx  :: Int
     }
-
   | NotStopped
 
 data DebugExecutionArgs = DebugExecutionArgs
@@ -47,16 +42,36 @@ data DebugExecutionArgs = DebugExecutionArgs
   }
 data ScriptEvalEnv = SEE
   { dbgBackend         :: DbgBackend
-  , _output            :: LogAction IO ScriptMsg
+  , _output            :: ScriptMsg -> IO ()
   , currentStop        :: IORef LocalState
   , debugExecutionArgs :: DebugExecutionArgs
   }
 
-newtype Script a = Script (ReaderT ScriptEvalEnv IO a)
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadFail, MonadReader ScriptEvalEnv, MonadThrow, MonadCatch, MonadMask)
+newtype Script a = Script {unScript :: ScriptEvalEnv -> IO a}
+
+instance Functor Script where
+  fmap f (Script m) = Script $ fmap f . m
+
+instance Applicative Script where
+  pure x = Script $ const (pure x)
+  Script f <*> Script m = Script $ \ x -> f x <*> m x
+instance Monad Script where
+  Script m >>= f = Script $ \x -> m x >>= \ a -> unScript (f a) x
+instance MonadIO Script where
+  liftIO m = Script $ const m
+instance MonadFail Script where
+  fail s = liftIO $ fail s
+instance MonadThrow Script where
+  throwM e = liftIO $ throwM e
+instance MonadCatch Script where
+  catch (Script m) h = Script $ \ x -> MC.catch (m x) $ \ e -> unScript (h e) x
+instance MonadMask Script where
+  mask f = Script $ \ x -> MC.mask $ \ restore -> unScript (f $ Script . (restore .) . unScript) x
+  uninterruptibleMask f = Script $ \ x -> MC.uninterruptibleMask $ \ restore -> unScript (f $ Script . (restore .) . unScript) x
+  generalBracket (Script o) c k = Script $ \ x -> generalBracket (o x) (\ a e -> unScript (c a e) x) (\ a -> unScript (k a) x)
 
 runScript :: ScriptEvalEnv -> Script a -> IO a
-runScript e (Script m) = runReaderT m e
+runScript e (Script m) = m e
 
 data AbortedDebugSession = AbortedDebugSession T.Text
   deriving Show
@@ -146,8 +161,8 @@ class REPLShow a where
 
 replPrint :: REPLShow a => a -> Script ()
 replPrint x = do
-  l <- asks _output
-  liftIO $ l <& Stdout (replShow x)
+  l <- asks' _output
+  liftIO $ l $ Stdout (replShow x)
 
 -------------------------------------------------------------
 -- Internals
@@ -176,15 +191,21 @@ handleEvalResult res = do
       liftIO $ throw $ DebuggeeEvalAborted s
 
 setCurrentState :: LocalState -> Script ()
-setCurrentState s = liftIO . flip writeIORef s =<< asks currentStop
+setCurrentState s = liftIO . flip writeIORef s =<< asks' currentStop
 
 getCurrentState :: Script LocalState
-getCurrentState = liftIO . readIORef =<< asks currentStop
+getCurrentState = liftIO . readIORef =<< asks' currentStop
+
+asks' :: (ScriptEvalEnv -> a) -> Script a
+asks' f = Script $ pure . f
+
+ask' :: Script ScriptEvalEnv
+ask' = asks' id
 
 output :: ScriptMsg -> Script ()
 output msg = do
-  l <- asks _output
-  liftIO $ l <& msg
+  l <- asks' _output
+  liftIO $ l msg
 
 reportError :: ErrorMessage -> Script ()
 reportError = output . ErrorMessage
@@ -192,7 +213,7 @@ reportError = output . ErrorMessage
 -- | Synchronously send a command to the debugger and await a response
 sendSync :: D.Command -> Script Response
 sendSync cmd = do
-  SEE{dbgBackend = DbgBackend{..}} <- ask
+  SEE{dbgBackend = DbgBackend{..}} <- ask'
   liftIO $ syncRequests cmd
   liftIO syncResponses >>= handleErrors
 
@@ -200,7 +221,7 @@ sendSync cmd = do
 -- running the action it waits for the result of the debugger
 sendInterleaved :: D.Command -> Script () -> Script Response
 sendInterleaved cmd action = do
-  SEE{dbgBackend = DbgBackend{..}} <- ask
+  SEE{dbgBackend = DbgBackend{..}} <- ask'
   liftIO $ syncRequests cmd
   () <- action
   liftIO syncResponses >>= handleErrors
@@ -235,7 +256,7 @@ setCurrentStackPos (tId,frameIx) = do
 
 break :: FilePath -> LineNo -> Maybe ColNo -> Script BreakResult
 break fp lineNum columnNum = do
-  env <- ask
+  env <- ask'
   let path = env.debugExecutionArgs.projectRoot /> fp
   DidSetBreakpoint bf <- sendSync $ SetBreakpoint (ModuleBreak{..}) Nothing Nothing Nothing
   return $ BreakResult bf
@@ -243,7 +264,7 @@ break fp lineNum columnNum = do
 -- the "active thread" is implicitly set to the returned Break's thread
 run :: Script Exec
 run = do
-  DebugExecutionArgs{..} <- asks debugExecutionArgs
+  DebugExecutionArgs{..} <- asks' debugExecutionArgs
   DidExec res <- sendSync DebugExecution{..}
   handleEvalResult res
 

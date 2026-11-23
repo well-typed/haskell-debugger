@@ -90,6 +90,28 @@ loadInternal l buildWays = do
     modsToLoad =
       [(debuggerRuntimeInternalModName,debuggerRuntimeInternalContents)]
 
+-- | Throws exception when module fails to load.
+loadScript
+  :: LogAction IO DebuggerLog
+  -> Ways
+  -> Ghc ()
+loadScript l buildWays = do
+  let ghcLog = liftLogIO l
+
+  dflags <- getDynFlags
+  addInMemoryDebuggerScriptUnit (setDynFlagWays buildWays dflags)
+  let uid = debuggerScriptUnitId
+  successes <- loadInMemoryModules l uid modsToLoad
+  forM_ (zip successes modsToLoad) $ \case
+    (Failed,(modName,_)) -> do
+      ghcLog <& DebuggerLog Logger.Debug
+        (LogFailedToCompileBuiltinModule modName)
+      liftIO $ fail "Failed to load Script Module"
+    (Succeeded,_) ->
+      return ()
+  where
+    modsToLoad = debuggerScriptModules
+
 #if !MIN_VERSION_ghc(9,14,2)
 data FailedToLoadFFIInspectModule = FailedToLoadFFIInspectModule
   deriving Show
