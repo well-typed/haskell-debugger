@@ -195,7 +195,7 @@ jobs:
       - name: "Cache GHC for macOS" # See haskell-actions/setup#139
         id: cache-haskell
         uses: actions/cache@v5
-        if: matrix.runner == 'macOS-latest'
+        if: runner.os == 'macOS'
         with:
           path: ~/.ghcup
           key: ${{ runner.os }}-ghc-${{ matrix.version }}
