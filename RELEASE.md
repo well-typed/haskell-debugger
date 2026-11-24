@@ -25,6 +25,8 @@
 - Check for warnings and docs on the release candidates's page on Hackage.
   
 - To actually do the release explicitly trigger `workflow_dispatch` on the
-  `release` workflow with `publish: true` with the `v...` tag for the ref
+  `release` workflow with `publish: true` with the release tag from tags tab.
+  IMPORTANT: **do not** select `master` from the **branches dropdown**,
+             **instead** select `v0.NN.0.0` from the **Tags tab** for the ref.
   (dispatching the workflow from `master` makes the Github Release step fail, 
   even if they both point to the same commit).
