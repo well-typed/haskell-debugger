@@ -5,6 +5,12 @@ vscode-extension/dist/
 vscode-extension/result
 dist-newstyle/
 cabal.project.local
+cabal-repl-bios/
+
+#ghci leftovers
+*.o
+*.hi
+*.gbc
 
 # Stack-related
 .stack-work
