@@ -1,4 +1,4 @@
-packages: . haskell-debugger-view
+packages: . haskell-debugger-view haskell-debugger-script
 
 allow-newer: ghc-bignum,containers,time,ghc,base,template-haskell
 

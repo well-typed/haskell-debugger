@@ -22,6 +22,7 @@ module GHC.Debugger.Session (
   interactiveGhcDebuggerUnitId,
   getInteractiveDebuggerDynFlags,
   setInteractiveDebuggerDynFlags,
+  modifyInteractiveDebuggerDynFlags,
   -- * DynFlags modifications
   setWorkingDirectory,
   setCacheDirs,
@@ -41,7 +42,9 @@ module GHC.Debugger.Session (
   annotateCallStackGhc,
   lookupUnitPackageQualifier,
   fixHomeUnitsDynFlagsForIIDecl, getPgmI,
-  initUniqSupplyIO
+  initUniqSupplyIO,
+  addInteractiveGhcDebuggerUnit,
+  initHomeUnitEnv, addInteractiveGhcDebuggerUnit', createHomeUnitGraph
   )
   where
 
@@ -262,7 +265,10 @@ initHomeUnitEnv unitDflags env = do
 -- | Adds or refreshes the @interactiveGhcDebuggerUnit@ passing the first
 -- argument as @ExposePackage@ flags.
 addInteractiveGhcDebuggerUnit :: [UnitId] -> HscEnv -> IO HscEnv
-addInteractiveGhcDebuggerUnit exposed env = do
+addInteractiveGhcDebuggerUnit = addInteractiveGhcDebuggerUnit' []
+
+addInteractiveGhcDebuggerUnit' :: [PackageDBFlag] -> [UnitId] -> HscEnv -> IO HscEnv
+addInteractiveGhcDebuggerUnit' pkgDBs exposed env = do
   let dflags0 = hsc_dflags env
   let initial_home_graph = hsc_HUG env
   -- We set up the interactive debugger home unit after the other home units
@@ -284,15 +290,20 @@ addInteractiveGhcDebuggerUnit exposed env = do
             , uid /= interactiveGhcDebuggerUnitId
             -- TODO: other uids to filter?
             ]
-        , packageDBFlags = concatPackageDbStacksUsingLongestCommonPrefix $
+        , packageDBFlags = concatPackageDbStacksUsingLongestCommonPrefix $ pkgDBs :
             (fmap (packageDBFlags . homeUnitEnv_dflags) (Foldable.toList initial_home_graph))
         }
-
 #if MIN_VERSION_ghc(10,1,0)
     setupNewHomeUnitEnv (allUnits initial_home_graph) (hsc_logger env) interactiveDynFlags (hscUIC env)
 #else
     let cached_unit_dbs = concat . catMaybes . fmap homeUnitEnv_unit_dbs $ Foldable.toList initial_home_graph
-    setupNewHomeUnitEnv (allUnits initial_home_graph) (hsc_logger env) interactiveDynFlags (Just cached_unit_dbs)
+    let unit_db_paths = Set.fromList (concatMap (\p -> [p, fst $ splitFileName p]) $ map GHC.unitDatabasePath cached_unit_dbs)
+    let flag_paths = [ path | PackageDB (PkgDbPath path) <- packageDBFlags interactiveDynFlags]
+    let unit_db_cache = do
+            -- if packageDBFlags has more paths we invalidate the cache.
+            guard (all (`Set.member` unit_db_paths) flag_paths)
+            Just cached_unit_dbs
+    setupNewHomeUnitEnv (allUnits initial_home_graph) (hsc_logger env) interactiveDynFlags unit_db_cache
 #endif
 
   let home_unit_graph =
@@ -645,6 +656,9 @@ setInteractiveDebuggerDynFlags dflags = do
                     }
                 }
   setSession newEnv
+
+modifyInteractiveDebuggerDynFlags :: GhcMonad m => (DynFlags -> DynFlags) -> m ()
+modifyInteractiveDebuggerDynFlags f = setInteractiveDebuggerDynFlags . f =<< getInteractiveDebuggerDynFlags
 
 -- ----------------------------------------------------------------------------
 -- Modification of DynFlags

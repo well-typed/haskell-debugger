@@ -16,7 +16,6 @@ module Development.Debug.Adapter.Init
 
 #if !MIN_VERSION_ghc(9,15,0)
 -- no longer needs to be imported from here in 9.15
-import GHC.Conc.Sync (labelThread)
 #endif
 
 import GHC.IO.Handle
@@ -27,7 +26,6 @@ import Control.Monad (when, void)
 import Control.Monad.Except
 import Control.Monad.Trans
 import Control.Monad.Trans.Control (liftBaseDiscard)
-import Data.Function
 import Data.Maybe
 import Data.UUID.V4 qualified as UUID
 import System.IO
@@ -43,12 +41,9 @@ import Development.Debug.Adapter
 import Colog.Core as Logger
 import qualified Development.Debug.Adapter.Output as Output
 
-import GHC (Ghc)
 import GHC.Utils.Logger (defaultLogActionWithHandles)
-import GHC.Debugger.Utils (forwardHandleToLogger, IsLine (text))
-import qualified GHC.Debugger as Debugger
+import GHC.Debugger.Utils (forwardHandleToLogger)
 import qualified GHC.Debugger.Monad as Debugger
-import qualified GHC.Debugger.Interface.Messages as D (Command, Response)
 import GHC.Debugger.Interface.Messages hiding (Command, Response)
 
 import DAP
@@ -58,6 +53,7 @@ import GHC.Debugger.Debuggee as Debugger
 import Development.Debug.Adapter.DAPDebuggee
 import GHC.Debugger.Monad
 import GHC.Debugger.Data.Supervisor
+import GHC.Debugger.Backend
 
 --------------------------------------------------------------------------------
 -- * Client
@@ -227,49 +223,6 @@ initDAPDebuggee l hdbProg InterpreterChoice{internal = False, runInTerminal = Tr
   = externalInTerminalDAPD l hdbProg extraInterpArgs
 initDAPDebuggee l hdbProg InterpreterChoice{runInTerminal = True, internal = True} _
   = internalInTerminalDAPD l hdbProg
-
-
--- | The main debugger thread launches a GHC.Debugger session.
---
--- Then, forever:
---  1. Reads commands from the given 'D.Command' 'MVar'
---  2. Executes the command with `execute`
---  3. Writes responses to the given 'D.Response' 'MVar'
---
--- Concurrently, it reads from the process's stderr forever and outputs it through OutputEvents.
---
-debuggerThread :: LogAction IO Debugger.DebuggerLog
-               -> Debugger.DebugRunner Ghc ()
-               -> Debugger.RunDebuggerSettings -- ^ Settings for running the debugger
-               -> MVar D.Command  -- ^ Read commands
-               -> MVar D.Response -- ^ Write reponses
-               -> IO ()
-debuggerThread l debugRunner runConf requests replies = do
-  liftIO $ do
-    tid <- myThreadId
-    labelThread tid "Main Debugger Thread (before runDebugger)"
-  Debugger.runDebugger l debugRunner runConf $ do
-    liftIO $ do
-      tid <- myThreadId
-      labelThread tid "Main Debugger Thread"
-    let loop = do
-          req <- takeMVar requests & liftIO
-          -- TODO: remove once interpCmd stops calling `uninterruptibleMask`
-          -- while waiting for a reply.
-          resp <- interruptible $ try (Debugger.execute req)
-          case resp of
-            Right x -> do
-              liftIO (putMVar replies x)
-              loop
-            Left e | Just (Debugger.NonFatalException {Debugger.userMessage = userm,
-                            Debugger.debugMessage = dbgm}) <- fromException e  -> do
-              Debugger.logSDoc Logger.Error (text userm)
-              Debugger.logSDoc Logger.Debug (text dbgm)
-              liftIO $ putMVar replies (NonFatalError userm)
-            Left e ->
-              -- don't loop in this case! just exit.
-              liftIO $ putMVar replies (Aborted ("Aborted debugger thread: " ++ displayExceptionWithInfo e))
-    loop
 
 --------------------------------------------------------------------------------
 -- * Logging

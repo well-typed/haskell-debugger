@@ -57,9 +57,15 @@ import GHC.Debugger.Utils.Orphans () -- bring orphan instances to everything whi
 import GHC.Debugger.Debuggee
 import GHC.Debugger.Monad.Type
 import qualified GHC.Unit.Module.Graph as GHC
-import GHC.Debugger.Interface.Messages (AbsFilePath, mkAbsolute, (/>))
+import GHC.Debugger.Interface.Messages (AbsFilePath, mkAbsolute, (/>), GhcSessionInfo (..))
 import System.Directory (getCurrentDirectory)
 
+
+
+getGhcSessionInfo :: Debugger GhcSessionInfo
+getGhcSessionInfo = do
+  dflags <- liftGhc getInteractiveDebuggerDynFlags
+  pure GhcSessionInfo{ghcSessionPackageDBs = packageDBFlags dflags}
 
 -- | Throws exception when module fails to load.
 loadInternal
@@ -83,6 +89,28 @@ loadInternal l buildWays = do
   where
     modsToLoad =
       [(debuggerRuntimeInternalModName,debuggerRuntimeInternalContents)]
+
+-- | Throws exception when module fails to load.
+loadScript
+  :: LogAction IO DebuggerLog
+  -> Ways
+  -> Ghc ()
+loadScript l buildWays = do
+  let ghcLog = liftLogIO l
+
+  dflags <- getDynFlags
+  addInMemoryDebuggerScriptUnit (setDynFlagWays buildWays dflags)
+  let uid = debuggerScriptUnitId
+  successes <- loadInMemoryModules l uid modsToLoad
+  forM_ (zip successes modsToLoad) $ \case
+    (Failed,(modName,_)) -> do
+      ghcLog <& DebuggerLog Logger.Debug
+        (LogFailedToCompileBuiltinModule modName)
+      liftIO $ fail "Failed to load Script Module"
+    (Succeeded,_) ->
+      return ()
+  where
+    modsToLoad = debuggerScriptModules
 
 #if !MIN_VERSION_ghc(9,14,2)
 data FailedToLoadFFIInspectModule = FailedToLoadFFIInspectModule

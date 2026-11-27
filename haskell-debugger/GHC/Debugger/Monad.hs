@@ -135,14 +135,10 @@ withProjectDebugSession ProjectDebugSpec{ghcInvocation = ghcI, ..} k = do
     when (GHC.failed success) $ liftIO $
       throwM DebuggerFailedToLoad
 
-runDebuggerAction :: forall a. LogAction IO DebuggerLog
-  -> FilePath -- ^ rootDir
-  -> [String] -- ^ extraGhcArgs
-  -> RunDebuggerSettings
-  -> Ghc () -- ^ load home units action
-  -> Debugger a
-  -> Ghc a
-runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
+
+
+runner :: LogAction IO DebuggerLog -> RunDebuggerSettings -> FilePath -> [String] -> (DynFlags -> DynFlags) -> Ghc a -> Ghc a
+runner l conf rootDir extraGhcArgs f m
   = flip MC.finally (cleanupInterp l KillMode) $
           -- See Note [Shutting down the external interpreter]
   do
@@ -162,8 +158,7 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
         `GHC.gopt_set` GHC.Opt_IgnoreOptimChanges
         `GHC.gopt_set` GHC.Opt_IgnoreHpcChanges
         `GHC.gopt_set` GHC.Opt_UseBytecodeRatherThanObjects
-        `GHC.gopt_set` GHC.Opt_InsertBreakpoints
-
+        & f
         & interpreterFlags conf.interpreterSettings
         -- Really important to force -dynamic if host is dynamic
         -- See Note [Dynamic Debuggee for dynamic debugger]
@@ -200,6 +195,17 @@ runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action)
       -- subsequent call to `getLogger` to be affected by a plugin.
       GHC.initializeSessionPlugins
 
+      m
+
+runDebuggerAction :: forall a. LogAction IO DebuggerLog
+  -> FilePath -- ^ rootDir
+  -> [String] -- ^ extraGhcArgs
+  -> RunDebuggerSettings
+  -> Ghc () -- ^ load home units action
+  -> Debugger a
+  -> Ghc a
+runDebuggerAction l rootDir extraGhcArgs conf loadHomeUnit (Debugger action) =
+  runner l conf rootDir extraGhcArgs (`GHC.gopt_set` GHC.Opt_InsertBreakpoints) $ do
       preservingThreadLabel loadHomeUnit
 
       fixHomeUnitsDynFlagsForIIDecl

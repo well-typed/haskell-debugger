@@ -61,6 +61,7 @@ import System.Posix.Signals
 #endif
 import System.Timeout (timeout)
 import GHC.Debugger.Data.Supervisor
+import GHC.Debugger.Script (ScriptMsg(..))
 
 #if MIN_VERSION_ghc(9,15,0)
 import GHC.Debugger.Runtime.Interpreter.Custom (dbgInterpCmdHandler)
@@ -271,5 +272,9 @@ mainLogger threshold h = do
   pure $ LogAction $ \case
     InteractiveLog (ISessionSetupLog sessionLog) -> logSessionLog l threshold sessionLog
     InteractiveLog (IDebuggerLog debuggerLog)    -> logDebuggerLog logGhcLog l threshold debuggerLog
+    InteractiveLog (IScriptLog (DbgLog debuggerLog)) -> logDebuggerLog logGhcLog l threshold debuggerLog
+    InteractiveLog (IScriptLog (ScriptMsg scriptLog)) -> case scriptLog of
+      GHC.Debugger.Script.ErrorMessage err -> l <& ("Error: " <> err)
+      Stdout msg -> l <& msg
     RunProxyClientLog sev_msg -> defaultLog l threshold sev_msg
     DAPLog dapLog -> logDAPLog logGhcLog l threshold <& dapLog

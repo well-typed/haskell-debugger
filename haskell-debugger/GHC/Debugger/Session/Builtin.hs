@@ -4,7 +4,7 @@
 
 -- | Built-in units and modules
 module GHC.Debugger.Session.Builtin
-  ( -- * HsDebuggerView unit
+  ( debuggerScriptUnit, debuggerScriptModules, addInMemoryDebuggerScriptUnit, debuggerScriptUnitId, -- * HsDebuggerView unit
     -- ** Modules
     debuggerViewBuiltinMods
   , debuggerViewInstancesMods
@@ -216,6 +216,48 @@ lookupNoPrintConstant = do
     liftIO $ lookupNameCache (hsc_NC hsc_env) (mkModule debuggerInternalUnit debuggerRuntimeInternalModName)
        (mkVarOcc "noPrintConstant")
 
+debuggerScriptUnitId :: UnitId
+debuggerScriptUnitId = stringToUnitId "haskell-debugger-script"
+
+addInMemoryDebuggerScriptUnit :: (MonadFail m, GhcMonad m) => DynFlags -> m ()
+addInMemoryDebuggerScriptUnit dflags = do
+  us <- hsc_units <$> getSession
+  Just deps' <- pure $ mapM (lookupPackageName us . PackageName)
+               [      "ghc",
+                      "ghc-heap",
+                      "filepath",
+                      "template-haskell",
+                      "binary",
+                      "ghci",
+                      "exceptions",
+                      "text"
+                      ]
+
+  let deps = baseUnitId dflags : deps'
+  addInMemoryUnit
+    debuggerScriptUnitId
+    (coerce debuggerScriptUnitId)
+    deps $
+    dflags
+         { -- Running GHCi's internal expression is incompatible with -XSafe.
+            -- We temporarily disable any Safe Haskell settings while running
+            -- GHCi internal expressions. (see #12509)
+          safeHaskell = GHC.Sf_None,
+            -- Disable dumping of any data during evaluation of GHCi's internal
+            -- expressions. (#17500)
+          dumpFlags = EnumSet.empty
+        }
+          -- RebindableSyntax can wreak havoc with GHCi in several ways
+            -- (see #13385 and #14342 for examples), so we temporarily
+            -- disable it too.
+            `xopt_unset` LangExt.RebindableSyntax
+            -- We heavily depend on -fimplicit-import-qualified to compile expr
+            -- with fully qualified names without imports.
+            `gopt_set` Opt_ImplicitImportQualified
+
+
+  return ()
+
 addInMemoryUnit :: GhcMonad m
   => UnitId      -- ^ The unit-id for the unit to add
   -> PackageName -- ^ The package name for the unit to add
@@ -371,3 +413,12 @@ debuggerRuntimeInternalModule = mkModule debuggerRuntimeInternalUnit debuggerRun
 debuggerRuntimeInternalUnit :: Unit
 debuggerRuntimeInternalUnit = RealUnit (Definite debuggerInternalUnitId)
 
+debuggerScriptUnit :: Unit
+debuggerScriptUnit = RealUnit (Definite debuggerScriptUnitId)
+
+debuggerScriptModules :: [(ModuleName,StringBuffer)]
+debuggerScriptModules =
+ [ (,) (mkModuleName "GHC.Debugger.Runtime.Term.Key") (stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger-script/src/GHC/Debugger/Runtime/Term/Key.hs"))
+ , (,) (mkModuleName "GHC.Debugger.Interface.Messages") (stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger-script/src/GHC/Debugger/Interface/Messages.hs"))
+ , (,) (mkModuleName "GHC.Debugger.Script") (stringToStringBuffer $(embedStringFile =<< makeRelativeToProject "haskell-debugger-script/src/GHC/Debugger/Script.hs"))
+ ]

@@ -96,7 +96,8 @@ library
     exposed-modules:
                       -- Entry point to `execute` debugger commands
                       GHC.Debugger,
-                      GHC.Debugger.Interface.Messages,
+
+                      GHC.Debugger.Backend,
 
                       -- Top-level debugger commands
                       GHC.Debugger.Run,
@@ -129,7 +130,6 @@ library
 
                       -- Inspecting runtime terms
                       GHC.Debugger.Runtime.Term,
-                      GHC.Debugger.Runtime.Term.Key,
                       GHC.Debugger.Runtime.Term.Parser,
 
                       -- Per-thread information and resumes
@@ -197,6 +197,7 @@ library
                       ghc-stack-annotations >=0.1 && <0.2,
                       rts >= 1 && < 2,
                       stm >= 2 && < 3,
+                      haskell-debugger-script,
 
     if !os(windows)
         build-depends: unix >= 2.8.6 && < 2.9,
@@ -246,6 +247,7 @@ library dap-server
         unordered-containers >= 0.2.19 && < 0.3,
 
         haskell-debugger,
+        haskell-debugger-script,
         hie-bios >= 0.20 && < 0.22,
         prettyprinter ^>= 1.7.0,
         co-log-core >= 0.3.2.5 && < 0.4,
@@ -282,9 +284,11 @@ executable hdb
         exceptions, aeson, bytestring,
         containers, filepath,
         process, mtl,
+        template-haskell,
         unordered-containers >= 0.2.19 && < 0.3,
 
         haskell-debugger,
+        haskell-debugger-script,
         haskell-debugger:dap-server,
         hie-bios,
         prettyprinter ^>= 1.7.0,

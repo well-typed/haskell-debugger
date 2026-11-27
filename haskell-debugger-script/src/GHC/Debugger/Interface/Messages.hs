@@ -22,6 +22,7 @@ import System.FilePath (isAbsolute, (</>), normalise)
 import Control.Exception (assert)
 import qualified GHC.Exts.Heap.Closures as Heap
 import GHC.Generics
+import GHC.Driver.DynFlags
 
 {-
 Note [Paths should be made absolute at the source]
@@ -47,6 +48,18 @@ mkAbsolute fp = assert (null fp || isAbsolute fp) $ MkAbsFilePath fp
 
 (/>) :: AbsFilePath -> FilePath -> AbsFilePath
 MkAbsFilePath fp /> fp' = MkAbsFilePath $ normalise $ fp </> fp'
+
+
+--------------------------------------------------------------------------------
+-- Debugger (backend)
+--------------------------------------------------------------------------------
+
+-- | Interface to Debugger backend
+--   TODO: change to allow async req/resp.
+data DbgBackend = DbgBackend
+  { syncRequests       :: Command -> IO ()
+  , syncResponses      :: IO Response
+  }
 
 --------------------------------------------------------------------------------
 -- Commands
@@ -95,6 +108,9 @@ data Command
 
   -- | Get information about the current exception (if any) on a thread.
   | GetExceptionInfo RemoteThreadId
+
+  -- | Get information about ghc session used.
+  | GetGhcSessionInfo
 
   -- | Evaluate an expression at the current breakpoint.
   --
@@ -314,6 +330,7 @@ data Response
   | GotScopes [ScopeInfo]
   | GotVariables VariableResult
   | GotExceptionInfo ExceptionInfo
+  | GotGhcSessionInfo GhcSessionInfo
   | Aborted String
   | NonFatalError String
   | Initialised
@@ -349,6 +366,7 @@ newtype RemoteThreadId = RemoteThreadId
     deriving (Show, Eq, Ord, Binary)
 
 data SourceKind = IsExpr | IsStmt
+  deriving Show
 
 data EvalResult
   = EvalCompleted { resultVal :: String
@@ -412,6 +430,13 @@ data ExceptionInfo = ExceptionInfo
   }
   deriving (Show)
 
+data GhcSessionInfo = GhcSessionInfo
+  { ghcSessionPackageDBs :: [PackageDBFlag]
+  }
+  deriving (Show)
+
+deriving instance Show PkgDbRef
+deriving instance Show PackageDBFlag
 --------------------------------------------------------------------------------
 -- Instances
 --------------------------------------------------------------------------------

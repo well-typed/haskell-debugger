@@ -58,29 +58,12 @@ import Prettyprinter.Render.Text
 
 import qualified GHC.Debugger.Monad as Debugger
 import GHC (Ghc)
-import GHC.Debugger.Monad (ProjectDebugSpec(ProjectDebugSpec))
-
-data GhcInvocation = GhcInvocation
-  { gi_libdir :: FilePath
-  , gi_units :: [String]
-  , gi_args :: [String]
-  -- ^ includes also the ghcExtraArgs that will be passed to the DebugSession by the DebugRunner.
-  }
+import GHC.Debugger.Monad.Type
 
 -- | When successful in setting up a DebugRunner it also returns the GhcInvocation used.
 type DebugRunnerProvider a = LogAction IO (WithSeverity SessionSetupLog)
   -> DebugRunnerConf
-  -> IO (Either String (GhcInvocation, Debugger.DebugRunner Ghc a))
-
-data DebugRunnerConf = DebugRunnerConf
-  { drcProjectRoot :: FilePath
-  , drcEntryFile :: FilePath
-  , drcExtraGhcArgs :: [String]
-  , drcCradleFile :: Maybe FilePath
-    -- ^ specified cradle file rather than letting be inferred from
-    -- @drcEntryFile@, relative to @drcProjectRoot@ if so. @DebugRunnerProvider@s
-    -- must WARN if this field is @Just@ but they do not use hie cradles.
-  } deriving Show
+  -> IO (Either String (GhcInvocation, DebugRunner Ghc a))
 
 data SessionSetupLog
   = HieBiosLog HIE.Log

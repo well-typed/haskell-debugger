@@ -1,0 +1,49 @@
+cabal-version:      3.14
+name:               haskell-debugger-script
+version:            0.1.0.0
+-- synopsis:
+-- description:
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Rodrigo Mesquita, Andrea Vezzosi
+maintainer:         rodrigo@well-typed.com, andrea@well-typed.com
+build-type:         Simple
+
+-- extra-source-files:
+
+common extensions
+    default-language: GHC2021
+
+common ghc-options
+    ghc-options: -Wall -Widentities
+
+common rts-options
+    ghc-options: -rtsopts -threaded "-with-rtsopts=-N"
+
+
+custom-setup
+  setup-depends:
+    base,
+    Cabal       >= 3.14,
+    Cabal-hooks >= 3.14
+
+library
+    import:           extensions
+    import:           ghc-options
+    exposed-modules:
+      GHC.Debugger.Runtime.Term.Key
+      GHC.Debugger.Script
+      GHC.Debugger.Interface.Messages
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base ^>=4.22.0.0,
+                      ghc,
+                      ghc-heap,
+                      filepath,
+                      template-haskell,
+                      binary,
+                      ghci,
+                      exceptions,
+                      text,
+    hs-source-dirs:   src
+    default-language: GHC2024
